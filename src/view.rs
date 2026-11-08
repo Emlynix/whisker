@@ -498,8 +498,8 @@ fn sidebar(f: &mut Frame, v: &View) {
         f.g.text(name, label, 14.0, Weight::Normal, Align::Left, if sel { th().text } else { th().muted });
     }
 
-    // Connection + battery summary (only for mice with a driver).
-    if !v.caps.battery {
+    // Connection + battery summary (mice with a driver or a Bluetooth battery).
+    if !v.caps.battery && !v.has_battery {
         return;
     }
     let card = Rect::new(14.0, HEIGHT - 78.0, SIDE_W - 28.0, 64.0);
@@ -583,7 +583,16 @@ fn overview_basic(f: &mut Frame, v: &View) {
     let card = Rect::new(X0, TOP, CW, 96.0);
     f.card(card);
     f.caption(tr(T::DevModel), card.x + 20.0, card.y + 20.0);
-    f.g.text(&v.device_name, Rect::new(card.x + 20.0, card.y + 40.0, card.w - 40.0, 36.0), 24.0, Weight::Bold, Align::Left, th().text);
+    f.g.text(&v.device_name, Rect::new(card.x + 20.0, card.y + 40.0, card.w - 240.0, 36.0), 24.0, Weight::Bold, Align::Left, th().text);
+
+    // Bluetooth battery, when Windows reports one.
+    if v.connected && v.has_battery {
+        let tint = battery_color(v);
+        f.caption(tr(T::Battery), card.x + card.w - 200.0, card.y + 20.0);
+        let pct = Rect::new(card.x + card.w - 200.0, card.y + 36.0, 180.0, 30.0);
+        f.g.text(&format!("{} %", v.battery), pct, 22.0, Weight::Bold, Align::Left, tint);
+        f.bar(Rect::new(card.x + card.w - 200.0, card.y + 70.0, 180.0, 8.0), v.battery, tint);
+    }
 
     let w = (CW - GAP) / 2.0;
     let y = card.y + card.h + GAP;

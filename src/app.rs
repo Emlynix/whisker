@@ -665,6 +665,25 @@ impl Controller {
 
     // ---- device ----
 
+    /// The chosen mouse's entry among the detected ones (no-driver models
+    /// and "other mouse" only; driver-based mice report their own identity).
+    fn chosen_detected(&self) -> Option<&DeviceInfo> {
+        match self.cfg.device.as_deref().map(devices::by_id) {
+            Some(Some(m)) if m.family != Family::NoDriver => None,
+            Some(Some(m)) => self.mice.iter().find(|d| devices::match_device(d) == Match::Known(m)),
+            _ => self.mice.iter().find(|d| devices::match_device(d) == Match::Unknown).or(self.mice.first()),
+        }
+    }
+
+    /// Mice without a driver but connected over Bluetooth still report a
+    /// battery through Windows: point the mouse service at their address.
+    fn retarget_bluetooth(&mut self) {
+        let Some(addr) = self.chosen_detected().and_then(|d| d.bt_address.clone()) else {
+            return;
+        };
+        self.mouse.send(Command::Target(Target::Bluetooth(addr)));
+    }
+
     /// A driver-based mouse opened: name, DPI range and report rates.
     fn on_ident(&mut self, ident: Ident, ability: Ability) {
         let model = self.cfg.device.as_deref().and_then(devices::by_id);
@@ -682,6 +701,7 @@ impl Controller {
 
     fn on_mice(&mut self, mice: Vec<DeviceInfo>) {
         self.mice = mice.clone();
+        self.retarget_bluetooth();
         self.refresh_device();
         if self.cfg.device.is_none() {
             self.open_detect(mice);
@@ -712,7 +732,8 @@ impl Controller {
         self.mouse.send(Command::Target(target_of(self.cfg.device.as_deref())));
         (self.status, self.ident, self.device_info, self.basic_online) = (None, None, None, false);
         self.view.basic = BasicView::default();
-        self.view.has_battery = true;
+        self.view.has_battery = self.view.caps.battery;
+        self.retarget_bluetooth();
 
         self.view.caps = caps_of(self.cfg.device.as_deref());
         self.view.device_name = device_name(self.cfg.device.as_deref());
@@ -726,15 +747,19 @@ impl Controller {
     /// Rows of the Device page from the catalogue, USB identity and status.
     fn refresh_device(&mut self) {
         let model = self.cfg.device.as_deref().and_then(devices::by_id);
-        // With a driver: the opened interface. A listed model without a
-        // driver: its detected entry. "Other mouse": the first unknown one.
-        let info = match model {
-            Some(m) if m.family != Family::NoDriver => self.device_info.as_ref(),
-            Some(m) => self.mice.iter().find(|d| devices::match_device(d) == Match::Known(m)),
-            None => self.mice.iter().find(|d| devices::match_device(d) == Match::Unknown).or(self.mice.first()),
+        // With a driver: the opened interface; otherwise the detected entry.
+        let owned = match model {
+            Some(m) if m.family != Family::NoDriver => self.device_info.clone(),
+            _ => self.chosen_detected().cloned(),
         };
+        let info = owned.as_ref();
         let mut rows: Vec<(T, String)> = Vec::new();
 
+        // "Other mouse": show the name the detected mouse reports.
+        if model.is_none() {
+            let product = info.map(|i| i.product.clone()).filter(|p| !p.is_empty());
+            self.view.device_name = product.unwrap_or_else(|| tr(T::GenericMouse).into());
+        }
         rows.push((T::DevModel, self.view.device_name.clone()));
         if let Some(m) = model {
             rows.push((T::DevSupport, support_badge(m.support).0.into()));
@@ -745,6 +770,11 @@ impl Controller {
             rows.push((T::DevConnection, link.unwrap_or_default()));
         }
         let ident = self.ident.as_ref().filter(|_| model.is_some_and(|m| matches!(m.family, Family::Hidpp | Family::Razer)));
+        if let Some(addr) = info.and_then(|i| i.bt_address.as_deref()) {
+            // AA:BB:CC:DD:EE:FF
+            let pretty: Vec<&str> = (0..addr.len()).step_by(2).map(|k| &addr[k..k + 2]).collect();
+            rows.push((T::DevConnection, format!("Bluetooth LE · {}", pretty.join(":"))));
+        }
         if let Some(i) = info {
             rows.push((T::DevUsbId, format!("{:04X}:{:04X}", i.vid, i.pid)));
             rows.push((T::DevManufacturer, i.manufacturer.clone()));
@@ -766,8 +796,8 @@ impl Controller {
             rows.push((T::DevStatus, raw.join(" ")));
         }
 
-        // Only driver-based mice have a connection state to report.
-        let driven = model.is_some_and(|m| m.family != Family::NoDriver);
+        // Only driver-based or Bluetooth mice have a connection state to report.
+        let driven = model.is_some_and(|m| m.family != Family::NoDriver) || info.is_some_and(|i| i.bt_address.is_some());
         let offline = driven && !self.view.connected && info.is_some();
         self.view.device = DeviceView { rows, offline };
         window::invalidate();

@@ -48,6 +48,8 @@ pub struct DeviceInfo {
     pub manufacturer: String,
     pub product: String,
     pub serial: String,
+    /// Bluetooth LE address for mice connected over Bluetooth.
+    pub bt_address: Option<String>,
 }
 
 const STRING_CHARS: usize = 127;
@@ -73,6 +75,7 @@ fn read_info(h: HANDLE, attr: &HIDD_ATTRIBUTES) -> DeviceInfo {
         manufacturer: hid_string(h, HidD_GetManufacturerString),
         product: hid_string(h, HidD_GetProductString),
         serial: hid_string(h, HidD_GetSerialNumberString),
+        bt_address: None,
     }
 }
 
@@ -115,7 +118,15 @@ pub fn list_mice() -> Vec<DeviceInfo> {
         if out.iter().any(|d| (d.vid, d.pid) == (attr.VendorID, attr.ProductID)) {
             continue;
         }
-        out.push(read_info(h.0, &attr));
+        let mut info = read_info(h.0, &attr);
+        info.bt_address = crate::bluetooth::address_from_path(&path);
+        // BLE mice often have no USB product string; use the Bluetooth name.
+        if info.product.is_empty() {
+            if let Some(n) = info.bt_address.as_deref().and_then(crate::bluetooth::name) {
+                info.product = n;
+            }
+        }
+        out.push(info);
     }
     out
 }

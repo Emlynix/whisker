@@ -26,11 +26,13 @@ const POLL_HIDDEN: Duration = Duration::from_secs(60);
 const MAX_MISSES: u8 = 3;
 
 /// Which driver talks to the mouse.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
     Lionel,
     Hidpp,
     Razer,
+    /// Bluetooth LE mouse without a driver: battery from Windows only.
+    Bluetooth(String),
     /// Mouse without a driver: statistics only.
     Nothing,
 }
@@ -95,7 +97,7 @@ enum Driver {
 }
 
 impl Driver {
-    fn open(t: Target) -> Option<(Driver, DeviceInfo)> {
+    fn open(t: &Target) -> Option<(Driver, DeviceInfo)> {
         match t {
             Target::Hidpp => Hidpp::open().map(|(d, i)| (Driver::Hidpp(d), i)),
             Target::Razer => Razer::open().map(|(d, i)| (Driver::Razer(d), i)),
@@ -187,7 +189,7 @@ impl Worker {
     /// Poll of a driver-based mouse; opens the driver first if needed.
     fn poll_driver(&mut self, on_event: &impl Fn(Event)) {
         if self.driver.is_none() {
-            let Some((mut d, info)) = Driver::open(self.target) else {
+            let Some((mut d, info)) = Driver::open(&self.target) else {
                 on_event(Event::Absent);
                 return;
             };
@@ -233,9 +235,13 @@ fn run(target: Target, rx: Receiver<Command>, on_event: impl Fn(Event)) {
     let mut period = POLL_VISIBLE;
 
     loop {
-        match w.target {
+        match &w.target {
             Target::Lionel => w.poll_lionel(&on_event),
             Target::Hidpp | Target::Razer => w.poll_driver(&on_event),
+            Target::Bluetooth(addr) => match crate::bluetooth::battery(addr) {
+                Some(pct) => on_event(Event::Basic(Reading { battery: Some(pct), ..Reading::default() })),
+                None => on_event(Event::Absent),
+            },
             Target::Nothing => {}
         }
 
