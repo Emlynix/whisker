@@ -9,6 +9,7 @@
 pub mod eternico;
 pub mod hidpp;
 pub mod razer;
+pub mod sinowealth;
 
 /// DPI values a mouse accepts.
 #[derive(Clone, Debug, PartialEq, Eq)]
