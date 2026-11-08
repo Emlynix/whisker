@@ -38,6 +38,80 @@ windows = { version = "0.62", features = [
 ] }
 windows-numerics = "0.3"
 
+# macOS backend (src/platform/macos) only.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.5"
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "block2",
+    "NSArray",
+    "NSAttributedString",
+    "NSCalendar",
+    "NSDate",
+    "NSDictionary",
+    "NSDistributedNotificationCenter",
+    "NSGeometry",
+    "NSLocale",
+    "NSNotification",
+    "NSOperation",
+    "NSPathUtilities",
+    "NSRunLoop",
+    "NSString",
+    "NSTimer",
+    "NSUserDefaults",
+] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "objc2-core-foundation",
+    "objc2-core-graphics",
+    "NSAlert",
+    "NSAppearance",
+    "NSApplication",
+    "NSAttributedString",
+    "NSBitmapImageRep",
+    "NSButton",
+    "NSColor",
+    "NSControl",
+    "NSCursor",
+    "NSEvent",
+    "NSFont",
+    "NSFontDescriptor",
+    "NSGraphics",
+    "NSGraphicsContext",
+    "NSImage",
+    "NSImageRep",
+    "NSMenu",
+    "NSMenuItem",
+    "NSResponder",
+    "NSRunningApplication",
+    "NSStatusBar",
+    "NSStatusBarButton",
+    "NSStatusItem",
+    "NSStringDrawing",
+    "NSTrackingArea",
+    "NSView",
+    "NSWindow",
+] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CFArray",
+    "CFCGTypes",
+    "CFDate",
+    "CFDictionary",
+    "CFNumber",
+    "CFRunLoop",
+    "CFString",
+] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CGColor",
+    "CGContext",
+    "CGPath",
+] }
+objc2-io-kit = { version = "0.3.2", default-features = false, features = ["std", "hid", "libc"] }
+block2 = "0.6.2"
+dispatch2 = { version = "0.3.1", default-features = false, features = ["std", "block2"] }
+
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1.34"
 
