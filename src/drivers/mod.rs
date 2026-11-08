@@ -6,6 +6,7 @@
 //!   mouse service ──> Driver::{Hidpp, Razer} ──> hid_link::raw::Channel
 //! ```
 
+pub mod corsair;
 pub mod eternico;
 pub mod hidpp;
 pub mod oemhid;
