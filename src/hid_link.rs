@@ -11,6 +11,8 @@ use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, H
 use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING};
 use windows_sys::core::GUID;
 
+pub mod raw;
+
 /// Time the firmware needs before a reply can be read back (vendor app uses 10 ms).
 const REPLY_DELAY: Duration = Duration::from_millis(10);
 const VID_TAG: &str = "vid_248a";

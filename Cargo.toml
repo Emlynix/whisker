@@ -9,6 +9,7 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_Globalization",
     "Win32_Security",
     "Win32_System_Com",
+    "Win32_System_IO",
     "Win32_Devices_DeviceAndDriverInstallation",
     "Win32_Devices_HumanInterfaceDevice",
     "Win32_Graphics_Dwm",

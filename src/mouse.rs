@@ -2,11 +2,14 @@
 //! commands and receive status events; they never touch HID directly.
 //!
 //! ```text
-//!  UI/controller --Command--> [mouse thread] --frames--> HidLink --> mouse
-//!        ^                          |
+//!  UI/controller --Command--> [mouse thread] --> Lionel HidLink
+//!        ^                          |        \-> drivers::{Hidpp, Razer}
 //!        +-------Event (status)-----+
 //! ```
 
+use crate::drivers::hidpp::Hidpp;
+use crate::drivers::razer::Razer;
+use crate::drivers::{Ability, Ident, Reading};
 use crate::hid_link::{DeviceInfo, HidLink};
 use crate::protocol::{self, Action, BUTTON_COUNT, DPI_COLOR_SLOTS, DpiConfig, Lighting, Lod, MacroEvent, PollingRate, Power, Status};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
@@ -19,6 +22,18 @@ const WRITE_GAP: Duration = Duration::from_millis(60);
 const POLLING_RESEND: Duration = Duration::from_millis(500);
 const POLL_VISIBLE: Duration = Duration::from_secs(2);
 const POLL_HIDDEN: Duration = Duration::from_secs(60);
+/// Unanswered polls before a driver's channel is reopened.
+const MAX_MISSES: u8 = 3;
+
+/// Which driver talks to the mouse.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Target {
+    Lionel,
+    Hidpp,
+    Razer,
+    /// Mouse without a driver: statistics only.
+    Nothing,
+}
 
 pub enum Command {
     SetDpi(DpiConfig),
@@ -30,6 +45,11 @@ pub enum Command {
     SetPower(Power),
     /// All button actions plus the macro list they may reference.
     SetButtons([Action; BUTTON_COUNT], Vec<Vec<MacroEvent>>),
+    /// Switch driver (another mouse was chosen).
+    Target(Target),
+    /// DPI / report rate for driver-based mice.
+    SetBasicDpi(u32),
+    SetBasicRate(u32),
     /// Window visibility drives how often status is polled.
     Visible(bool),
     RefreshNow,
@@ -39,6 +59,10 @@ pub enum Event {
     /// The configuration interface was (re)opened: identity of the device.
     Device(DeviceInfo),
     Status(Status),
+    /// Driver-based mouse opened: identity and abilities.
+    Ident(Ident, Ability),
+    /// Status of a driver-based mouse.
+    Basic(Reading),
     /// Dongle present but mouse asleep or off.
     Offline,
     /// No receiver or cable found.
@@ -50,17 +74,61 @@ pub struct MouseService {
 }
 
 impl MouseService {
-    pub fn start(on_event: impl Fn(Event) + Send + 'static) -> Self {
+    pub fn start(target: Target, on_event: impl Fn(Event) + Send + 'static) -> Self {
         let (tx, rx) = channel();
         thread::Builder::new()
             .name("mouse".into())
-            .spawn(move || run(rx, on_event))
+            .spawn(move || run(target, rx, on_event))
             .expect("spawn mouse thread");
         Self { tx }
     }
 
     pub fn send(&self, cmd: Command) {
         let _ = self.tx.send(cmd);
+    }
+}
+
+/// Opened driver for a non-Lionel mouse.
+enum Driver {
+    Hidpp(Hidpp),
+    Razer(Razer),
+}
+
+impl Driver {
+    fn open(t: Target) -> Option<(Driver, DeviceInfo)> {
+        match t {
+            Target::Hidpp => Hidpp::open().map(|(d, i)| (Driver::Hidpp(d), i)),
+            Target::Razer => Razer::open().map(|(d, i)| (Driver::Razer(d), i)),
+            _ => None,
+        }
+    }
+
+    fn describe(&mut self) -> (Ident, Ability) {
+        match self {
+            Driver::Hidpp(d) => (d.ident(), d.ability()),
+            Driver::Razer(d) => (d.ident(), d.ability()),
+        }
+    }
+
+    fn read(&mut self) -> Option<Reading> {
+        match self {
+            Driver::Hidpp(d) => d.read(),
+            Driver::Razer(d) => d.read(),
+        }
+    }
+
+    fn set_dpi(&mut self, dpi: u32) {
+        match self {
+            Driver::Hidpp(d) => d.set_dpi(dpi),
+            Driver::Razer(d) => d.set_dpi(dpi),
+        };
+    }
+
+    fn set_rate(&mut self, hz: u32) {
+        match self {
+            Driver::Hidpp(d) => d.set_rate(hz),
+            Driver::Razer(d) => d.set_rate(hz),
+        };
     }
 }
 
@@ -72,6 +140,9 @@ struct Worker {
     verified: bool,
     /// Last identity reported, so `Device` is sent only on change.
     reported: Option<DeviceInfo>,
+    target: Target,
+    driver: Option<Driver>,
+    misses: u8,
 }
 
 impl Worker {
@@ -112,18 +183,61 @@ impl Worker {
     }
 }
 
-fn run(rx: Receiver<Command>, on_event: impl Fn(Event)) {
-    let mut w = Worker { link: Some(HidLink::new()), seq: 0, verified: false, reported: None };
-    let mut period = POLL_VISIBLE;
+impl Worker {
+    /// Poll of a driver-based mouse; opens the driver first if needed.
+    fn poll_driver(&mut self, on_event: &impl Fn(Event)) {
+        if self.driver.is_none() {
+            let Some((mut d, info)) = Driver::open(self.target) else {
+                on_event(Event::Absent);
+                return;
+            };
+            on_event(Event::Device(info));
+            let (ident, ability) = d.describe();
+            on_event(Event::Ident(ident, ability));
+            self.driver = Some(d);
+            self.misses = 0;
+        }
 
-    loop {
-        let status = w.poll();
-        let info = w.link.as_ref().and_then(|l| l.info().cloned());
-        if info.is_some() && info != w.reported {
-            w.reported = info.clone();
+        let Some(d) = self.driver.as_mut() else {
+            return;
+        };
+        match d.read() {
+            Some(r) => {
+                self.misses = 0;
+                on_event(Event::Basic(r));
+            }
+            None => {
+                // Asleep, or unplugged: reopen after a few misses.
+                self.misses += 1;
+                if self.misses >= MAX_MISSES {
+                    self.driver = None;
+                }
+                on_event(Event::Offline);
+            }
+        }
+    }
+
+    fn poll_lionel(&mut self, on_event: &impl Fn(Event)) {
+        let status = self.poll();
+        let info = self.link.as_ref().and_then(|l| l.info().cloned());
+        if info.is_some() && info != self.reported {
+            self.reported = info.clone();
             on_event(Event::Device(info.unwrap_or_default()));
         }
         on_event(status);
+    }
+}
+
+fn run(target: Target, rx: Receiver<Command>, on_event: impl Fn(Event)) {
+    let mut w = Worker { link: Some(HidLink::new()), seq: 0, verified: false, reported: None, target, driver: None, misses: 0 };
+    let mut period = POLL_VISIBLE;
+
+    loop {
+        match w.target {
+            Target::Lionel => w.poll_lionel(&on_event),
+            Target::Hidpp | Target::Razer => w.poll_driver(&on_event),
+            Target::Nothing => {}
+        }
 
         // Wait for a command or the next poll tick.
         let cmd = match rx.recv_timeout(period) {
@@ -168,6 +282,22 @@ fn run(rx: Receiver<Command>, on_event: impl Fn(Event)) {
                 let frames = protocol::button_frames(&actions, &macros, || w.next_seq());
                 for f in frames {
                     w.write(f);
+                }
+            }
+            Command::Target(t) => {
+                w.target = t;
+                w.driver = None;
+                w.verified = false;
+                w.reported = None;
+            }
+            Command::SetBasicDpi(dpi) => {
+                if let Some(d) = w.driver.as_mut() {
+                    d.set_dpi(dpi);
+                }
+            }
+            Command::SetBasicRate(hz) => {
+                if let Some(d) = w.driver.as_mut() {
+                    d.set_rate(hz);
                 }
             }
             Command::Visible(v) => period = if v { POLL_VISIBLE } else { POLL_HIDDEN },

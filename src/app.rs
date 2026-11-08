@@ -10,7 +10,9 @@
 //! `window::post(.. with_ctrl(..))`.
 
 use crate::autostart::{self, Autostart};
-use crate::devices::{self, CAPS_NONE, Caps, Link, Match, Support};
+use crate::devices::{self, CAPS_NONE, Caps, Family, Link, Match, Support};
+use crate::drivers::{Ability, Ident};
+use crate::mouse::Target;
 use crate::hid_link::{self, DeviceInfo};
 use crate::gfx::Gfx;
 use crate::i18n::{self, Lang, T, fill, tr};
@@ -25,7 +27,7 @@ use crate::stats::{self, Period, Stats};
 use crate::theme::{self, THEMES};
 use crate::store::{self, AppConfig};
 use crate::tray::{Level, TrayAction};
-use crate::view::{self, Act, Badge, Charge, DelayMode, Detect, DetectRow, DeviceView, Hit, Picker, StageView, View};
+use crate::view::{self, Act, Badge, BasicView, Charge, DelayMode, Detect, DetectRow, DeviceView, Hit, Picker, StageView, View};
 use crate::window::{self, Hooks, KeyEvent, Phase};
 use std::cell::RefCell;
 use std::time::Instant;
@@ -75,6 +77,10 @@ struct Controller {
     device_info: Option<DeviceInfo>,
     /// Mice found by the last detection.
     mice: Vec<DeviceInfo>,
+    /// Identity reported by a driver-based mouse.
+    ident: Option<Ident>,
+    /// A driver-based mouse answered the last poll.
+    basic_online: bool,
 }
 
 pub fn run(mode: StartMode) {
@@ -96,11 +102,12 @@ pub fn run(mode: StartMode) {
     let cfg = store::load_config();
     apply_look(&cfg);
     let first_run = !cfg.setup_asked && !install::is_installed_copy();
+    let target = target_of(cfg.device.as_deref());
     let ctrl = Controller {
         view: initial_view(&cfg, first_run),
         cfg,
         stats: Stats::start(),
-        mouse: MouseService::start(|ev| post(move |c| c.on_mouse(ev))),
+        mouse: MouseService::start(target, |ev| post(move |c| c.on_mouse(ev))),
         status: None,
         link: T::LinkSearching,
         level: Level::Offline,
@@ -109,6 +116,8 @@ pub fn run(mode: StartMode) {
         last_step: None,
         device_info: None,
         mice: Vec::new(),
+        ident: None,
+        basic_online: false,
     };
     ctrl.stats.set_vendor(stats_vendor(ctrl.cfg.device.as_deref()));
     CTRL.with(|c| *c.borrow_mut() = Some(ctrl));
@@ -185,6 +194,8 @@ fn initial_view(cfg: &AppConfig, ask_setup: bool) -> View {
         device_name: device_name(cfg.device.as_deref()),
         device: DeviceView::default(),
         detect: None,
+        basic: BasicView::default(),
+        has_battery: true,
     }
 }
 
@@ -200,6 +211,22 @@ fn caps_of(device: Option<&str>) -> Caps {
     match device {
         None => devices::MODELS[0].caps,
         Some(id) => devices::by_id(id).map_or(CAPS_NONE, |m| m.caps),
+    }
+}
+
+/// Driver for the configured mouse; until one is chosen, the Lionel driver.
+fn target_of(device: Option<&str>) -> Target {
+    match device {
+        None => Target::Lionel,
+        Some(id) => devices::by_id(id).map_or(Target::Nothing, |m| m.family.target()),
+    }
+}
+
+fn support_badge(s: Support) -> (&'static str, Badge) {
+    match s {
+        Support::Full => (tr(T::BadgeFull), Badge::Good),
+        Support::Experimental => (tr(T::BadgeExperimental), Badge::Warn),
+        Support::Basic => (tr(T::BadgeUnknown), Badge::Muted),
     }
 }
 
@@ -227,11 +254,10 @@ fn detect_rows(mice: &[DeviceInfo]) -> Vec<DetectRow> {
             let sub = if d.product.is_empty() { usb } else { format!("{usb} · {}", d.product) };
             let (title, badge, kind, choice) = match devices::match_device(d) {
                 Match::Known(m) => {
-                    let (b, k) = match m.support {
-                        Support::Full => (tr(T::BadgeFull).to_string(), Badge::Good),
-                        Support::Experimental => (tr(T::BadgeExperimental).to_string(), Badge::Warn),
-                    };
-                    (m.full_name(), b, k, m.id.to_string())
+                    let (b, k) = support_badge(m.support);
+                    // Vendor-wide entries (any product id) show the product name.
+                    let title = if m.pids.is_empty() && !d.product.is_empty() { format!("{} {}", m.vendor, d.product) } else { m.full_name() };
+                    (title, b.to_string(), k, m.id.to_string())
                 }
                 Match::Guess(m) => {
                     let title = if d.product.is_empty() { tr(T::UnknownMouse).to_string() } else { d.product.clone() };
@@ -252,11 +278,9 @@ fn model_rows() -> Vec<DetectRow> {
     let mut rows: Vec<DetectRow> = devices::MODELS
         .iter()
         .map(|m| {
-            let (badge, kind) = match m.support {
-                Support::Full => (tr(T::BadgeFull), Badge::Good),
-                Support::Experimental => (tr(T::BadgeExperimental), Badge::Warn),
-            };
-            let sub = format!("{:04X}:{}", m.vid, m.pids.iter().map(|(p, _)| format!("{p:04X}")).collect::<Vec<_>>().join("/"));
+            let (badge, kind) = support_badge(m.support);
+            let pids = m.pids.iter().map(|(p, _)| format!("{p:04X}")).collect::<Vec<_>>().join("/");
+            let sub = format!("{:04X}:{}", m.vid, if pids.is_empty() { "*".to_string() } else { pids });
             DetectRow { title: m.full_name(), sub, badge: badge.into(), kind, choice: m.id.into() }
         })
         .collect();
@@ -285,6 +309,10 @@ fn hook_act(a: Act) {
 }
 
 fn hook_drag(a: Act, value: usize, phase: Phase) {
+    if a == Act::BasicDpi {
+        with_ctrl(|c| c.drag_basic_dpi(value, phase));
+        return;
+    }
     let Act::Slider(i) = a else {
         return;
     };
@@ -450,6 +478,11 @@ impl Controller {
                 }
             }
             Act::ChangeMouse => self.open_detect(hid_link::list_mice()),
+            Act::BasicDpi => {}
+            Act::BasicRate(hz) => {
+                self.view.basic.rate = Some(hz);
+                self.mouse.send(Command::SetBasicRate(hz));
+            }
             Act::DetectSel(i) => {
                 if let Some(d) = self.view.detect.as_mut() {
                     d.sel = i.min(d.rows.len().saturating_sub(1));
@@ -480,6 +513,29 @@ impl Controller {
                 self.refresh_device();
                 return;
             }
+            Event::Ident(ident, ability) => {
+                self.on_ident(ident, ability);
+                return;
+            }
+            Event::Basic(r) => {
+                self.basic_online = true;
+                self.view.basic.dpi = r.dpi;
+                self.view.basic.rate = r.rate_hz;
+                self.view.has_battery = r.battery.is_some();
+                self.view.battery = r.battery.unwrap_or(0);
+                self.view.charge = if r.charging { Charge::Charging } else { Charge::Discharging };
+                if let Some(d) = r.dpi {
+                    self.stats.set_dpi(d);
+                }
+                let level = match r.battery {
+                    Some(pct) => {
+                        self.stats.record_battery(pct, r.charging);
+                        Level::Battery { pct, charging: r.charging }
+                    }
+                    None => Level::Offline,
+                };
+                (T::LinkConnected, level)
+            }
             Event::Status(s) => {
                 self.apply_status(s);
                 let charging = s.charge == protocol::Charge::Charging;
@@ -487,15 +543,17 @@ impl Controller {
             }
             Event::Offline => {
                 self.status = None;
+                self.basic_online = false;
                 (T::LinkAsleep, Level::Offline)
             }
             Event::Absent => {
                 self.status = None;
+                self.basic_online = false;
                 (T::LinkNoReceiver, Level::Offline)
             }
         };
 
-        self.view.connected = self.status.is_some();
+        self.view.connected = self.status.is_some() || self.basic_online;
         self.link = link;
         self.view.link = tr(link).into();
         self.level = level;
@@ -554,6 +612,18 @@ impl Controller {
         store::save_config(&self.cfg);
     }
 
+    /// Single-DPI slider: preview while dragging, send on release.
+    fn drag_basic_dpi(&mut self, index: usize, phase: Phase) {
+        let Some(&dpi) = self.view.basic.values.get(index) else {
+            return;
+        };
+        self.view.basic.dpi = Some(dpi);
+        if phase == Phase::Done {
+            self.mouse.send(Command::SetBasicDpi(dpi));
+        }
+        window::invalidate();
+    }
+
     /// Slider drag: show the value, send only on release.
     fn preview_stage(&mut self, i: usize, index: usize) {
         if let Some(s) = self.view.stages.get_mut(i) {
@@ -595,6 +665,21 @@ impl Controller {
 
     // ---- device ----
 
+    /// A driver-based mouse opened: name, DPI range and report rates.
+    fn on_ident(&mut self, ident: Ident, ability: Ability) {
+        let model = self.cfg.device.as_deref().and_then(devices::by_id);
+        if let (Some(m), false) = (model, ident.name.is_empty()) {
+            if m.pids.is_empty() {
+                self.view.device_name = format!("{} {}", m.vendor, ident.name.trim_start_matches(m.vendor).trim());
+            }
+        }
+        self.view.basic.values = ability.dpi.map(|r| r.values()).unwrap_or_default();
+        self.view.basic.rates = ability.rates;
+        self.view.has_battery = ability.battery;
+        self.ident = Some(ident);
+        self.refresh_device();
+    }
+
     fn on_mice(&mut self, mice: Vec<DeviceInfo>) {
         self.mice = mice.clone();
         self.refresh_device();
@@ -623,6 +708,12 @@ impl Controller {
         self.cfg.device = Some(row.choice.clone());
         store::save_config(&self.cfg);
 
+        // New driver: forget what the previous one reported.
+        self.mouse.send(Command::Target(target_of(self.cfg.device.as_deref())));
+        (self.status, self.ident, self.device_info, self.basic_online) = (None, None, None, false);
+        self.view.basic = BasicView::default();
+        self.view.has_battery = true;
+
         self.view.caps = caps_of(self.cfg.device.as_deref());
         self.view.device_name = device_name(self.cfg.device.as_deref());
         self.stats.set_vendor(stats_vendor(self.cfg.device.as_deref()));
@@ -635,32 +726,36 @@ impl Controller {
     /// Rows of the Device page from the catalogue, USB identity and status.
     fn refresh_device(&mut self) {
         let model = self.cfg.device.as_deref().and_then(devices::by_id);
-        // With a driver: the opened interface; without: the first mouse found.
+        // With a driver: the opened interface. A listed model without a
+        // driver: its detected entry. "Other mouse": the first unknown one.
         let info = match model {
-            Some(_) => self.device_info.as_ref(),
+            Some(m) if m.family != Family::NoDriver => self.device_info.as_ref(),
+            Some(m) => self.mice.iter().find(|d| devices::match_device(d) == Match::Known(m)),
             None => self.mice.iter().find(|d| devices::match_device(d) == Match::Unknown).or(self.mice.first()),
         };
         let mut rows: Vec<(T, String)> = Vec::new();
 
         rows.push((T::DevModel, self.view.device_name.clone()));
         if let Some(m) = model {
-            let support = match m.support {
-                Support::Full => tr(T::BadgeFull),
-                Support::Experimental => tr(T::BadgeExperimental),
-            };
-            rows.push((T::DevSupport, support.into()));
+            rows.push((T::DevSupport, support_badge(m.support).0.into()));
             let link = info.and_then(|i| m.link_of(i.pid)).map(|l| match l {
                 Link::Receiver => tr(T::LinkReceiver).to_string(),
                 Link::Cable => tr(T::LinkCable).to_string(),
             });
             rows.push((T::DevConnection, link.unwrap_or_default()));
         }
+        let ident = self.ident.as_ref().filter(|_| model.is_some_and(|m| matches!(m.family, Family::Hidpp | Family::Razer)));
         if let Some(i) = info {
             rows.push((T::DevUsbId, format!("{:04X}:{:04X}", i.vid, i.pid)));
             rows.push((T::DevManufacturer, i.manufacturer.clone()));
             rows.push((T::DevProduct, i.product.clone()));
-            rows.push((T::DevFirmware, devices::bcd_version(i.version)));
-            rows.push((T::DevSerial, i.serial.clone()));
+            let fw = ident.map(|d| d.firmware.clone()).filter(|f| !f.is_empty()).unwrap_or_else(|| devices::bcd_version(i.version));
+            rows.push((T::DevFirmware, fw));
+            let serial = ident.map(|d| d.serial.clone()).filter(|s| !s.is_empty()).unwrap_or_else(|| i.serial.clone());
+            rows.push((T::DevSerial, serial));
+        }
+        if let Some(d) = ident {
+            rows.push((T::DevProtocol, d.protocol.clone()));
         }
         if let Some(s) = self.status.filter(|_| model.is_some()) {
             let sensor = devices::sensor_name(s.sensor).map_or_else(|| format!("0x{:02X}", s.sensor), str::to_string);
@@ -671,7 +766,9 @@ impl Controller {
             rows.push((T::DevStatus, raw.join(" ")));
         }
 
-        let offline = model.is_some() && self.status.is_none() && info.is_some();
+        // Only driver-based mice have a connection state to report.
+        let driven = model.is_some_and(|m| m.family != Family::NoDriver);
+        let offline = driven && !self.view.connected && info.is_some();
         self.view.device = DeviceView { rows, offline };
         window::invalidate();
     }

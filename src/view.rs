@@ -24,7 +24,7 @@ mod buttons;
 mod device;
 pub use buttons::{DelayMode, Picker, Tab};
 pub use device::{Badge, Detect, DetectRow, DeviceView};
-use crate::devices::Caps;
+use crate::devices::{Caps, DpiUi};
 use crate::store::{DEBOUNCE_CHOICES, SLEEP_CHOICES};
 use crate::theme::{self, THEMES, Theme};
 
@@ -56,8 +56,8 @@ const NAV_STEP: f32 = 40.0;
 /// Whether a page applies to the selected mouse.
 pub fn page_visible(page: usize, caps: &Caps) -> bool {
     match page {
-        1 => caps.dpi,
-        2 => caps.performance,
+        1 => caps.dpi != DpiUi::None,
+        2 => caps.polling,
         3 => caps.lighting,
         4 | 5 => caps.buttons,
         _ => true,
@@ -130,6 +130,9 @@ pub enum Act {
     MacroClear,
     MacroDelay(DelayMode),
     ChangeMouse,
+    /// Slider of a driver-based mouse's single DPI value.
+    BasicDpi,
+    BasicRate(u32),
     DetectSel(usize),
     DetectManual,
     DetectUse,
@@ -213,6 +216,19 @@ pub struct View {
     pub device: DeviceView,
     /// Open "which mouse" dialog.
     pub detect: Option<Detect>,
+    /// DPI and report rate of driver-based mice.
+    pub basic: BasicView,
+    /// The mouse reports a battery level.
+    pub has_battery: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BasicView {
+    pub dpi: Option<u32>,
+    /// Selectable DPI values (slider positions).
+    pub values: Vec<u32>,
+    pub rates: Vec<u32>,
+    pub rate: Option<u32>,
 }
 
 struct Frame<'a> {
@@ -491,7 +507,7 @@ fn sidebar(f: &mut Frame, v: &View) {
     f.g.circle(card.x + 16.0, card.y + 20.0, 4.0, if v.connected { th().good } else { th().faint });
     f.g.text(&v.link, Rect::new(card.x + 28.0, card.y + 10.0, card.w - 34.0, 20.0), 12.0, Weight::Normal, Align::Left, th().muted);
 
-    if v.connected {
+    if v.connected && v.has_battery {
         f.bar(Rect::new(card.x + 12.0, card.y + 41.0, card.w - 70.0, 6.0), v.battery, battery_color(v));
         let pct = Rect::new(card.x + card.w - 52.0, card.y + 34.0, 40.0, 20.0);
         f.g.text(&format!("{} %", v.battery), pct, 12.0, Weight::Semibold, Align::Right, th().text);
@@ -517,32 +533,41 @@ fn overview(f: &mut Frame, v: &View) {
     let card = Rect::new(X0, TOP, CW, 118.0);
     f.card(card);
     f.caption(tr(T::Battery), card.x + 20.0, card.y + 22.0);
-    let big = if v.connected { format!("{} %", v.battery) } else { "—".into() };
-    let big_c = if v.connected { tint } else { th().faint };
+    let shown = v.connected && v.has_battery;
+    let big = if shown { format!("{} %", v.battery) } else { "—".into() };
+    let big_c = if shown { tint } else { th().faint };
     f.g.text(&big, Rect::new(card.x + 20.0, card.y + 40.0, 170.0, 56.0), 44.0, Weight::Bold, Align::Left, big_c);
 
     let note = match v.charge {
-        _ if !v.connected => v.link.as_str(),
+        _ if !shown => v.link.as_str(),
         Charge::Charging => tr(T::Charging),
         Charge::Full => tr(T::FullyCharged),
         Charge::Discharging => v.battery_note.as_str(),
     };
-    f.bar(Rect::new(card.x + 200.0, card.y + 46.0, card.w - 220.0, 10.0), if v.connected { v.battery } else { 0 }, tint);
+    f.bar(Rect::new(card.x + 200.0, card.y + 46.0, card.w - 220.0, 10.0), if shown { v.battery } else { 0 }, tint);
     f.g.text(note, Rect::new(card.x + 200.0, card.y + 64.0, card.w - 220.0, 22.0), 13.0, Weight::Normal, Align::Left, th().muted);
 
     let w = (CW - 2.0 * GAP) / 3.0;
     let y = TOP + 118.0 + GAP;
+    let stages = v.caps.dpi == DpiUi::Stages;
     let (dpi, note) = match v.stages.get(v.active) {
+        _ if !stages => (v.basic.dpi.map_or("—".into(), |d| d.to_string()), String::new()),
         Some(s) => (s.dpi.to_string(), fill(tr(T::StageOf), &[&(v.active + 1).to_string(), &v.stages.iter().filter(|s| s.enabled).count().to_string()])),
         None => ("—".into(), String::new()),
     };
     stat_card(f, Rect::new(X0, y, w, 110.0), tr(T::ActiveDpi), &dpi, &note);
-    let hz = format!("{} Hz", RATES[v.polling]);
+    let hz = match stages {
+        true => format!("{} Hz", RATES[v.polling]),
+        false => v.basic.rate.map_or("—".into(), |r| format!("{r} Hz")),
+    };
     stat_card(f, Rect::new(X0 + w + GAP, y, w, 110.0), tr(T::PollingRate), &hz, &fill(tr(T::MeasuredValue), &[&v.measured]));
     let today = fill(tr(T::ClicksMoved), &[&v.today_distance]);
     stat_card(f, Rect::new(X0 + 2.0 * (w + GAP), y, w, 110.0), tr(T::Today), &v.today_clicks, &today);
 
     // Quick DPI switch: one chip per enabled stage.
+    if !stages {
+        return;
+    }
     let card = Rect::new(X0, y + 110.0 + GAP, CW, 96.0);
     f.card(card);
     f.caption(tr(T::QuickDpi), card.x + 20.0, card.y + 16.0);
@@ -567,7 +592,38 @@ fn overview_basic(f: &mut Frame, v: &View) {
     stat_card(f, Rect::new(X0 + w + GAP, y, w, 110.0), tr(T::Measured), &v.measured, tr(T::PollingRate));
 }
 
+/// One DPI value for driver-based mice: big number and a slider.
+fn dpi_single(f: &mut Frame, v: &View) {
+    let card = Rect::new(X0, TOP, CW, 140.0);
+    f.card(card);
+    f.caption(tr(T::ActiveDpi), card.x + 20.0, card.y + 18.0);
+    let value = v.basic.dpi.map_or("—".into(), |d| format!("{d} DPI"));
+    f.g.text(&value, Rect::new(card.x + 20.0, card.y + 36.0, card.w - 40.0, 44.0), 32.0, Weight::Bold, Align::Left, th().text);
+
+    let vals = &v.basic.values;
+    if vals.len() < 2 {
+        return;
+    }
+    let (x0, x1, cy) = (card.x + 30.0, card.x + card.w - 30.0, card.y + 106.0);
+    let idx = v.basic.dpi.and_then(|d| vals.iter().position(|&x| x >= d)).unwrap_or(0);
+    let kx = x0 + (x1 - x0) * idx as f32 / (vals.len() - 1) as f32;
+    f.g.fill(Rect::new(x0, cy - 2.0, x1 - x0, 4.0), 2.0, th().border);
+    f.g.fill(Rect::new(x0, cy - 2.0, kx - x0, 4.0), 2.0, th().accent);
+    f.g.circle(kx, cy, 9.0, th().card_hi);
+    f.g.circle(kx, cy, 6.5, th().accent);
+    let area = Rect::new(x0 - 10.0, cy - 16.0, x1 - x0 + 20.0, 32.0);
+    f.hits.push(Hit { act: Act::BasicDpi, rect: area, kind: Kind::Slider { x0, x1, steps: vals.len() } });
+
+    let ends = Rect::new(x0, cy + 10.0, x1 - x0, 18.0);
+    f.g.text(&vals[0].to_string(), ends, 11.0, Weight::Normal, Align::Left, th().faint);
+    f.g.text(&vals[vals.len() - 1].to_string(), ends, 11.0, Weight::Normal, Align::Right, th().faint);
+}
+
 fn dpi(f: &mut Frame, v: &View) {
+    if v.caps.dpi == DpiUi::Single {
+        dpi_single(f, v);
+        return;
+    }
     const ROW: f32 = 52.0;
     let card = Rect::new(X0, TOP, CW, ROW * v.stages.len() as f32 + 16.0);
     f.card(card);
@@ -630,10 +686,21 @@ fn dpi(f: &mut Frame, v: &View) {
 }
 
 fn performance(f: &mut Frame, v: &View) {
-    let w = (CW - 3.0 * 12.0) / 4.0;
-    for (i, hz) in RATES.iter().enumerate() {
-        let r = Rect::new(X0 + i as f32 * (w + 12.0), TOP, w, 60.0);
-        f.choice(Act::Polling(i), r, &format!("{hz} Hz"), &format!("{} ms", 1000 / hz), v.polling == i);
+    if v.caps.extras {
+        let w = (CW - 3.0 * 12.0) / 4.0;
+        for (i, hz) in RATES.iter().enumerate() {
+            let r = Rect::new(X0 + i as f32 * (w + 12.0), TOP, w, 60.0);
+            f.choice(Act::Polling(i), r, &format!("{hz} Hz"), &format!("{} ms", 1000 / hz), v.polling == i);
+        }
+    } else {
+        // Rates the mouse reported, e.g. 125 / 250 / 500 / 1000 Hz.
+        let n = v.basic.rates.len().max(1) as f32;
+        let w = (CW - (n - 1.0) * 12.0) / n;
+        for (i, hz) in v.basic.rates.iter().enumerate() {
+            let r = Rect::new(X0 + i as f32 * (w + 12.0), TOP, w, 60.0);
+            let ms = format!("{:.1} ms", 1000.0 / *hz as f32).replace(".0 ", " ");
+            f.choice(Act::BasicRate(*hz), r, &format!("{hz} Hz"), &ms, v.basic.rate == Some(*hz));
+        }
     }
 
     let card = Rect::new(X0, TOP + 60.0 + GAP, CW, 88.0);
@@ -642,6 +709,10 @@ fn performance(f: &mut Frame, v: &View) {
     f.g.text(&v.measured, Rect::new(card.x + 20.0, card.y + 34.0, 200.0, 42.0), 30.0, Weight::Bold, Align::Left, th().text);
     let hint = Rect::new(card.x + 230.0, card.y + 14.0, card.w - 250.0, 66.0);
     f.g.text(tr(T::PollingHelp), hint, 12.0, Weight::Normal, Align::Wrap, th().muted);
+
+    if !v.caps.extras {
+        return;
+    }
 
     // Debounce.
     let card = Rect::new(X0, card.y + card.h + GAP, CW, 112.0);
