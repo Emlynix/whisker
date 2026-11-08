@@ -7,17 +7,14 @@
 //!                                                  -> Whisker.exe --uninstall
 //! ```
 
-use crate::autostart::{self, Autostart};
+use super::autostart;
+use super::win::{Folder, known_folder, system_dir, wide};
+use crate::platform::{AUTOSTART_OFF_ARG, AUTOSTART_ON_ARG, Autostart, INSTALLED_ARG, Origin, UNINSTALL_ARG};
 use crate::store;
-use crate::win::{Folder, known_folder, system_dir, wide};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use windows_sys::Win32::System::Registry::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::{IDYES, MB_ICONQUESTION, MB_YESNO, MessageBoxW};
-
-pub const UNINSTALL_ARG: &str = "--uninstall";
-/// Passed to the freshly installed copy so it waits for the old process to exit.
-pub const INSTALLED_ARG: &str = "--installed";
 
 const EXE_NAME: &str = "Whisker.exe";
 const LINK_NAME: &str = "Whisker.lnk";
@@ -26,8 +23,6 @@ const DISPLAY_NAME: &str = "Whisker – mouse control";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// How long uninstall waits for a running instance to save and exit.
 const QUIT_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
-pub const AUTOSTART_ON_ARG: &str = "--autostart-on";
-pub const AUTOSTART_OFF_ARG: &str = "--autostart-off";
 
 pub fn install_dir() -> Option<PathBuf> {
     Some(known_folder(Folder::LocalAppData)?.join("Programs").join(crate::APP_NAME))
@@ -104,14 +99,6 @@ fn confirm(text: &str) -> bool {
     unsafe { MessageBoxW(std::ptr::null_mut(), t.as_ptr(), c.as_ptr(), MB_YESNO | MB_ICONQUESTION) == IDYES }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Origin {
-    /// Started from Windows "Apps" (`--uninstall`); another instance may run.
-    External,
-    /// Clicked inside the running app, which quits right after.
-    InApp,
-}
-
 /// Removes everything `install` created plus settings and statistics.
 /// Returns false when the user cancels.
 pub fn uninstall(origin: Origin) -> bool {
@@ -121,8 +108,8 @@ pub fn uninstall(origin: Origin) -> bool {
 
     // Let a running instance save and exit before its files are removed.
     if origin == Origin::External {
-        crate::single::request_quit();
-        crate::single::wait_closed(QUIT_WAIT);
+        super::single::request_quit();
+        super::single::wait_closed(QUIT_WAIT);
     }
     autostart::set(Autostart::Off);
 

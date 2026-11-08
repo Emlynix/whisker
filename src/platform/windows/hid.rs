@@ -1,11 +1,10 @@
-//! Generic HID access for mouse drivers: find interfaces by vendor and
-//! usage, then exchange input/output reports (with timeouts) or feature
-//! reports. Knows nothing about any protocol.
+//! Windows HID access: enumerate collections via SetupDi, exchange
+//! input/output reports (overlapped, with timeouts) or feature reports.
+//! Knows nothing about any protocol.
 //! Talks to `hid.dll` / `setupapi.dll` directly (no extra crates).
 
-use super::DeviceInfo;
-pub use super::Interface;
-use crate::win::wide;
+use super::win::wide;
+use crate::hid_link::{DeviceInfo, Interface};
 use std::time::{Duration, Instant};
 use windows_sys::Win32::Devices::DeviceAndDriverInstallation::*;
 use windows_sys::Win32::Devices::HumanInterfaceDevice::*;

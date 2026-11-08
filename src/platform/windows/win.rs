@@ -1,8 +1,7 @@
 //! Small Win32 helpers shared by platform modules.
 
-use windows_sys::Win32::Foundation::{HWND, SYSTEMTIME};
+use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::System::SystemInformation::GetLocalTime;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 #[derive(Clone, Copy)]
@@ -93,52 +92,5 @@ pub fn pump_messages() {
         while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
             DispatchMessageW(&msg);
         }
-    }
-}
-
-/// Local date `days_back` days ago as `YYYY-MM-DD`, e.g. `local_date(0)` is today.
-pub fn local_date(days_back: i64) -> String {
-    let mut t: SYSTEMTIME = unsafe { std::mem::zeroed() };
-    unsafe { GetLocalTime(&mut t) };
-
-    let today = days_from_civil(t.wYear as i64, t.wMonth as i64, t.wDay as i64);
-    let (y, m, d) = civil_from_days(today - days_back);
-    format!("{y:04}-{m:02}-{d:02}")
-}
-
-// Gregorian calendar <-> day number (H. Hinnant's algorithms).
-fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let mp = (m + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146097 + doe - 719468
-}
-
-fn civil_from_days(z: i64) -> (i64, i64, i64) {
-    let z = z + 719468;
-    let era = z.div_euclid(146097);
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + (m <= 2) as i64;
-    (y, m, d)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn calendar_roundtrip() {
-        assert_eq!(days_from_civil(1970, 1, 1), 0);
-        let d = days_from_civil(2026, 3, 1);
-        assert_eq!(civil_from_days(d - 1), (2026, 2, 28));
-        assert_eq!(civil_from_days(days_from_civil(2024, 3, 1) - 1), (2024, 2, 29));
     }
 }

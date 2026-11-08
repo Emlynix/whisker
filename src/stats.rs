@@ -1,15 +1,13 @@
 //! Usage statistics: clicks, wheel, distance and measured report rate,
-//! taken from Raw Input of the Lionel mouse only. Battery history is
+//! taken from the platform input hook (Raw Input on Windows) of the
+//! configured mouse only. Battery history is
 //! sampled from mouse status. Persisted to `%APPDATA%\Whisker\stats.txt`.
 
+use crate::platform::input;
 use crate::store;
-use crate::win;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use windows_sys::Win32::Foundation::{HANDLE, HWND, LPARAM, LRESULT, WPARAM};
-use windows_sys::Win32::UI::Input::*;
-use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use store::STATS_FILE;
 const METERS_PER_INCH: f64 = 0.0254;
@@ -22,16 +20,21 @@ const RATE_WINDOW: Duration = Duration::from_millis(250);
 const RATE_MIN_EVENTS: u32 = 20;
 const RATE_HOLD: Duration = Duration::from_secs(3);
 
-const MOUSE_DESKTOP: u16 = 0x01;
-const USAGE_MOUSE: u16 = 0x02;
-const MOUSE_MOVE_ABSOLUTE: u16 = 0x01;
-
-const BTN_LEFT: u16 = 0x0001;
-const BTN_RIGHT: u16 = 0x0004;
-const BTN_MIDDLE: u16 = 0x0010;
-const BTN_4: u16 = 0x0040;
-const BTN_5: u16 = 0x0100;
-const BTN_WHEEL: u16 = 0x0400;
+/// One mouse report from the platform input hook.
+pub struct MouseInput {
+    /// Backend id of the reporting device, stable while it is connected.
+    pub dev: usize,
+    /// Button went down in this report (side = button 4 or 5).
+    pub left: bool,
+    pub right: bool,
+    pub middle: bool,
+    pub side: bool,
+    /// Vertical wheel turned.
+    pub wheel: bool,
+    /// Relative motion in sensor counts; 0 for absolute pointers.
+    pub dx: i32,
+    pub dy: i32,
+}
 
 #[derive(Clone, Copy, Default)]
 pub struct Counters {
@@ -120,7 +123,7 @@ struct State {
     file: StatsFile,
     dpi: u32,
     dirty: bool,
-    /// Raw Input handle -> counts toward the statistics.
+    /// Input device id -> counts toward the statistics.
     ours: HashMap<usize, bool>,
     /// Only devices of this vendor id count; `None` = every mouse.
     vendor: Option<u16>,
@@ -137,7 +140,7 @@ pub struct Stats {
 }
 
 impl Stats {
-    /// Loads saved stats and starts the Raw Input listener thread.
+    /// Loads saved stats and starts the platform input hook.
     pub fn start() -> Self {
         let state = Arc::new(Mutex::new(State {
             file: store::load_text(STATS_FILE).map(|t| StatsFile::parse(&t)).unwrap_or_default(),
@@ -151,10 +154,7 @@ impl Stats {
         }));
         let _ = STATE.set(state.clone());
 
-        std::thread::Builder::new()
-            .name("rawinput".into())
-            .spawn(listen)
-            .expect("spawn raw input thread");
+        input::start(on_input);
         Self { state }
     }
 
@@ -191,8 +191,8 @@ impl Stats {
 
     pub fn totals(&self, period: Period) -> Counters {
         let s = self.state.lock().unwrap();
-        let today = win::local_date(0);
-        let week_start = win::local_date(6);
+        let today = local_date(0);
+        let week_start = local_date(6);
 
         let mut sum = Counters::default();
         for (day, c) in &s.file.days {
@@ -265,91 +265,71 @@ pub fn hours_left(samples: &[BatterySample]) -> Option<f64> {
     Some(last.pct as f64 / pct_per_hour)
 }
 
-// ---- Raw Input thread ------------------------------------------------------
-
-fn listen() {
-    let Some(hwnd) = win::message_window("WhiskerRawInput", Some(wndproc)) else {
-        return;
-    };
-
-    // INPUTSINK: receive mouse input even when our window is not focused.
-    let dev = RAWINPUTDEVICE {
-        usUsagePage: MOUSE_DESKTOP,
-        usUsage: USAGE_MOUSE,
-        dwFlags: RIDEV_INPUTSINK,
-        hwndTarget: hwnd,
-    };
-    unsafe {
-        RegisterRawInputDevices(&dev, 1, size_of::<RAWINPUTDEVICE>() as u32);
-    }
-    win::pump_messages();
+/// Local date `days_back` days ago as `YYYY-MM-DD`, e.g. `local_date(0)` is today.
+fn local_date(days_back: i64) -> String {
+    let (y, m, d) = crate::platform::today();
+    let (y, m, d) = civil_from_days(days_from_civil(y, m, d) - days_back);
+    format!("{y:04}-{m:02}-{d:02}")
 }
 
-unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    if msg == WM_INPUT {
-        if let Some(input) = unsafe { read_raw(lp) } {
-            on_input(&input);
-        }
-    }
-    unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
+// Gregorian calendar <-> day number (H. Hinnant's algorithms).
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146097 + doe - 719468
 }
 
-unsafe fn read_raw(lp: LPARAM) -> Option<RAWINPUT> {
-    let mut raw = RAWINPUT::default();
-    let mut size = size_of::<RAWINPUT>() as u32;
-    let header = size_of::<RAWINPUTHEADER>() as u32;
-    let n = unsafe { GetRawInputData(lp as HRAWINPUT, RID_INPUT, (&mut raw as *mut RAWINPUT).cast(), &mut size, header) };
-
-    if n == u32::MAX || raw.header.dwType != RIM_TYPEMOUSE {
-        return None;
-    }
-    Some(raw)
+fn civil_from_days(z: i64) -> (i64, i64, i64) {
+    let z = z + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + (m <= 2) as i64;
+    (y, m, d)
 }
 
-/// Device name contains `VID_xxxx` of the wanted vendor (or any with `None`).
-fn is_counted(dev: HANDLE, vendor: Option<u16>) -> bool {
+// ---- Counting --------------------------------------------------------------
+
+/// Device of the wanted vendor (or any with `None`).
+fn is_counted(dev: usize, vendor: Option<u16>) -> bool {
     let Some(vid) = vendor else {
         return true;
     };
-    let mut len = 0u32;
-    unsafe {
-        GetRawInputDeviceInfoW(dev, RIDI_DEVICENAME, std::ptr::null_mut(), &mut len);
-    }
-    let mut buf = vec![0u16; len as usize + 1];
-    let n = unsafe { GetRawInputDeviceInfoW(dev, RIDI_DEVICENAME, buf.as_mut_ptr().cast(), &mut len) };
-    if n == u32::MAX {
-        return false;
-    }
-    String::from_utf16_lossy(&buf).to_uppercase().contains(&format!("VID_{vid:04X}"))
+    input::has_vendor(dev, vid)
 }
 
-fn on_input(raw: &RAWINPUT) {
+fn on_input(m: &MouseInput) {
     let Some(state) = STATE.get() else {
         return;
     };
     let mut s = state.lock().unwrap();
 
-    let dev = raw.header.hDevice;
     let vendor = s.vendor;
-    let ours = *s.ours.entry(dev as usize).or_insert_with(|| is_counted(dev, vendor));
+    let ours = *s.ours.entry(m.dev).or_insert_with(|| is_counted(m.dev, vendor));
     if !ours {
         return;
     }
 
-    let m = unsafe { raw.data.mouse };
-    let flags = unsafe { m.Anonymous.Anonymous.usButtonFlags };
-    let moved = m.usFlags & MOUSE_MOVE_ABSOLUTE == 0 && (m.lLastX != 0 || m.lLastY != 0);
+    let moved = m.dx != 0 || m.dy != 0;
     let dpi = s.dpi as f64;
 
-    let day = s.file.days.entry(win::local_date(0)).or_default();
-    day.left += (flags & BTN_LEFT != 0) as u64;
-    day.right += (flags & BTN_RIGHT != 0) as u64;
-    day.middle += (flags & BTN_MIDDLE != 0) as u64;
-    day.side += (flags & (BTN_4 | BTN_5) != 0) as u64;
-    day.wheel += (flags & BTN_WHEEL != 0) as u64;
+    let day = s.file.days.entry(local_date(0)).or_default();
+    day.left += m.left as u64;
+    day.right += m.right as u64;
+    day.middle += m.middle as u64;
+    day.side += m.side as u64;
+    day.wheel += m.wheel as u64;
 
     if moved {
-        let counts = ((m.lLastX as f64).powi(2) + (m.lLastY as f64).powi(2)).sqrt();
+        let counts = ((m.dx as f64).powi(2) + (m.dy as f64).powi(2)).sqrt();
         day.distance_m += counts / dpi * METERS_PER_INCH;
         track_rate(&mut s);
     }
@@ -402,6 +382,14 @@ mod tests {
 bat=100 60 0
 ";
         assert_eq!(StatsFile::parse(text).format(), text);
+    }
+
+    #[test]
+    fn calendar_roundtrip() {
+        assert_eq!(days_from_civil(1970, 1, 1), 0);
+        let d = days_from_civil(2026, 3, 1);
+        assert_eq!(civil_from_days(d - 1), (2026, 2, 28));
+        assert_eq!(civil_from_days(days_from_civil(2024, 3, 1) - 1), (2024, 2, 29));
     }
 
     #[test]

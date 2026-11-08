@@ -298,7 +298,7 @@ fn run(target: Target, rx: Receiver<Command>, on_event: impl Fn(Event)) {
             Target::Hidpp | Target::Razer | Target::Eternico | Target::Sinowealth | Target::SteelSeries | Target::OemHid | Target::Asus | Target::Corsair | Target::Roccat => {
                 w.poll_driver(&on_event)
             }
-            Target::Bluetooth(addr) => match crate::bluetooth::battery(addr) {
+            Target::Bluetooth(addr) => match crate::platform::bluetooth::battery(addr) {
                 Some(pct) => on_event(Event::Basic(Reading { battery: Some(pct), ..Reading::default() })),
                 None => on_event(Event::Absent),
             },

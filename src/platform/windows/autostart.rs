@@ -2,24 +2,18 @@
 //! app starts hidden in the notification area. Always points at the
 //! installed copy: a portable exe in e.g. Downloads never runs at login.
 
-use crate::win::wide;
+use super::win::wide;
+use crate::platform::{Autostart, TRAY_ARG};
 use windows_sys::Win32::Foundation::ERROR_SUCCESS;
 use windows_sys::Win32::System::Registry::*;
 
 const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const VALUE_NAME: &str = crate::APP_NAME;
-pub const TRAY_ARG: &str = "--tray";
 const MAX_LINE: usize = 1024;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Autostart {
-    On,
-    Off,
-}
 
 /// `"C:\...\Programs\Whisker\Whisker.exe" --tray`, only if that exe exists.
 fn launch_line() -> Option<String> {
-    let exe = crate::install::installed_exe().filter(|p| p.is_file())?;
+    let exe = super::install::installed_exe().filter(|p| p.is_file())?;
     Some(format!("\"{}\" {TRAY_ARG}", exe.display()))
 }
 

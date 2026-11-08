@@ -1,12 +1,7 @@
-//! Color themes. `System` follows the Windows light/dark app setting.
+//! Color themes. `System` follows the OS light/dark app setting.
 
 use crate::gfx::Color;
-use crate::win::wide;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
-
-const PERSONALIZE_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
-const LIGHT_VALUE: &str = "AppsUseLightTheme";
 
 pub struct Theme {
     pub id: &'static str,
@@ -101,7 +96,7 @@ pub static THEMES: [Theme; 9] = [
 const DARK: usize = 0;
 const LIGHT: usize = 1;
 
-/// User's pick: follow Windows, or a fixed theme by index into `THEMES`.
+/// User's pick: follow the OS, or a fixed theme by index into `THEMES`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Choice {
     System,
@@ -127,22 +122,12 @@ pub fn current() -> &'static Theme {
     &THEMES[CURRENT.load(Ordering::Relaxed)]
 }
 
-/// Applies a choice; `System` reads the Windows setting now.
+/// Applies a choice; `System` reads the OS setting now.
 pub fn apply(c: Choice) {
     let i = match c {
         Choice::Fixed(i) => i.min(THEMES.len() - 1),
-        Choice::System if os_prefers_light() => LIGHT,
-        Choice::System => DARK,
+        Choice::System if crate::platform::dark_mode() => DARK,
+        Choice::System => LIGHT,
     };
     CURRENT.store(i, Ordering::Relaxed);
-}
-
-fn os_prefers_light() -> bool {
-    let (key, name) = (wide(PERSONALIZE_KEY), wide(LIGHT_VALUE));
-    let mut value: u32 = 0;
-    let mut size = size_of::<u32>() as u32;
-    let r = unsafe {
-        RegGetValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr(), RRF_RT_REG_DWORD, std::ptr::null_mut(), (&mut value as *mut u32).cast(), &mut size)
-    };
-    r == 0 && value == 1
 }

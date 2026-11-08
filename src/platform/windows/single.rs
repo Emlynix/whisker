@@ -1,7 +1,8 @@
 //! One running instance. A second launch signals the first one to show
 //! its window, then exits. The uninstaller signals it to quit.
 
-use crate::win::wide;
+use super::win::wide;
+use crate::platform::{Claim, Instance};
 use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
 use windows_sys::Win32::System::Threading::*;
@@ -12,19 +13,6 @@ const QUIT_EVENT: &str = "Local\\Whisker.Quit";
 const RETRY_GAP: Duration = Duration::from_millis(100);
 const WAIT_LIMIT: Duration = Duration::from_secs(5);
 const WAIT_OBJECT_0: u32 = 0;
-
-pub enum Instance {
-    First,
-    AlreadyRunning,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Claim {
-    /// Hand over to a running instance.
-    Now,
-    /// Previous process is exiting (after install); wait for it.
-    WaitForExit,
-}
 
 fn try_mutex() -> bool {
     let name = wide(MUTEX_NAME);

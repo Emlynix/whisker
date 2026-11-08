@@ -1,34 +1,33 @@
 //! Controller: the only place that connects the UI with the services.
 //!
 //! ```text
-//!   window (Win32 shell) --Act--> Controller --> MouseService --> HidLink
-//!        ^                            |-------> Stats (Raw Input)
-//!        +------ view::draw(View) ----+-------> store / autostart / install
+//!   platform window --Act--> Controller --> MouseService --> HidLink
+//!        ^                       |-------> Stats (input hook)
+//!        +-- view::draw(View) ---+-------> store / autostart / install
 //! ```
 //!
 //! Lives on the UI thread in a thread-local; other threads reach it with
 //! `window::post(.. with_ctrl(..))`.
 
-use crate::autostart::{self, Autostart};
 use crate::devices::{self, CAPS_NONE, Caps, Family, Link, Match, Support};
 use crate::drivers::{Ability, Ident};
 use crate::mouse::Target;
 use crate::hid_link::{self, DeviceInfo};
 use crate::gfx::Gfx;
 use crate::i18n::{self, Lang, T, fill, tr};
-use crate::install;
 use crate::mouse::{Command, Event, MouseService};
 use crate::keys;
 use crate::protocol::{
     self, Action, BREATHING_MAX, DEFAULT_ACTIONS, DELAY_MAX_MS, Edge, Effect, Ev, MACRO_MAX_EVENTS, MB_LEFT, MOD_ALT,
     MOD_CTRL, MOD_SHIFT, MOD_WIN, MacroEvent, PollingRate, STAGE_COUNT, Status,
 };
+use crate::platform::{self, Autostart, autostart, install, window};
+use crate::shell::{Hooks, KeyEvent, Phase};
 use crate::stats::{self, Period, Stats};
 use crate::theme::{self, THEMES};
 use crate::store::{self, AppConfig};
 use crate::tray::{Level, TrayAction};
 use crate::view::{self, Act, Badge, BasicView, Charge, DelayMode, Detect, DetectRow, DeviceView, Hit, Picker, StageView, View};
-use crate::window::{self, Hooks, KeyEvent, Phase};
 use std::cell::RefCell;
 use std::time::Instant;
 
@@ -135,7 +134,7 @@ pub fn run(mode: StartMode) {
         post(move |c| c.on_mice(mice));
     });
 
-    crate::single::listen(|| post(|c| c.show()), || window::post(window::quit));
+    platform::single::listen(|| post(|c| c.show()), || window::post(window::quit));
     window::set_timer(TIMER_SAVE, SAVE_MS);
 
     if mode == StartMode::Visible || first_run {
@@ -1130,7 +1129,7 @@ impl Controller {
     }
 
     fn uninstall(&mut self) {
-        if install::uninstall(install::Origin::InApp) {
+        if install::uninstall(platform::Origin::InApp) {
             self.removed = true;
             window::quit();
         }

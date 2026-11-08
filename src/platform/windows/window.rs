@@ -1,12 +1,13 @@
 //! Platform shell: one Win32 window painted by `gfx`, the message loop,
-//! DPI scaling, mouse input and the tray icon. Turns mouse input on the
-//! hits of the last frame into `Act`s and hands them to `Hooks`.
+//! DPI scaling, mouse input and the tray icon. Mouse input goes through
+//! `shell::Pointer`, whose `Act`s are handed to `Hooks`.
 //! Knows nothing about the mouse or the app's state.
 
-use crate::gfx::Gfx;
-use crate::tray::{self, TrayAction};
-use crate::view::{Act, Hit, Kind};
-use crate::win::wide;
+use super::gfx::Gfx;
+use super::tray;
+use super::win::wide;
+use crate::shell::{Hooks, KeyEvent, Mods, Moved, Phase, Pointer, Released};
+use crate::tray::Level;
 use std::cell::RefCell;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -28,46 +29,10 @@ const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
 const ICON_RESOURCE: usize = 1;
 const STYLE: WINDOW_STYLE = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
 
-/// Keyboard event for the app (shortcut capture, macro recording).
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct KeyEvent {
-    pub vk: u16,
-    pub down: bool,
-    /// Right Ctrl/Alt and other extended keys.
-    pub extended: bool,
-    /// Auto-repeat of a held key.
-    pub repeat: bool,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Phase {
-    Move,
-    Done,
-}
-
-/// Callbacks into the app. Plain fns: the app keeps its own state.
-pub struct Hooks {
-    pub draw: fn(&mut Gfx, Option<Act>) -> Vec<Hit>,
-    pub act: fn(Act),
-    pub drag: fn(Act, usize, Phase),
-    pub timer: fn(usize),
-    pub tray: fn(TrayAction),
-    pub hidden: fn(),
-    /// Windows settings changed (e.g. light/dark mode).
-    pub settings: fn(),
-    /// Returns true when the app consumed the key.
-    pub key: fn(KeyEvent) -> bool,
-    /// The window lost keyboard focus.
-    pub focus_lost: fn(),
-}
-
 struct Shell {
     gfx: Gfx,
     hooks: Hooks,
-    hits: Vec<Hit>,
-    hot: Option<Act>,
-    pressed: Option<Act>,
-    drag: Option<Hit>,
+    pointer: Pointer,
     scale: f32,
     tracking: bool,
 }
@@ -119,15 +84,6 @@ pub fn set_dark_title(dark: bool) {
     unsafe { DwmSetWindowAttribute(hwnd(), DWMWA_USE_IMMERSIVE_DARK_MODE, (&v as *const u32).cast(), 4) };
 }
 
-/// Modifier keys held right now (for shortcut capture).
-#[derive(Clone, Copy, Default)]
-pub struct Mods {
-    pub ctrl: bool,
-    pub shift: bool,
-    pub alt: bool,
-    pub win: bool,
-}
-
 pub fn modifiers() -> Mods {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetKeyState;
     const VK_SHIFT: i32 = 0x10;
@@ -139,7 +95,7 @@ pub fn modifiers() -> Mods {
     Mods { ctrl: down(VK_CONTROL), shift: down(VK_SHIFT), alt: down(VK_MENU), win: down(VK_LWIN) || down(VK_RWIN) }
 }
 
-pub fn set_tray(level: tray::Level, tip: &str) {
+pub fn set_tray(level: Level, tip: &str) {
     tray::update(hwnd(), level, tip);
 }
 
@@ -173,7 +129,7 @@ pub fn create(title: &str, w: f32, h: f32, hooks: Hooks) -> bool {
         };
         gfx.set_dpi(dpi);
         let scale = dpi as f32 / BASE_DPI;
-        SHELL.with(|s| *s.borrow_mut() = Some(Shell { gfx, hooks, hits: Vec::new(), hot: None, pressed: None, drag: None, scale, tracking: false }));
+        SHELL.with(|s| *s.borrow_mut() = Some(Shell { gfx, hooks, pointer: Pointer::default(), scale, tracking: false }));
 
         place(hwnd, w, h, dpi);
         tray::add(hwnd, crate::APP_NAME);
@@ -203,7 +159,7 @@ fn trim_memory() {
 }
 
 pub fn run() {
-    crate::win::pump_messages();
+    super::win::pump_messages();
 }
 
 fn with_shell<R>(f: impl FnOnce(&mut Shell) -> R) -> Option<R> {
@@ -214,19 +170,6 @@ fn mouse_pos(s: &Shell, lp: LPARAM) -> (f32, f32) {
     let x = (lp & 0xFFFF) as i16 as f32;
     let y = ((lp >> 16) & 0xFFFF) as i16 as f32;
     (x / s.scale, y / s.scale)
-}
-
-fn hit_at(s: &Shell, x: f32, y: f32) -> Option<Hit> {
-    // Last pushed is drawn on top, so search from the end.
-    s.hits.iter().rev().find(|h| h.rect.contains(x, y)).copied()
-}
-
-fn slider_value(h: &Hit, x: f32) -> usize {
-    let Kind::Slider { x0, x1, steps } = h.kind else {
-        return 0;
-    };
-    let t = ((x - x0) / (x1 - x0)).clamp(0.0, 1.0);
-    (t * (steps - 1) as f32).round() as usize
 }
 
 fn paint(hwnd: HWND) {
@@ -240,7 +183,8 @@ fn paint(hwnd: HWND) {
             if !s.gfx.begin(rc.right as u32, rc.bottom as u32) {
                 return;
             }
-            s.hits = (s.hooks.draw)(&mut s.gfx, s.hot);
+            let hits = (s.hooks.draw)(&mut s.gfx, s.pointer.hot());
+            s.pointer.set_hits(hits);
             s.gfx.end();
         });
         EndPaint(hwnd, &ps);
@@ -248,7 +192,7 @@ fn paint(hwnd: HWND) {
 }
 
 fn on_move(hwnd: HWND, lp: LPARAM) {
-    let mut call: Option<(fn(Act, usize, Phase), Act, usize)> = None;
+    let mut call = None;
     with_shell(|s| {
         if !s.tracking {
             let mut t = TRACKMOUSEEVENT { cbSize: size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: hwnd, dwHoverTime: 0 };
@@ -257,14 +201,10 @@ fn on_move(hwnd: HWND, lp: LPARAM) {
         }
 
         let (x, y) = mouse_pos(s, lp);
-        if let Some(h) = s.drag {
-            call = Some((s.hooks.drag, h.act, slider_value(&h, x)));
-            return;
-        }
-        let hot = hit_at(s, x, y).map(|h| h.act);
-        if hot != s.hot {
-            s.hot = hot;
-            invalidate();
+        match s.pointer.moved(x, y) {
+            Moved::Drag(act, v) => call = Some((s.hooks.drag, act, v)),
+            Moved::Redraw => invalidate(),
+            Moved::Nothing => {}
         }
     });
     if let Some((f, act, v)) = call {
@@ -276,16 +216,11 @@ fn on_down(hwnd: HWND, lp: LPARAM) {
     let mut call = None;
     with_shell(|s| {
         let (x, y) = mouse_pos(s, lp);
-        let Some(h) = hit_at(s, x, y) else {
+        let Some((act, v)) = s.pointer.down(x, y) else {
             return;
         };
-        if let Kind::Slider { .. } = h.kind {
-            s.drag = Some(h);
-            unsafe { SetCapture(hwnd) };
-            call = Some((s.hooks.drag, h.act, slider_value(&h, x)));
-            return;
-        }
-        s.pressed = Some(h.act);
+        unsafe { SetCapture(hwnd) };
+        call = Some((s.hooks.drag, act, v));
     });
     if let Some((f, act, v)) = call {
         f(act, v, Phase::Move);
@@ -297,15 +232,13 @@ fn on_up(lp: LPARAM) {
     let mut click = None;
     with_shell(|s| {
         let (x, y) = mouse_pos(s, lp);
-        if let Some(h) = s.drag.take() {
-            unsafe { ReleaseCapture() };
-            drag_call = Some((s.hooks.drag, h.act, slider_value(&h, x)));
-            return;
-        }
-        let pressed = s.pressed.take();
-        let under = hit_at(s, x, y).map(|h| h.act);
-        if pressed.is_some() && pressed == under {
-            click = pressed.map(|a| (s.hooks.act, a));
+        match s.pointer.up(x, y) {
+            Released::Drag(act, v) => {
+                unsafe { ReleaseCapture() };
+                drag_call = Some((s.hooks.drag, act, v));
+            }
+            Released::Click(a) => click = Some((s.hooks.act, a)),
+            Released::Nothing => {}
         }
     });
     if let Some((f, act, v)) = drag_call {
@@ -327,12 +260,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WM_MOUSELEAVE => {
             with_shell(|s| {
                 s.tracking = false;
-                s.hot = None;
+                s.pointer.leave();
             });
             invalidate();
         }
         WM_SETCURSOR if (lp & 0xFFFF) as u32 == HTCLIENT => {
-            let hot = with_shell(|s| s.hot.is_some() || s.drag.is_some()).unwrap_or(false);
+            let hot = with_shell(|s| s.pointer.busy()).unwrap_or(false);
             let cursor = if hot { IDC_HAND } else { IDC_ARROW };
             unsafe { SetCursor(LoadCursorW(std::ptr::null_mut(), cursor)) };
             return 1;

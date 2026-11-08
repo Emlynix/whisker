@@ -3,7 +3,6 @@
 //! A missing or mis-sized table is a compile error.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use windows_sys::Win32::Globalization::GetUserDefaultUILanguage;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(usize)]
@@ -321,26 +320,33 @@ pub fn fill(s: &str, args: &[&str]) -> String {
     out
 }
 
-/// Windows UI language mapped to a supported one, English otherwise.
+/// OS UI language mapped to a supported one, English otherwise.
 pub fn system_lang() -> Lang {
-    const PRIMARY_MASK: u16 = 0x3FF;
-    let id = unsafe { GetUserDefaultUILanguage() };
+    crate::platform::user_locale().map(|t| lang_of(&t)).unwrap_or(Lang::En)
+}
 
-    // Chinese: Traditional for Taiwan (0x0404), Hong Kong (0x0C04), Macau (0x1404).
-    if id & PRIMARY_MASK == 0x04 {
-        return if matches!(id, 0x0404 | 0x0C04 | 0x1404) { Lang::ZhHant } else { Lang::ZhHans };
+/// Locale name to language, e.g. `"sk-SK"` -> Sk, `"zh_TW"` -> ZhHant.
+fn lang_of(locale: &str) -> Lang {
+    let lower = locale.to_lowercase().replace('_', "-");
+    let mut parts = lower.split(['-', '.']);
+    let primary = parts.next().unwrap_or_default();
+
+    // Chinese: Traditional script, or Taiwan, Hong Kong, Macau.
+    if primary == "zh" {
+        let traditional = parts.any(|p| matches!(p, "hant" | "tw" | "hk" | "mo"));
+        return if traditional { Lang::ZhHant } else { Lang::ZhHans };
     }
-    match id & PRIMARY_MASK {
-        0x1B => Lang::Sk,
-        0x05 => Lang::Cs,
-        0x15 => Lang::Pl,
-        0x07 => Lang::De,
-        0x0C => Lang::Fr,
-        0x0A => Lang::Es,
-        0x16 => Lang::Pt,
-        0x10 => Lang::It,
-        0x11 => Lang::Ja,
-        0x12 => Lang::Ko,
+    match primary {
+        "sk" => Lang::Sk,
+        "cs" => Lang::Cs,
+        "pl" => Lang::Pl,
+        "de" => Lang::De,
+        "fr" => Lang::Fr,
+        "es" => Lang::Es,
+        "pt" => Lang::Pt,
+        "it" => Lang::It,
+        "ja" => Lang::Ja,
+        "ko" => Lang::Ko,
         _ => Lang::En,
     }
 }
@@ -2904,6 +2910,16 @@ mod tests {
     fn fill_replaces_in_order() {
         assert_eq!(fill("Stage {} of {}", &["2", "6"]), "Stage 2 of 6");
         assert_eq!(fill("no args", &["x"]), "no args");
+    }
+
+    #[test]
+    fn locale_names_map_to_languages() {
+        assert_eq!(lang_of("sk-SK"), Lang::Sk);
+        assert_eq!(lang_of("de_AT.UTF-8"), Lang::De);
+        assert_eq!(lang_of("zh-CN"), Lang::ZhHans);
+        assert_eq!(lang_of("zh-HK"), Lang::ZhHant);
+        assert_eq!(lang_of("zh-Hant-TW"), Lang::ZhHant);
+        assert_eq!(lang_of("nl-NL"), Lang::En);
     }
 
     #[test]

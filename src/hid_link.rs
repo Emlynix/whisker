@@ -1,15 +1,30 @@
 //! HID driver: finds the mouse configuration interface and moves raw
 //! 33-byte feature reports. Knows nothing about what the bytes mean.
 //! OS access goes through `raw` (enumeration and report I/O).
+//!
+//! BLE mice carry their Bluetooth address in the Windows HID path:
+//!
+//! ```text
+//! \\?\hid#{00001812-…}_dev_vid&02045e_pid&0040_rev&0300_b66b18d71e00&col01#…
+//!                                         address ^^^^^^^^^^^^
+//! ```
 
 use crate::protocol::{CONFIG_USAGE_PAGE, PID_WIRED, REPORT_ID, REPORT_LEN, VENDOR_ID};
 use raw::{Channel, interfaces};
 use std::time::Duration;
 
-pub mod raw;
+/// Generic HID access for mouse drivers: find interfaces by vendor and
+/// usage, then exchange input/output or feature reports with timeouts.
+pub mod raw {
+    pub use super::Interface;
+    pub use crate::platform::hid::{Channel, interfaces};
+}
 
 /// Time the firmware needs before a reply can be read back (vendor app uses 10 ms).
 const REPLY_DELAY: Duration = Duration::from_millis(10);
+/// HID-over-GATT service UUID as it appears in HID paths.
+const HOGP_TAG: &str = "{00001812-";
+const ADDRESS_LEN: usize = 12;
 
 pub struct HidLink {
     dev: Option<Channel>,
@@ -45,21 +60,35 @@ pub struct Interface {
 /// Only descriptors are read; nothing is sent to these devices.
 pub fn list_mice() -> Vec<DeviceInfo> {
     let mut out: Vec<DeviceInfo> = Vec::new();
-    for i in raw::mice() {
+    for i in crate::platform::hid::mice() {
         let mut info = i.info;
         if out.iter().any(|d| (d.vid, d.pid) == (info.vid, info.pid)) {
             continue;
         }
-        info.bt_address = crate::bluetooth::address_from_path(&i.path);
+        info.bt_address = bt_address(&i.path);
         // BLE mice often have no USB product string; use the Bluetooth name.
         if info.product.is_empty() {
-            if let Some(n) = info.bt_address.as_deref().and_then(crate::bluetooth::name) {
+            if let Some(n) = info.bt_address.as_deref().and_then(crate::platform::bluetooth::name) {
                 info.product = n;
             }
         }
         out.push(info);
     }
     out
+}
+
+/// Bluetooth address of a BLE HID device from its interface path, e.g.
+/// `"B66B18D71E00"`; `None` for USB devices.
+fn bt_address(path: &str) -> Option<String> {
+    let lower = path.to_lowercase();
+    if !lower.contains(HOGP_TAG) {
+        return None;
+    }
+    // The address is the 12 hex digits after the last "_" before "&col" / "#".
+    let head = lower.split('#').nth(1)?;
+    let head = head.split("&col").next()?;
+    let addr = head.rsplit('_').next()?;
+    (addr.len() == ADDRESS_LEN && addr.chars().all(|c| c.is_ascii_hexdigit())).then(|| addr.to_uppercase())
 }
 
 /// Config collections of the vendor, wired first as in the vendor app.
@@ -130,14 +159,28 @@ impl HidLink {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn address_from_ble_hid_path() {
+        let p = r"\\?\hid#{00001812-0000-1000-8000-00805f9b34fb}_dev_vid&02045e_pid&0040_rev&0300_b66b18d71e00&col01#a&1&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
+        assert_eq!(bt_address(p).as_deref(), Some("B66B18D71E00"));
+    }
+
+    #[test]
+    fn usb_path_has_no_address() {
+        let p = r"\\?\hid#vid_248a&pid_5b2f&mi_00#a&2736500e&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
+        assert_eq!(bt_address(p), None);
+    }
+
     /// Hardware probe: `cargo test -- --ignored --nocapture print_mice`.
     #[test]
     #[ignore]
     fn print_mice() {
-        for m in super::list_mice() {
+        for m in list_mice() {
             println!("{m:?}");
         }
-        let mut l = super::HidLink::new();
+        let mut l = HidLink::new();
         println!("config link present: {} {:?}", l.is_present(), l.info());
     }
 }

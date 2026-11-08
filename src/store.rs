@@ -20,7 +20,6 @@ use crate::protocol::{
     Lighting, Lod, MACRO_COUNT, MACRO_MAX_EVENTS, MacroEvent, PollingRate, Power, STAGE_COUNT,
 };
 use crate::theme;
-use crate::win::{Folder, known_folder};
 use std::path::PathBuf;
 
 const APP_DIR: &str = crate::APP_NAME;
@@ -83,12 +82,12 @@ impl Default for AppConfig {
 
 /// `%APPDATA%\Whisker`, resolved by the shell; `None` disables saving.
 pub fn data_dir() -> Option<PathBuf> {
-    Some(known_folder(Folder::RoamingAppData)?.join(APP_DIR))
+    Some(crate::platform::config_dir()?.join(APP_DIR))
 }
 
 /// Moves settings and statistics from the app's former folder name once.
 pub fn migrate_old_dir() {
-    let Some(base) = known_folder(Folder::RoamingAppData) else {
+    let Some(base) = crate::platform::config_dir() else {
         return;
     };
     let (old, new) = (base.join(OLD_APP_DIR), base.join(APP_DIR));
@@ -339,7 +338,7 @@ fn grid(v: &str) -> Vec<Vec<&str>> {
 
 /// Imports the active profile of the vendor app, e.g. `XYSetting1Value=0006`.
 fn import_vendor() -> Option<AppConfig> {
-    let dir = known_folder(Folder::RoamingAppData)?.join(VENDOR_DIR);
+    let dir = crate::platform::config_dir()?.join(VENDOR_DIR);
     let main = read_utf16_ini(&dir.join("config.ini"))?;
     let profile = value(&main, "CurrentProfile")?;
     if !profile.chars().all(|ch| ch.is_ascii_digit()) {
