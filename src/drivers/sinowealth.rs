@@ -65,6 +65,7 @@ const DESKTOP: u16 = 0x01;
 const MOUSE: u16 = 0x02;
 /// OpenRGB: a read right after a write returns zeros from 0x2C on.
 const SETTLE: Duration = Duration::from_millis(100);
+const TAIL_AT: usize = 0x2C;
 
 /// Sensor id at byte 9 of the block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -226,6 +227,12 @@ pub fn encode_rate(b: &mut [u8], hz: u32) {
     b[AT_RATE] = (b[AT_RATE] & !LOW) | code;
 }
 
+/// False when the bytes past the settings are all zero: a premature read
+/// (see `SETTLE`) that, written back, would wipe buttons, RGB and macros.
+pub fn tail_intact(b: &[u8], config_len: usize) -> bool {
+    b.get(TAIL_AT..config_len).is_some_and(|t| t.iter().any(|&x| x != 0))
+}
+
 /// Turns a read block into a write: id, command and payload size.
 pub fn seal(b: &mut [u8], id: u8, cmd: u8, config_len: usize) {
     b[0] = id;
@@ -294,9 +301,9 @@ impl Sinowealth {
         let vendor: Vec<&Interface> = ours.into_iter().filter(|i| i.usage_page >= VENDOR_PAGE).collect();
         let data_if = vendor.iter().find(|i| i.feature_len == BLOCK_LEN)?;
 
-        // Command collection: smallest feature report that answers 05 01.
-        let mut cands: Vec<&&Interface> = vendor.iter().filter(|i| (CMD_LEN..=BLOCK_LEN).contains(&i.feature_len)).collect();
-        cands.sort_by_key(|i| i.feature_len);
+        // Command collection: the 6-byte report that answers 05 01. Never
+        // probe other collections of a device not yet identified.
+        let cands = vendor.iter().filter(|i| i.feature_len == CMD_LEN);
         let (cmd, cmd_len, fw) = cands.into_iter().find_map(|i| {
             let ch = Channel::open(&i.path)?;
             let fw = parse_fw(&query(&ch, i.feature_len, CMD_FIRMWARE)?)?;
@@ -345,7 +352,19 @@ impl Sinowealth {
         Some((b, c, cmd))
     }
 
-    /// Writes back a block `fetch` just returned (libratbag `write_configs`).
+    /// Block for read-modify-write: two equal reads with an intact tail,
+    /// so a glitched read is never written back to flash.
+    fn fetch_stable(&mut self) -> Option<(Vec<u8>, Config, u8)> {
+        let len = self.model.write_len?;
+        let (a, c, cmd) = self.fetch()?;
+        let (b, _, _) = self.fetch()?;
+        if a != b || !tail_intact(&a, len) {
+            return None;
+        }
+        Some((a, c, cmd))
+    }
+
+    /// Writes back a block `fetch_stable` returned (libratbag `write_configs`).
     fn store(&mut self, mut b: Vec<u8>, cmd: u8) -> bool {
         let Some(len) = self.model.write_len else {
             return false;
@@ -388,7 +407,7 @@ impl Sinowealth {
         if self.model.write_len.is_none() {
             return false;
         }
-        let Some((mut b, c, cmd)) = self.fetch() else {
+        let Some((mut b, c, cmd)) = self.fetch_stable() else {
             return false;
         };
         encode_dpi(&mut b, &c, dpi);
@@ -400,7 +419,7 @@ impl Sinowealth {
         if self.model.write_len.is_none() {
             return false;
         }
-        let Some((mut b, _, cmd)) = self.fetch() else {
+        let Some((mut b, _, cmd)) = self.fetch_stable() else {
             return false;
         };
         encode_rate(&mut b, hz);
@@ -500,6 +519,15 @@ mod tests {
         assert_eq!(b[AT_RATE], 0x83);
         encode_rate(&mut b, 300);
         assert_eq!(b[AT_RATE], 0x82);
+    }
+
+    #[test]
+    fn zeroed_tail_is_not_written() {
+        let mut b = block();
+        assert!(tail_intact(&b, 131));
+        b[TAIL_AT..].fill(0);
+        assert!(!tail_intact(&b, 131));
+        assert!(!tail_intact(&b[..10], 131));
     }
 
     #[test]

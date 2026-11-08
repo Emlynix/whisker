@@ -251,7 +251,9 @@ impl OemHid {
             let Some((iface, p)) = found else {
                 continue;
             };
-            let ch = Channel::open(&iface.path)?;
+            let Some(ch) = Channel::open(&iface.path) else {
+                continue;
+            };
             return Some((OemHid { ch, port: p, spec: p.spec, tries: 0 }, iface.info));
         }
         None
