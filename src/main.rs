@@ -9,6 +9,7 @@ pub const APP_NAME: &str = "Whisker";
 
 mod app;
 mod autostart;
+mod devices;
 mod gfx;
 mod hid_link;
 mod i18n;

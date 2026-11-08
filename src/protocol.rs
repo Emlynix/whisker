@@ -100,6 +100,8 @@ pub struct Status {
     /// Active DPI stage, 0-based. Changes when the DPI button is pressed.
     pub active_stage: usize,
     pub sensor: u8,
+    /// Whole reply, shown as diagnostics.
+    pub raw: [u8; REPORT_LEN],
 }
 
 fn frame(cmd: u8, seq: u8, data: &[u8]) -> [u8; REPORT_LEN] {
@@ -298,7 +300,10 @@ pub fn parse_status(r: &[u8]) -> Option<Status> {
     let battery = if charge == Charge::Full { 100 } else { r[0x12].min(100) };
     let active_stage = ((r[0x10] >> 4) as usize).saturating_sub(1).min(STAGE_COUNT - 1);
 
-    Some(Status { battery, charge, active_stage, sensor: r[0x0F] })
+    let mut raw = [0u8; REPORT_LEN];
+    let n = r.len().min(REPORT_LEN);
+    raw[..n].copy_from_slice(&r[..n]);
+    Some(Status { battery, charge, active_stage, sensor: r[0x0F], raw })
 }
 
 #[cfg(test)]
@@ -315,7 +320,8 @@ mod tests {
     #[test]
     fn parses_captured_status() {
         let s = parse_status(&hex(CAPTURED)).unwrap();
-        assert_eq!(s, Status { battery: 60, charge: Charge::Discharging, active_stage: 1, sensor: 0x25 });
+        assert_eq!((s.battery, s.charge, s.active_stage, s.sensor), (60, Charge::Discharging, 1, 0x25));
+        assert_eq!(s.raw.to_vec(), hex(CAPTURED));
     }
 
     #[test]

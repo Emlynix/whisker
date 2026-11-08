@@ -12,7 +12,6 @@ use windows_sys::Win32::UI::Input::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use store::STATS_FILE;
-const VENDOR_TAG: &str = "VID_248A";
 const METERS_PER_INCH: f64 = 0.0254;
 
 const BATTERY_SAMPLE_EVERY: u64 = 5 * 60;
@@ -121,7 +120,10 @@ struct State {
     file: StatsFile,
     dpi: u32,
     dirty: bool,
+    /// Raw Input handle -> counts toward the statistics.
     ours: HashMap<usize, bool>,
+    /// Only devices of this vendor id count; `None` = every mouse.
+    vendor: Option<u16>,
     rate_start: Instant,
     rate_count: u32,
     rate: Option<(u32, Instant)>,
@@ -142,6 +144,7 @@ impl Stats {
             dpi: 1600,
             dirty: false,
             ours: HashMap::new(),
+            vendor: None,
             rate_start: Instant::now(),
             rate_count: 0,
             rate: None,
@@ -153,6 +156,15 @@ impl Stats {
             .spawn(listen)
             .expect("spawn raw input thread");
         Self { state }
+    }
+
+    /// Restricts counting to one vendor id (the configured mouse) or all mice.
+    pub fn set_vendor(&self, vid: Option<u16>) {
+        let mut s = self.state.lock().unwrap();
+        if s.vendor != vid {
+            s.vendor = vid;
+            s.ours.clear();
+        }
     }
 
     pub fn set_dpi(&self, dpi: u32) {
@@ -294,7 +306,11 @@ unsafe fn read_raw(lp: LPARAM) -> Option<RAWINPUT> {
     Some(raw)
 }
 
-fn is_lionel(dev: HANDLE) -> bool {
+/// Device name contains `VID_xxxx` of the wanted vendor (or any with `None`).
+fn is_counted(dev: HANDLE, vendor: Option<u16>) -> bool {
+    let Some(vid) = vendor else {
+        return true;
+    };
     let mut len = 0u32;
     unsafe {
         GetRawInputDeviceInfoW(dev, RIDI_DEVICENAME, std::ptr::null_mut(), &mut len);
@@ -304,7 +320,7 @@ fn is_lionel(dev: HANDLE) -> bool {
     if n == u32::MAX {
         return false;
     }
-    String::from_utf16_lossy(&buf).to_uppercase().contains(VENDOR_TAG)
+    String::from_utf16_lossy(&buf).to_uppercase().contains(&format!("VID_{vid:04X}"))
 }
 
 fn on_input(raw: &RAWINPUT) {
@@ -314,7 +330,8 @@ fn on_input(raw: &RAWINPUT) {
     let mut s = state.lock().unwrap();
 
     let dev = raw.header.hDevice;
-    let ours = *s.ours.entry(dev as usize).or_insert_with(|| is_lionel(dev));
+    let vendor = s.vendor;
+    let ours = *s.ours.entry(dev as usize).or_insert_with(|| is_counted(dev, vendor));
     if !ours {
         return;
     }

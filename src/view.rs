@@ -21,7 +21,10 @@ use crate::protocol::{
 };
 
 mod buttons;
+mod device;
 pub use buttons::{DelayMode, Picker, Tab};
+pub use device::{Badge, Detect, DetectRow, DeviceView};
+use crate::devices::Caps;
 use crate::store::{DEBOUNCE_CHOICES, SLEEP_CHOICES};
 use crate::theme::{self, THEMES, Theme};
 
@@ -42,11 +45,24 @@ const RADIUS: f32 = 12.0;
 const LOW: u8 = 20;
 const MID: u8 = 50;
 
-pub const PAGES: [T; 9] = [
+pub const PAGES: [T; 10] = [
     T::PageOverview, T::PageDpi, T::PagePolling, T::PageLighting, T::PageButtons, T::PageMacros, T::PageStats,
-    T::PageAppearance, T::PageSettings,
+    T::PageDevice, T::PageAppearance, T::PageSettings,
 ];
-pub const PAGE_SETTINGS: usize = 8;
+pub const PAGE_SETTINGS: usize = 9;
+const NAV_TOP: f32 = 76.0;
+const NAV_STEP: f32 = 40.0;
+
+/// Whether a page applies to the selected mouse.
+pub fn page_visible(page: usize, caps: &Caps) -> bool {
+    match page {
+        1 => caps.dpi,
+        2 => caps.performance,
+        3 => caps.lighting,
+        4 | 5 => caps.buttons,
+        _ => true,
+    }
+}
 
 /// Pickable colors for lighting and the DPI indicator.
 pub const PALETTE: [u32; 12] = [
@@ -113,6 +129,10 @@ pub enum Act {
     MacroRecord,
     MacroClear,
     MacroDelay(DelayMode),
+    ChangeMouse,
+    DetectSel(usize),
+    DetectManual,
+    DetectUse,
 }
 
 #[derive(Clone, Copy)]
@@ -186,6 +206,13 @@ pub struct View {
     pub delay_mode: DelayMode,
     /// Short warning under the buttons list (e.g. last left click removed).
     pub notice: String,
+    /// What the selected mouse supports; hides other pages.
+    pub caps: Caps,
+    /// Selected mouse, shown under the app name.
+    pub device_name: String,
+    pub device: DeviceView,
+    /// Open "which mouse" dialog.
+    pub detect: Option<Detect>,
 }
 
 struct Frame<'a> {
@@ -311,7 +338,8 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
         4 => buttons::buttons_page(&mut f, v),
         5 => buttons::macros_page(&mut f, v),
         6 => stats(&mut f, v),
-        7 => appearance(&mut f, v),
+        7 => device::device_page(&mut f, v),
+        8 => appearance(&mut f, v),
         _ => settings(&mut f, v),
     }
 
@@ -321,10 +349,13 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
         buttons::picker(&mut f, v, p);
     }
 
+    // Modal dialogs: drop hits of the page underneath. Install comes first.
     if v.ask_setup {
-        // The dialog is modal: drop hits of the page underneath.
         f.hits.clear();
         setup_dialog(&mut f, v);
+    } else if let Some(d) = &v.detect {
+        f.hits.clear();
+        device::detect_dialog(&mut f, d);
     }
     f.hits
 }
@@ -391,6 +422,17 @@ fn icon(g: &Gfx, page: usize, x: f32, y: f32, c: Color) {
             }
         }
         7 => {
+            // Chip: device info.
+            let (x0, y0) = p(6.0, 6.0);
+            g.stroke(Rect::new(x0, y0, 12.0 * s, 12.0 * s), 2.0, w, c);
+            for k in [9.0, 12.0, 15.0] {
+                for (a, b, d, e) in [(k, 2.0, k, 5.0), (k, 19.0, k, 22.0), (2.0, k, 5.0, k), (19.0, k, 22.0, k)] {
+                    let ((lx0, ly0), (lx1, ly1)) = (p(a, b), p(d, e));
+                    g.line(lx0, ly0, lx1, ly1, 1.4, c);
+                }
+            }
+        }
+        8 => {
             // Palette: ring with three paint dots.
             let (cx, cy) = p(12.0, 12.0);
             g.ring(cx, cy, 9.0 * s, w, c);
@@ -423,22 +465,27 @@ fn sidebar(f: &mut Frame, v: &View) {
 
     mouse_logo(f.g, 26.0, 20.0);
     f.g.text(crate::APP_NAME, Rect::new(56.0, 16.0, 140.0, 24.0), 18.0, Weight::Bold, Align::Left, th().text);
-    f.g.text("White Shark", Rect::new(56.0, 38.0, 140.0, 16.0), 11.0, Weight::Normal, Align::Left, th().faint);
+    let sub = Rect::new(56.0, 38.0, SIDE_W - 70.0, 16.0);
+    f.g.text(&v.device_name, sub, fit_size(&v.device_name, sub.w, 11.0), Weight::Normal, Align::Left, th().faint);
 
-    for (i, &key) in PAGES.iter().enumerate() {
+    let visible = PAGES.iter().enumerate().filter(|(i, _)| page_visible(*i, &v.caps));
+    for (k, (i, &key)) in visible.enumerate() {
         let name = tr(key);
-        let r = Rect::new(14.0, 80.0 + i as f32 * 44.0, SIDE_W - 28.0, 40.0);
+        let r = Rect::new(14.0, NAV_TOP + k as f32 * NAV_STEP, SIDE_W - 28.0, NAV_STEP - 4.0);
         let hot = f.button(Act::Nav(i), r);
         let sel = v.page == i;
         if sel || hot {
             f.g.fill(r, 8.0, if sel { th().accent_soft } else { th().hover });
         }
-        icon(f.g, i, r.x + 12.0, r.y + 11.0, if sel { th().accent } else { th().muted });
+        icon(f.g, i, r.x + 12.0, r.y + 9.0, if sel { th().accent } else { th().muted });
         let label = Rect::new(r.x + 42.0, r.y, r.w - 42.0, r.h);
         f.g.text(name, label, 14.0, Weight::Normal, Align::Left, if sel { th().text } else { th().muted });
     }
 
-    // Connection + battery summary.
+    // Connection + battery summary (only for mice with a driver).
+    if !v.caps.battery {
+        return;
+    }
     let card = Rect::new(14.0, HEIGHT - 78.0, SIDE_W - 28.0, 64.0);
     f.g.fill(card, 10.0, th().card);
     f.g.circle(card.x + 16.0, card.y + 20.0, 4.0, if v.connected { th().good } else { th().faint });
@@ -461,6 +508,10 @@ fn stat_card(f: &mut Frame, r: Rect, label: &str, value: &str, note: &str) {
 }
 
 fn overview(f: &mut Frame, v: &View) {
+    if !v.caps.battery {
+        overview_basic(f, v);
+        return;
+    }
     let tint = battery_color(v);
 
     let card = Rect::new(X0, TOP, CW, 118.0);
@@ -500,6 +551,20 @@ fn overview(f: &mut Frame, v: &View) {
         f.choice(Act::Activate(i), Rect::new(x, card.y + 40.0, 80.0, 38.0), &s.dpi.to_string(), "", i == v.active);
         x += 88.0;
     }
+}
+
+/// Overview for a mouse without a driver: model and today's statistics.
+fn overview_basic(f: &mut Frame, v: &View) {
+    let card = Rect::new(X0, TOP, CW, 96.0);
+    f.card(card);
+    f.caption(tr(T::DevModel), card.x + 20.0, card.y + 20.0);
+    f.g.text(&v.device_name, Rect::new(card.x + 20.0, card.y + 40.0, card.w - 40.0, 36.0), 24.0, Weight::Bold, Align::Left, th().text);
+
+    let w = (CW - GAP) / 2.0;
+    let y = card.y + card.h + GAP;
+    let today = fill(tr(T::ClicksMoved), &[&v.today_distance]);
+    stat_card(f, Rect::new(X0, y, w, 110.0), tr(T::Today), &v.today_clicks, &today);
+    stat_card(f, Rect::new(X0 + w + GAP, y, w, 110.0), tr(T::Measured), &v.measured, tr(T::PollingRate));
 }
 
 fn dpi(f: &mut Frame, v: &View) {

@@ -10,6 +10,8 @@
 //! `window::post(.. with_ctrl(..))`.
 
 use crate::autostart::{self, Autostart};
+use crate::devices::{self, CAPS_NONE, Caps, Link, Match, Support};
+use crate::hid_link::{self, DeviceInfo};
 use crate::gfx::Gfx;
 use crate::i18n::{self, Lang, T, fill, tr};
 use crate::install;
@@ -23,7 +25,7 @@ use crate::stats::{self, Period, Stats};
 use crate::theme::{self, THEMES};
 use crate::store::{self, AppConfig};
 use crate::tray::{Level, TrayAction};
-use crate::view::{self, Act, Charge, DelayMode, Hit, Picker, StageView, View};
+use crate::view::{self, Act, Badge, Charge, DelayMode, Detect, DetectRow, DeviceView, Hit, Picker, StageView, View};
 use crate::window::{self, Hooks, KeyEvent, Phase};
 use std::cell::RefCell;
 use std::time::Instant;
@@ -69,6 +71,10 @@ struct Controller {
     removed: bool,
     /// Time of the last recorded macro step.
     last_step: Option<Instant>,
+    /// Identity of the opened configuration interface.
+    device_info: Option<DeviceInfo>,
+    /// Mice found by the last detection.
+    mice: Vec<DeviceInfo>,
 }
 
 pub fn run(mode: StartMode) {
@@ -101,11 +107,20 @@ pub fn run(mode: StartMode) {
         period: Period::Today,
         removed: false,
         last_step: None,
+        device_info: None,
+        mice: Vec::new(),
     };
+    ctrl.stats.set_vendor(stats_vendor(ctrl.cfg.device.as_deref()));
     CTRL.with(|c| *c.borrow_mut() = Some(ctrl));
     with_ctrl(|c| {
         c.sync_stages();
         c.refresh_stats();
+    });
+
+    // Which mice are connected; asks the user on first run.
+    std::thread::spawn(|| {
+        let mice = hid_link::list_mice();
+        post(move |c| c.on_mice(mice));
     });
 
     crate::single::listen(|| post(|c| c.show()), || window::post(window::quit));
@@ -166,6 +181,10 @@ fn initial_view(cfg: &AppConfig, ask_setup: bool) -> View {
         recording: false,
         delay_mode: DelayMode::Recorded,
         notice: String::new(),
+        caps: caps_of(cfg.device.as_deref()),
+        device_name: device_name(cfg.device.as_deref()),
+        device: DeviceView::default(),
+        detect: None,
     }
 }
 
@@ -174,6 +193,81 @@ fn apply_look(cfg: &AppConfig) {
     theme::apply(cfg.theme);
     i18n::set_lang(cfg.lang.unwrap_or_else(i18n::system_lang));
     window::set_dark_title(theme::current().dark);
+}
+
+/// Pages to show for the configured mouse. Until one is chosen, show all.
+fn caps_of(device: Option<&str>) -> Caps {
+    match device {
+        None => devices::MODELS[0].caps,
+        Some(id) => devices::by_id(id).map_or(CAPS_NONE, |m| m.caps),
+    }
+}
+
+/// Statistics count the configured mouse only; "other mouse" counts all mice.
+fn stats_vendor(device: Option<&str>) -> Option<u16> {
+    match device {
+        Some(id) => devices::by_id(id).map(|m| m.vid),
+        None => Some(devices::MODELS[0].vid),
+    }
+}
+
+fn device_name(device: Option<&str>) -> String {
+    match device.and_then(devices::by_id) {
+        Some(m) => m.full_name(),
+        None if device.is_some() => tr(T::GenericMouse).into(),
+        None => devices::MODELS[0].full_name(),
+    }
+}
+
+/// Dialog rows for detected mice; an unknown one maps to "statistics only".
+fn detect_rows(mice: &[DeviceInfo]) -> Vec<DetectRow> {
+    mice.iter()
+        .map(|d| {
+            let usb = format!("{:04X}:{:04X}", d.vid, d.pid);
+            let sub = if d.product.is_empty() { usb } else { format!("{usb} · {}", d.product) };
+            let (title, badge, kind, choice) = match devices::match_device(d) {
+                Match::Known(m) => {
+                    let (b, k) = match m.support {
+                        Support::Full => (tr(T::BadgeFull).to_string(), Badge::Good),
+                        Support::Experimental => (tr(T::BadgeExperimental).to_string(), Badge::Warn),
+                    };
+                    (m.full_name(), b, k, m.id.to_string())
+                }
+                Match::Guess(m) => {
+                    let title = if d.product.is_empty() { tr(T::UnknownMouse).to_string() } else { d.product.clone() };
+                    (title, fill(tr(T::BadgeGuess), &[&m.full_name()]), Badge::Warn, m.id.to_string())
+                }
+                Match::Unknown => {
+                    let title = if d.product.is_empty() { tr(T::UnknownMouse).to_string() } else { d.product.clone() };
+                    (title, tr(T::BadgeUnknown).to_string(), Badge::Muted, store::GENERIC_DEVICE.to_string())
+                }
+            };
+            DetectRow { title, sub, badge, kind, choice }
+        })
+        .collect()
+}
+
+/// Manual choice: every catalogue model plus "other mouse".
+fn model_rows() -> Vec<DetectRow> {
+    let mut rows: Vec<DetectRow> = devices::MODELS
+        .iter()
+        .map(|m| {
+            let (badge, kind) = match m.support {
+                Support::Full => (tr(T::BadgeFull), Badge::Good),
+                Support::Experimental => (tr(T::BadgeExperimental), Badge::Warn),
+            };
+            let sub = format!("{:04X}:{}", m.vid, m.pids.iter().map(|(p, _)| format!("{p:04X}")).collect::<Vec<_>>().join("/"));
+            DetectRow { title: m.full_name(), sub, badge: badge.into(), kind, choice: m.id.into() }
+        })
+        .collect();
+    rows.push(DetectRow {
+        title: tr(T::GenericMouse).into(),
+        sub: String::new(),
+        badge: tr(T::BadgeUnknown).into(),
+        kind: Badge::Muted,
+        choice: store::GENERIC_DEVICE.into(),
+    });
+    rows
 }
 
 fn rate_index(r: PollingRate) -> usize {
@@ -355,6 +449,18 @@ impl Controller {
                     self.macros_changed();
                 }
             }
+            Act::ChangeMouse => self.open_detect(hid_link::list_mice()),
+            Act::DetectSel(i) => {
+                if let Some(d) = self.view.detect.as_mut() {
+                    d.sel = i.min(d.rows.len().saturating_sub(1));
+                }
+            }
+            Act::DetectManual => {
+                if let Some(d) = self.view.detect.as_mut() {
+                    (d.rows, d.sel, d.manual) = (model_rows(), 0, true);
+                }
+            }
+            Act::DetectUse => self.choose_device(),
             Act::Lod(lod) => {
                 self.cfg.lod = lod;
                 self.view.lod = lod;
@@ -369,6 +475,11 @@ impl Controller {
 
     fn on_mouse(&mut self, ev: Event) {
         let (link, level) = match ev {
+            Event::Device(info) => {
+                self.device_info = Some(info);
+                self.refresh_device();
+                return;
+            }
             Event::Status(s) => {
                 self.apply_status(s);
                 let charging = s.charge == protocol::Charge::Charging;
@@ -388,6 +499,7 @@ impl Controller {
         self.link = link;
         self.view.link = tr(link).into();
         self.level = level;
+        self.refresh_device();
         self.update_tray();
         window::invalidate();
     }
@@ -479,6 +591,89 @@ impl Controller {
         }
         self.cfg.dpi.active = i;
         self.push_dpi();
+    }
+
+    // ---- device ----
+
+    fn on_mice(&mut self, mice: Vec<DeviceInfo>) {
+        self.mice = mice.clone();
+        self.refresh_device();
+        if self.cfg.device.is_none() {
+            self.open_detect(mice);
+        }
+    }
+
+    fn open_detect(&mut self, mice: Vec<DeviceInfo>) {
+        self.mice = mice.clone();
+        let empty = mice.is_empty();
+        let rows = if empty { model_rows() } else { detect_rows(&mice) };
+        // Preselect the first mouse we can drive.
+        let sel = rows.iter().position(|r| r.choice != store::GENERIC_DEVICE).unwrap_or(0);
+        self.view.detect = Some(Detect { rows, sel, manual: empty, empty });
+        window::invalidate();
+    }
+
+    fn choose_device(&mut self) {
+        let Some(d) = self.view.detect.take() else {
+            return;
+        };
+        let Some(row) = d.rows.get(d.sel) else {
+            return;
+        };
+        self.cfg.device = Some(row.choice.clone());
+        store::save_config(&self.cfg);
+
+        self.view.caps = caps_of(self.cfg.device.as_deref());
+        self.view.device_name = device_name(self.cfg.device.as_deref());
+        self.stats.set_vendor(stats_vendor(self.cfg.device.as_deref()));
+        if !view::page_visible(self.view.page, &self.view.caps) {
+            self.view.page = 0;
+        }
+        self.refresh_device();
+    }
+
+    /// Rows of the Device page from the catalogue, USB identity and status.
+    fn refresh_device(&mut self) {
+        let model = self.cfg.device.as_deref().and_then(devices::by_id);
+        // With a driver: the opened interface; without: the first mouse found.
+        let info = match model {
+            Some(_) => self.device_info.as_ref(),
+            None => self.mice.iter().find(|d| devices::match_device(d) == Match::Unknown).or(self.mice.first()),
+        };
+        let mut rows: Vec<(T, String)> = Vec::new();
+
+        rows.push((T::DevModel, self.view.device_name.clone()));
+        if let Some(m) = model {
+            let support = match m.support {
+                Support::Full => tr(T::BadgeFull),
+                Support::Experimental => tr(T::BadgeExperimental),
+            };
+            rows.push((T::DevSupport, support.into()));
+            let link = info.and_then(|i| m.link_of(i.pid)).map(|l| match l {
+                Link::Receiver => tr(T::LinkReceiver).to_string(),
+                Link::Cable => tr(T::LinkCable).to_string(),
+            });
+            rows.push((T::DevConnection, link.unwrap_or_default()));
+        }
+        if let Some(i) = info {
+            rows.push((T::DevUsbId, format!("{:04X}:{:04X}", i.vid, i.pid)));
+            rows.push((T::DevManufacturer, i.manufacturer.clone()));
+            rows.push((T::DevProduct, i.product.clone()));
+            rows.push((T::DevFirmware, devices::bcd_version(i.version)));
+            rows.push((T::DevSerial, i.serial.clone()));
+        }
+        if let Some(s) = self.status.filter(|_| model.is_some()) {
+            let sensor = devices::sensor_name(s.sensor).map_or_else(|| format!("0x{:02X}", s.sensor), str::to_string);
+            rows.push((T::DevSensor, sensor));
+            rows.push((T::DevProtocol, "Telink · M022".into()));
+            // Payload bytes of the status reply, for bug reports.
+            let raw: Vec<String> = s.raw[5..24].iter().map(|b| format!("{b:02X}")).collect();
+            rows.push((T::DevStatus, raw.join(" ")));
+        }
+
+        let offline = model.is_some() && self.status.is_none() && info.is_some();
+        self.view.device = DeviceView { rows, offline };
+        window::invalidate();
     }
 
     // ---- buttons ----

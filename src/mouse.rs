@@ -7,7 +7,7 @@
 //!        +-------Event (status)-----+
 //! ```
 
-use crate::hid_link::HidLink;
+use crate::hid_link::{DeviceInfo, HidLink};
 use crate::protocol::{self, Action, BUTTON_COUNT, DPI_COLOR_SLOTS, DpiConfig, Lighting, Lod, MacroEvent, PollingRate, Power, Status};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::thread;
@@ -36,6 +36,8 @@ pub enum Command {
 }
 
 pub enum Event {
+    /// The configuration interface was (re)opened: identity of the device.
+    Device(DeviceInfo),
     Status(Status),
     /// Dongle present but mouse asleep or off.
     Offline,
@@ -68,6 +70,8 @@ struct Worker {
     /// A status reply with the Lionel signature was seen on this link.
     /// Writes are refused until then, so look-alike devices are never configured.
     verified: bool,
+    /// Last identity reported, so `Device` is sent only on change.
+    reported: Option<DeviceInfo>,
 }
 
 impl Worker {
@@ -109,11 +113,17 @@ impl Worker {
 }
 
 fn run(rx: Receiver<Command>, on_event: impl Fn(Event)) {
-    let mut w = Worker { link: Some(HidLink::new()), seq: 0, verified: false };
+    let mut w = Worker { link: Some(HidLink::new()), seq: 0, verified: false, reported: None };
     let mut period = POLL_VISIBLE;
 
     loop {
-        on_event(w.poll());
+        let status = w.poll();
+        let info = w.link.as_ref().and_then(|l| l.info().cloned());
+        if info.is_some() && info != w.reported {
+            w.reported = info.clone();
+            on_event(Event::Device(info.unwrap_or_default()));
+        }
+        on_event(status);
 
         // Wait for a command or the next poll tick.
         let cmd = match rx.recv_timeout(period) {

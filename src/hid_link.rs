@@ -33,10 +33,104 @@ impl Drop for Handle {
 
 pub struct HidLink {
     dev: Option<Handle>,
+    info: Option<DeviceInfo>,
+}
+
+/// Identity of a USB HID device, as reported by Windows.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DeviceInfo {
+    pub vid: u16,
+    pub pid: u16,
+    /// `bcdDevice`: firmware release of the receiver or cable device.
+    pub version: u16,
+    pub manufacturer: String,
+    pub product: String,
+    pub serial: String,
+}
+
+const STRING_CHARS: usize = 127;
+const USAGE_PAGE_DESKTOP: u16 = 0x01;
+const USAGE_MOUSE: u16 = 0x02;
+
+type HidString = unsafe extern "system" fn(HANDLE, *mut core::ffi::c_void, u32) -> bool;
+
+fn hid_string(h: HANDLE, f: HidString) -> String {
+    let mut buf = [0u16; STRING_CHARS + 1];
+    if !unsafe { f(h, buf.as_mut_ptr().cast(), (STRING_CHARS * 2) as u32) } {
+        return String::new();
+    }
+    let len = buf.iter().position(|&c| c == 0).unwrap_or(STRING_CHARS);
+    String::from_utf16_lossy(&buf[..len]).trim().to_string()
+}
+
+fn read_info(h: HANDLE, attr: &HIDD_ATTRIBUTES) -> DeviceInfo {
+    DeviceInfo {
+        vid: attr.VendorID,
+        pid: attr.ProductID,
+        version: attr.VersionNumber,
+        manufacturer: hid_string(h, HidD_GetManufacturerString),
+        product: hid_string(h, HidD_GetProductString),
+        serial: hid_string(h, HidD_GetSerialNumberString),
+    }
+}
+
+/// Opens a HID path for queries only (no reads or writes).
+fn open_query(path: &str) -> Option<Handle> {
+    let name = wide(path);
+    let raw = unsafe { CreateFileW(name.as_ptr(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, std::ptr::null(), OPEN_EXISTING, 0, std::ptr::null_mut()) };
+    (raw != INVALID_HANDLE_VALUE).then_some(Handle(raw))
+}
+
+fn usage_of(h: HANDLE) -> Option<(u16, u16)> {
+    unsafe {
+        let mut pp: PHIDP_PREPARSED_DATA = 0;
+        if !HidD_GetPreparsedData(h, &mut pp) {
+            return None;
+        }
+        let mut caps: HIDP_CAPS = std::mem::zeroed();
+        HidP_GetCaps(pp, &mut caps);
+        HidD_FreePreparsedData(pp);
+        Some((caps.UsagePage, caps.Usage))
+    }
+}
+
+/// Connected mice (HID mouse collections), one entry per VID:PID.
+/// Only descriptors are read; nothing is sent to these devices.
+pub fn list_mice() -> Vec<DeviceInfo> {
+    let mut out: Vec<DeviceInfo> = Vec::new();
+    for path in interface_paths() {
+        let Some(h) = open_query(&path) else {
+            continue;
+        };
+        if usage_of(h.0) != Some((USAGE_PAGE_DESKTOP, USAGE_MOUSE)) {
+            continue;
+        }
+        let mut attr: HIDD_ATTRIBUTES = unsafe { std::mem::zeroed() };
+        attr.Size = size_of::<HIDD_ATTRIBUTES>() as u32;
+        if !unsafe { HidD_GetAttributes(h.0, &mut attr) } {
+            continue;
+        }
+        if out.iter().any(|d| (d.vid, d.pid) == (attr.VendorID, attr.ProductID)) {
+            continue;
+        }
+        out.push(read_info(h.0, &attr));
+    }
+    out
 }
 
 /// Lists HID interface paths whose name contains the vendor id.
 fn vendor_paths() -> Vec<String> {
+    interface_paths()
+        .into_iter()
+        .filter(|p| {
+            let lower = p.to_lowercase();
+            lower.contains(VID_TAG) && PID_TAGS.iter().any(|t| lower.contains(t))
+        })
+        .collect()
+}
+
+/// All present HID interface paths.
+fn interface_paths() -> Vec<String> {
     let mut out = Vec::new();
     unsafe {
         let mut guid: GUID = std::mem::zeroed();
@@ -64,18 +158,15 @@ fn vendor_paths() -> Vec<String> {
             let p = (*detail).DevicePath.as_ptr();
             let len = (0..).take_while(|&k| *p.add(k) != 0).count();
             let path = String::from_utf16_lossy(std::slice::from_raw_parts(p, len));
-            let lower = path.to_lowercase();
-            if lower.contains(VID_TAG) && PID_TAGS.iter().any(|t| lower.contains(t)) {
-                out.push(path);
-            }
+            out.push(path);
         }
         SetupDiDestroyDeviceInfoList(set);
     }
     out
 }
 
-/// Opens a path if it is the mouse config collection; returns its product id.
-fn open_config(path: &str) -> Option<(Handle, u16)> {
+/// Opens a path if it is the mouse config collection; returns its identity.
+fn open_config(path: &str) -> Option<(Handle, DeviceInfo)> {
     let name = wide(path);
     let raw = unsafe {
         CreateFileW(name.as_ptr(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, std::ptr::null(), OPEN_EXISTING, 0, std::ptr::null_mut())
@@ -104,23 +195,34 @@ fn open_config(path: &str) -> Option<(Handle, u16)> {
         HidD_FreePreparsedData(pp);
 
         let fits = caps.UsagePage == CONFIG_USAGE_PAGE && caps.FeatureReportByteLength as usize == REPORT_LEN;
-        fits.then_some((h, attr.ProductID))
+        if !fits {
+            return None;
+        }
+        let info = read_info(h.0, &attr);
+        Some((h, info))
     }
 }
 
 impl HidLink {
     pub fn new() -> Self {
-        Self { dev: None }
+        Self { dev: None, info: None }
     }
 
     /// Opens the config interface if needed. Wired beats dongle, as in the vendor app.
     fn ensure_open(&mut self) -> Option<HANDLE> {
         if self.dev.is_none() {
             let mut found: Vec<_> = vendor_paths().iter().filter_map(|p| open_config(p)).collect();
-            found.sort_by_key(|(_, pid)| *pid != PID_WIRED);
-            self.dev = found.into_iter().next().map(|(h, _)| h);
+            found.sort_by_key(|(_, info)| info.pid != PID_WIRED);
+            let first = found.into_iter().next();
+            self.info = first.as_ref().map(|(_, i)| i.clone());
+            self.dev = first.map(|(h, _)| h);
         }
         self.dev.as_ref().map(|h| h.0)
+    }
+
+    /// Identity of the opened device, if any.
+    pub fn info(&self) -> Option<&DeviceInfo> {
+        self.info.as_ref()
     }
 
     pub fn is_present(&mut self) -> bool {
@@ -154,5 +256,19 @@ impl HidLink {
             return None;
         }
         Some(buf)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Hardware probe: `cargo test -- --ignored --nocapture print_mice`.
+    #[test]
+    #[ignore]
+    fn print_mice() {
+        for m in super::list_mice() {
+            println!("{m:?}");
+        }
+        let mut l = super::HidLink::new();
+        println!("config link present: {} {:?}", l.is_present(), l.info());
     }
 }
