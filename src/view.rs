@@ -482,12 +482,16 @@ fn mouse_logo(g: &Gfx, x: f32, y: f32) {
     g.stroke(Rect::new(x, y, 18.0, 27.0), 9.0, 2.0, th().accent);
     g.line(x + 9.0, y + 1.0, x + 9.0, y + 10.0, 2.0, th().accent);
 
-    // Three whiskers per side, fanning out from the nose height.
-    const LEN: f32 = 8.0;
-    let ny = y + 8.0;
-    for (side, x0) in [(-1.0, x - 2.0), (1.0, x + 20.0)] {
-        for (oy, fan) in [(-2.0, -3.0), (0.0, 0.0), (2.0, 3.0)] {
-            g.line(x0, ny + oy, x0 + side * LEN, ny + oy + fan, 1.2, th().text);
+    // Pink nose on top.
+    const NOSE: Color = Color::rgb(0xff8fa8);
+    g.circle(x + 9.0, y + 0.5, 3.0, NOSE);
+
+    // Three short whiskers per side, slanting up and out.
+    const LEN: f32 = 6.0;
+    let wy = y + 6.0;
+    for (side, x0) in [(-1.0, x - 1.5), (1.0, x + 19.5)] {
+        for (oy, rise) in [(0.0, 3.0), (2.5, 1.7), (5.0, 0.5)] {
+            g.line(x0, wy + oy, x0 + side * LEN, wy + oy - rise, 1.1, th().text);
         }
     }
 }
