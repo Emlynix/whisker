@@ -14,17 +14,30 @@ pub enum Family {
     Razer,
     /// Eternico receiver: listen-only status (battery, DPI stage).
     Eternico,
+    /// Sinowealth OEM gaming mice (Glorious, Marvo, Genesis…).
+    Sinowealth,
+    SteelSeries,
+    /// One Chinese OEM protocol behind ATK, VXE, VGN, Lamzu web apps.
+    OemHid,
     /// Recognized, but no configuration protocol is known.
     NoDriver,
 }
 
 impl Family {
+    /// Families whose driver reports identity and status itself.
+    pub fn has_driver(self) -> bool {
+        !matches!(self, Family::TelinkM022 | Family::NoDriver)
+    }
+
     pub fn target(self) -> Target {
         match self {
             Family::TelinkM022 => Target::Lionel,
             Family::Hidpp => Target::Hidpp,
             Family::Razer => Target::Razer,
             Family::Eternico => Target::Eternico,
+            Family::Sinowealth => Target::Sinowealth,
+            Family::SteelSeries => Target::SteelSeries,
+            Family::OemHid => Target::OemHid,
             Family::NoDriver => Target::Nothing,
         }
     }
@@ -135,6 +148,63 @@ pub static MODELS: &[Model] = &[
         support: Support::Experimental,
         caps: CAPS_STATUS,
         stage_dpi: &[1200, 2400, 3200, 6400],
+    },
+    // Vendor-wide entries below: each driver picks the exact model by
+    // product id (and firmware), and names it itself.
+    Model {
+        id: "steelseries",
+        vendor: "SteelSeries",
+        name: "",
+        vid: crate::drivers::steelseries::VID,
+        pids: &[],
+        family: Family::SteelSeries,
+        support: Support::Experimental,
+        caps: CAPS_BASIC,
+        stage_dpi: &[],
+    },
+    Model {
+        id: "sinowealth",
+        vendor: "Sinowealth",
+        name: "",
+        vid: crate::drivers::sinowealth::VIDS[0],
+        pids: &[],
+        family: Family::Sinowealth,
+        support: Support::Experimental,
+        caps: CAPS_BASIC,
+        stage_dpi: &[],
+    },
+    Model {
+        id: "glorious",
+        vendor: "Glorious",
+        name: "",
+        vid: crate::drivers::sinowealth::VIDS[1],
+        pids: &[],
+        family: Family::Sinowealth,
+        support: Support::Experimental,
+        caps: CAPS_BASIC,
+        stage_dpi: &[],
+    },
+    Model {
+        id: "atk",
+        vendor: "ATK",
+        name: "",
+        vid: crate::drivers::oemhid::VIDS[0],
+        pids: &[],
+        family: Family::OemHid,
+        support: Support::Experimental,
+        caps: CAPS_BASIC,
+        stage_dpi: &[],
+    },
+    Model {
+        id: "vxe-vgn-lamzu",
+        vendor: "VXE / VGN / Lamzu",
+        name: "",
+        vid: crate::drivers::oemhid::VIDS[1],
+        pids: &[],
+        family: Family::OemHid,
+        support: Support::Experimental,
+        caps: CAPS_BASIC,
+        stage_dpi: &[],
     },
     // Receiver reuses an Apple keyboard id (05AC:024F); only its mouse
     // collection is matched, so a real Apple keyboard is never listed.

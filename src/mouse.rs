@@ -9,7 +9,10 @@
 
 use crate::drivers::eternico::Eternico;
 use crate::drivers::hidpp::Hidpp;
+use crate::drivers::oemhid::OemHid;
 use crate::drivers::razer::Razer;
+use crate::drivers::sinowealth::Sinowealth;
+use crate::drivers::steelseries::SteelSeries;
 use crate::drivers::{Ability, Ident, Reading};
 use crate::hid_link::{DeviceInfo, HidLink};
 use crate::protocol::{self, Action, BUTTON_COUNT, DPI_COLOR_SLOTS, DpiConfig, Lighting, Lod, MacroEvent, PollingRate, Power, Status};
@@ -34,6 +37,9 @@ pub enum Target {
     Razer,
     /// Eternico receiver, listen-only.
     Eternico,
+    Sinowealth,
+    SteelSeries,
+    OemHid,
     /// Bluetooth LE mouse without a driver: battery from Windows only.
     Bluetooth(String),
     /// Mouse without a driver: statistics only.
@@ -98,6 +104,9 @@ enum Driver {
     Hidpp(Hidpp),
     Razer(Razer),
     Eternico(Eternico),
+    Sinowealth(Sinowealth),
+    SteelSeries(SteelSeries),
+    OemHid(OemHid),
 }
 
 impl Driver {
@@ -106,6 +115,9 @@ impl Driver {
             Target::Hidpp => Hidpp::open().map(|(d, i)| (Driver::Hidpp(d), i)),
             Target::Razer => Razer::open().map(|(d, i)| (Driver::Razer(d), i)),
             Target::Eternico => Eternico::open().map(|(d, i)| (Driver::Eternico(d), i)),
+            Target::Sinowealth => Sinowealth::open().map(|(d, i)| (Driver::Sinowealth(d), i)),
+            Target::SteelSeries => SteelSeries::open().map(|(d, i)| (Driver::SteelSeries(d), i)),
+            Target::OemHid => OemHid::open().map(|(d, i)| (Driver::OemHid(d), i)),
             _ => None,
         }
     }
@@ -115,6 +127,9 @@ impl Driver {
             Driver::Hidpp(d) => (d.ident(), d.ability()),
             Driver::Razer(d) => (d.ident(), d.ability()),
             Driver::Eternico(d) => (d.ident(), d.ability()),
+            Driver::Sinowealth(d) => (d.ident(), d.ability()),
+            Driver::SteelSeries(d) => (d.ident(), d.ability()),
+            Driver::OemHid(d) => (d.ident(), d.ability()),
         }
     }
 
@@ -123,6 +138,9 @@ impl Driver {
             Driver::Hidpp(d) => d.read(),
             Driver::Razer(d) => d.read(),
             Driver::Eternico(d) => d.read(),
+            Driver::Sinowealth(d) => d.read(),
+            Driver::SteelSeries(d) => d.read(),
+            Driver::OemHid(d) => d.read(),
         }
     }
 
@@ -132,6 +150,9 @@ impl Driver {
             Driver::Razer(d) => d.set_dpi(dpi),
             // Listen-only.
             Driver::Eternico(_) => false,
+            Driver::Sinowealth(d) => d.set_dpi(dpi),
+            Driver::SteelSeries(d) => d.set_dpi(dpi),
+            Driver::OemHid(d) => d.set_dpi(dpi),
         };
     }
 
@@ -140,6 +161,9 @@ impl Driver {
             Driver::Hidpp(d) => d.set_rate(hz),
             Driver::Razer(d) => d.set_rate(hz),
             Driver::Eternico(_) => false,
+            Driver::Sinowealth(d) => d.set_rate(hz),
+            Driver::SteelSeries(d) => d.set_rate(hz),
+            Driver::OemHid(d) => d.set_rate(hz),
         };
     }
 }
@@ -247,7 +271,9 @@ fn run(target: Target, rx: Receiver<Command>, on_event: impl Fn(Event)) {
     loop {
         match &w.target {
             Target::Lionel => w.poll_lionel(&on_event),
-            Target::Hidpp | Target::Razer | Target::Eternico => w.poll_driver(&on_event),
+            Target::Hidpp | Target::Razer | Target::Eternico | Target::Sinowealth | Target::SteelSeries | Target::OemHid => {
+                w.poll_driver(&on_event)
+            }
             Target::Bluetooth(addr) => match crate::bluetooth::battery(addr) {
                 Some(pct) => on_event(Event::Basic(Reading { battery: Some(pct), ..Reading::default() })),
                 None => on_event(Event::Absent),

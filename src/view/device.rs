@@ -90,23 +90,10 @@ pub(super) fn detect_dialog(f: &mut Frame, d: &Detect) {
     let text = if d.empty && !d.manual { tr(T::NoMouse) } else { tr(T::DetectText) };
     f.g.text(text, Rect::new(inner.x, inner.y + 36.0, inner.w, 40.0), 13.0, Weight::Normal, Align::Wrap, th().muted);
 
-    const ROW_H: f32 = 58.0;
-    const MAX_ROWS: usize = 4;
-    for (i, r) in d.rows.iter().take(MAX_ROWS).enumerate() {
-        let rr = Rect::new(inner.x, inner.y + 88.0 + i as f32 * (ROW_H + 8.0), inner.w, ROW_H);
-        let hot = f.button(Act::DetectSel(i), rr);
-        let sel = i == d.sel;
-        f.g.fill(rr, 10.0, if sel { th().accent_soft } else if hot { th().hover } else { th().card });
-        let (bw, bc) = if sel { (2.0, th().accent) } else { (1.0, th().border) };
-        f.g.stroke(rr, 10.0, bw, bc);
-
-        let left = Rect::new(rr.x + 16.0, rr.y + 9.0, rr.w - 250.0, 22.0);
-        f.g.text(&r.title, left, 14.5, Weight::Semibold, Align::Left, th().text);
-        let sub = Rect::new(rr.x + 16.0, rr.y + 31.0, rr.w - 250.0, 18.0);
-        f.g.text(&r.sub, sub, 12.0, Weight::Normal, Align::Left, th().muted);
-        let badge = Rect::new(rr.x + rr.w - 236.0, rr.y, 220.0, rr.h);
-        let size = super::fit_size(&r.badge, badge.w, 12.5);
-        f.g.text(&r.badge, badge, size, Weight::Semibold, Align::Right, badge_color(r.kind));
+    if d.manual {
+        model_grid(f, d, Rect::new(inner.x, inner.y + 84.0, inner.w, dlg.h - 84.0 - 2.0 * 24.0 - 48.0));
+    } else {
+        detected_rows(f, d, inner);
     }
 
     let by = dlg.y + dlg.h - 24.0 - 36.0;
@@ -117,4 +104,49 @@ pub(super) fn detect_dialog(f: &mut Frame, d: &Detect) {
         let use_btn = Rect::new(dlg.x + dlg.w - 24.0 - 180.0, by, 180.0, 36.0);
         f.push_button(Act::DetectUse, use_btn, tr(T::UseMouse), true);
     }
+}
+
+/// Detected mice: up to four wide rows with product line and badge.
+fn detected_rows(f: &mut Frame, d: &Detect, inner: Rect) {
+    const ROW_H: f32 = 58.0;
+    const MAX_ROWS: usize = 4;
+    for (i, r) in d.rows.iter().take(MAX_ROWS).enumerate() {
+        let rr = Rect::new(inner.x, inner.y + 88.0 + i as f32 * (ROW_H + 8.0), inner.w, ROW_H);
+        let hot = f.button(Act::DetectSel(i), rr);
+        tile(f, rr, i == d.sel, hot);
+
+        let left = Rect::new(rr.x + 16.0, rr.y + 9.0, rr.w - 250.0, 22.0);
+        f.g.text(&r.title, left, 14.5, Weight::Semibold, Align::Left, th().text);
+        let sub = Rect::new(rr.x + 16.0, rr.y + 31.0, rr.w - 250.0, 18.0);
+        f.g.text(&r.sub, sub, 12.0, Weight::Normal, Align::Left, th().muted);
+        let badge = Rect::new(rr.x + rr.w - 236.0, rr.y, 220.0, rr.h);
+        let size = super::fit_size(&r.badge, badge.w, 12.5);
+        f.g.text(&r.badge, badge, size, Weight::Semibold, Align::Right, badge_color(r.kind));
+    }
+}
+
+/// Catalogue models: two columns of compact tiles, badge as a dot.
+fn model_grid(f: &mut Frame, d: &Detect, area: Rect) {
+    const COLS: usize = 2;
+    const GAP: f32 = 8.0;
+    let rows = d.rows.len().div_ceil(COLS).max(1);
+    let h = ((area.h - (rows - 1) as f32 * GAP) / rows as f32).min(44.0);
+    let w = (area.w - GAP) / COLS as f32;
+
+    for (i, r) in d.rows.iter().enumerate() {
+        let (row, col) = ((i / COLS) as f32, (i % COLS) as f32);
+        let rr = Rect::new(area.x + col * (w + GAP), area.y + row * (h + GAP), w, h);
+        let hot = f.button(Act::DetectSel(i), rr);
+        tile(f, rr, i == d.sel, hot);
+        f.g.circle(rr.x + 14.0, rr.y + h / 2.0, 4.0, badge_color(r.kind));
+        let title = Rect::new(rr.x + 26.0, rr.y, rr.w - 34.0, h);
+        let size = super::fit_size(&r.title, title.w, 13.0);
+        f.g.text(&r.title, title, size, Weight::Semibold, Align::Left, th().text);
+    }
+}
+
+fn tile(f: &mut Frame, r: Rect, selected: bool, hot: bool) {
+    f.g.fill(r, 10.0, if selected { th().accent_soft } else if hot { th().hover } else { th().card });
+    let (bw, bc) = if selected { (2.0, th().accent) } else { (1.0, th().border) };
+    f.g.stroke(r, 10.0, bw, bc);
 }

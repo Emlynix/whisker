@@ -230,7 +230,7 @@ fn target_of(device: Option<&str>) -> Target {
 /// by the previous driver arrive after a switch and must not overwrite
 /// the new mouse's state.
 fn belongs_to(ev: &Event, t: &Target) -> bool {
-    let driver = matches!(t, Target::Hidpp | Target::Razer | Target::Eternico);
+    let driver = matches!(t, Target::Hidpp | Target::Razer | Target::Eternico | Target::Sinowealth | Target::SteelSeries | Target::OemHid);
     match ev {
         Event::Status(_) => *t == Target::Lionel,
         Event::Device(_) => *t == Target::Lionel || driver,
@@ -835,7 +835,7 @@ impl Controller {
             });
             rows.push((T::DevConnection, link.unwrap_or_default()));
         }
-        let ident = self.ident.as_ref().filter(|_| model.is_some_and(|m| matches!(m.family, Family::Hidpp | Family::Razer | Family::Eternico)));
+        let ident = self.ident.as_ref().filter(|_| model.is_some_and(|m| m.family.has_driver()));
         if let Some(addr) = info.and_then(|i| i.bt_address.as_deref()) {
             // AA:BB:CC:DD:EE:FF
             let pretty: Vec<&str> = (0..addr.len()).step_by(2).map(|k| &addr[k..k + 2]).collect();
