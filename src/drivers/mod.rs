@@ -6,6 +6,9 @@
 //!   mouse service ──> Driver::{Hidpp, Razer} ──> hid_link::raw::Channel
 //! ```
 
+// Not wired into the mouse service yet.
+#[allow(dead_code)]
+pub mod asus;
 pub mod eternico;
 pub mod hidpp;
 pub mod oemhid;
