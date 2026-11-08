@@ -14,9 +14,9 @@ use std::ptr::NonNull;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-const LOCK_NAME: &str = "com.whisker.app.lock";
-const SHOW_EVENT: &str = "com.whisker.app.show";
-const QUIT_EVENT: &str = "com.whisker.app.quit";
+const LOCK_NAME: &str = "com.emlynix.whisker.lock";
+const SHOW_EVENT: &str = "com.emlynix.whisker.show";
+const QUIT_EVENT: &str = "com.emlynix.whisker.quit";
 const RETRY_GAP: Duration = Duration::from_millis(100);
 const WAIT_LIMIT: Duration = Duration::from_secs(5);
 

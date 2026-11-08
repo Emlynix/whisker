@@ -8,7 +8,7 @@
 	<string>Whisker</string>
 	<!-- Placeholder; must match autostart::LABEL. -->
 	<key>CFBundleIdentifier</key>
-	<string>com.whisker.app</string>
+	<string>com.emlynix.whisker</string>
 	<key>CFBundleExecutable</key>
 	<string>Whisker</string>
 	<key>CFBundleIconFile</key>

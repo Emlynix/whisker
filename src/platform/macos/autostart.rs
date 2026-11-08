@@ -3,7 +3,7 @@
 //! installed copy: a bundle in e.g. Downloads never runs at login.
 //!
 //! ```text
-//!   ~/Library/LaunchAgents/com.whisker.app.plist
+//!   ~/Library/LaunchAgents/com.emlynix.whisker.plist
 //!     ProgramArguments = [~/Applications/Whisker.app/Contents/MacOS/Whisker, --tray]
 //!     RunAtLoad = true
 //! ```
@@ -14,7 +14,7 @@ use crate::platform::{Autostart, TRAY_ARG};
 use std::path::PathBuf;
 
 /// Same as `CFBundleIdentifier` in `bundle/macos/Info.plist`.
-const LABEL: &str = "com.whisker.app";
+const LABEL: &str = "com.emlynix.whisker";
 
 fn agent_path() -> Option<PathBuf> {
     Some(home_dir()?.join("Library").join("LaunchAgents").join(format!("{LABEL}.plist")))

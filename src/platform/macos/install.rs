@@ -2,7 +2,7 @@
 //!
 //! ```text
 //!   ~/Applications/Whisker.app                         the app bundle
-//!   ~/Library/LaunchAgents/com.whisker.app.plist       autostart (optional)
+//!   ~/Library/LaunchAgents/com.emlynix.whisker.plist       autostart (optional)
 //! ```
 //! Run from a bundle, the whole bundle is copied; run as a bare binary
 //! (e.g. `cargo run`), a minimal bundle is built around it.
