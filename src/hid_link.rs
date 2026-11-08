@@ -2,7 +2,7 @@
 //! 33-byte feature reports. Knows nothing about what the bytes mean.
 //! Talks to `hid.dll` / `setupapi.dll` directly (no extra crates).
 
-use crate::protocol::{CONFIG_USAGE_PAGE, PID_DONGLE, PID_WIRED, REPORT_ID, REPORT_LEN, VENDOR_ID};
+use crate::protocol::{CONFIG_USAGE_PAGE, PID_WIRED, REPORT_ID, REPORT_LEN, VENDOR_ID};
 use crate::win::wide;
 use std::time::Duration;
 use windows_sys::Win32::Devices::DeviceAndDriverInstallation::*;
@@ -22,8 +22,6 @@ const DETAIL_BUF: usize = 1024;
 const DETAIL_CB_SIZE: u32 = 8;
 #[cfg(target_pointer_width = "32")]
 const DETAIL_CB_SIZE: u32 = 6;
-/// Only these product ids are ever opened.
-const PID_TAGS: [&str; 2] = ["pid_5b2e", "pid_5b2f"];
 
 struct Handle(HANDLE);
 
@@ -137,7 +135,7 @@ fn vendor_paths() -> Vec<String> {
         .into_iter()
         .filter(|p| {
             let lower = p.to_lowercase();
-            lower.contains(VID_TAG) && PID_TAGS.iter().any(|t| lower.contains(t))
+            lower.contains(VID_TAG)
         })
         .collect()
 }
@@ -195,10 +193,9 @@ fn open_config(path: &str) -> Option<(Handle, DeviceInfo)> {
         if !HidD_GetAttributes(h.0, &mut attr) || attr.VendorID != VENDOR_ID {
             return None;
         }
-        if attr.ProductID != PID_WIRED && attr.ProductID != PID_DONGLE {
-            return None;
-        }
-
+        // Any product of the vendor with the same config collection: other
+        // models of the Lionel family. Writes stay locked until the status
+        // reply carries the protocol signature (see mouse.rs).
         let mut pp: PHIDP_PREPARSED_DATA = 0;
         if !HidD_GetPreparsedData(h.0, &mut pp) {
             return None;

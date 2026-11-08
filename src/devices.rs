@@ -197,20 +197,7 @@ impl Model {
 
 /// PixArt sensor reported in the status reply (vendor app table).
 pub fn sensor_name(code: u8) -> Option<&'static str> {
-    let name = match code {
-        0x04 => "PixArt PAW3104",
-        0x12 => "PixArt PMW3212",
-        0x25 => "PixArt PAW3325",
-        0x27 => "PixArt PAW3327",
-        0x35 => "PixArt PAW3335",
-        0x60 => "PixArt PMW3360",
-        0x70 => "PixArt PMW3370",
-        0x89 => "PixArt PMW3389",
-        0x95 => "PixArt PAW3395",
-        0x99 => "PixArt PAW3399",
-        _ => return None,
-    };
-    Some(name)
+    crate::protocol::SENSORS.iter().find(|s| s.id == code).map(|s| s.name)
 }
 
 /// `bcdDevice` as a version, e.g. 0x0177 -> "1.77".

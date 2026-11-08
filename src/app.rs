@@ -161,7 +161,7 @@ fn initial_view(cfg: &AppConfig, ask_setup: bool) -> View {
         battery_note: String::new(),
         stages: Vec::new(),
         active: cfg.dpi.active,
-        steps: protocol::DPI_STEPS,
+        steps: protocol::dpi_steps(),
         polling: rate_index(cfg.polling),
         measured: "—".into(),
         today_clicks: "0".into(),
@@ -617,6 +617,12 @@ impl Controller {
 
     fn apply_status(&mut self, s: Status) {
         self.status = Some(s);
+        // The sensor decides the DPI table (steps and values).
+        if protocol::sensor().id != s.sensor {
+            protocol::set_sensor(s.sensor);
+            self.view.steps = protocol::dpi_steps();
+            self.sync_stages();
+        }
         self.view.battery = s.battery;
         self.view.charge = match s.charge {
             protocol::Charge::Discharging => Charge::Discharging,
@@ -679,7 +685,7 @@ impl Controller {
         if i >= STAGE_COUNT {
             return;
         }
-        self.cfg.dpi.stages[i] = index.min(protocol::DPI_STEPS - 1);
+        self.cfg.dpi.stages[i] = index.min(protocol::dpi_steps() - 1);
         self.push_dpi();
         window::invalidate();
     }

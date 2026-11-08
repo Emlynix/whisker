@@ -20,7 +20,6 @@ pub const REPORT_ID: u8 = 0x0C;
 pub const REPORT_LEN: usize = 33;
 pub const VENDOR_ID: u16 = 0x248A;
 pub const PID_WIRED: u16 = 0x5B2E;
-pub const PID_DONGLE: u16 = 0x5B2F;
 pub const CONFIG_USAGE_PAGE: u16 = 0xFF00;
 
 pub const STAGE_COUNT: usize = 6;
@@ -36,20 +35,37 @@ const CMD_STATUS: u8 = 0x20;
 const DPI_PAYLOAD_LEN: u8 = 0x12;
 const STATUS_SIGNATURE: &[u8; 4] = b"M022";
 const DPI_UNIT: u32 = 50;
+/// Sensor assumed until the mouse reports one (White Shark Lionel).
+const DEFAULT_SENSOR: u8 = 0x25;
 
-/// PAW3325 sensor DPI table, in units of 50 DPI. Index `i` is sent as code `i + 1`.
-const PAW3325_TABLE: [u8; 59] = [
-    4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50,
-    52, 54, 56, 58, 60, 62, 64, 66, 68, 70, 72, 74, 76, 78, 80, 82, 84, 86, 88, 90, 92, 94, 96, 98,
-    100, 110, 120, 128, 140, 150, 160, 170, 180, 190, 200,
-];
+mod sensors;
+pub use sensors::{SENSORS, Sensor};
 
-pub const DPI_STEPS: usize = PAW3325_TABLE.len();
+/// Sensor of the connected mouse; picks the DPI table.
+static CURRENT_SENSOR: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(DEFAULT_SENSOR);
 
-/// DPI value of a table index, e.g. `dpi_of(0) == 200`, `dpi_of(58) == 10000`.
+/// Selects the DPI table by the sensor id from the status reply.
+/// Unknown ids keep the current table.
+pub fn set_sensor(id: u8) {
+    if SENSORS.iter().any(|s| s.id == id) {
+        CURRENT_SENSOR.store(id, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+pub fn sensor() -> &'static Sensor {
+    let id = CURRENT_SENSOR.load(std::sync::atomic::Ordering::Relaxed);
+    SENSORS.iter().find(|s| s.id == id).unwrap_or(&SENSORS[0])
+}
+
+/// Number of DPI steps of the current sensor, e.g. 59 for PAW3325.
+pub fn dpi_steps() -> usize {
+    sensor().values.len()
+}
+
+/// DPI value of a table index, e.g. `dpi_of(0) == 200`, `dpi_of(58) == 10000` (PAW3325).
 pub fn dpi_of(index: usize) -> u32 {
-    let i = index.min(DPI_STEPS - 1);
-    PAW3325_TABLE[i] as u32 * DPI_UNIT
+    let v = sensor().values;
+    v[index.min(v.len() - 1)] as u32 * DPI_UNIT
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -137,8 +153,9 @@ pub fn dpi_frame(cfg: &DpiConfig, seq: u8) -> [u8; REPORT_LEN] {
     data[0] = (((cfg.active as u8) + 1) << 4) | (count & 0x0F);
     data[1] = cfg.enabled;
 
+    let s = sensor();
     for (i, &index) in cfg.stages.iter().enumerate() {
-        let code = (index.min(DPI_STEPS - 1) + 1) as u16;
+        let code = s.first_code + index.min(s.values.len() - 1) as u16;
         data[2 + i * 2..4 + i * 2].copy_from_slice(&code.to_le_bytes());
     }
 
@@ -405,6 +422,16 @@ mod tests {
         assert_eq!(lod_frame(Lod::Mm1, 0)[7], 1);
         let p = Power { sleep_min: 6, dark_while_moving: true };
         assert_eq!((power_frame(&p, 0)[2], data(&power_frame(&p, 0))), (0x0B, &[6u8, 1][..]));
+    }
+
+    #[test]
+    fn sensor_tables_match_vendor_app() {
+        // Spot checks against the emulated vendor tables.
+        let get = |id: u8| SENSORS.iter().find(|s| s.id == id).unwrap();
+        assert_eq!((get(0x25).values.len(), get(0x25).first_code), (59, 1));
+        assert_eq!(*get(0x95).values.last().unwrap() as u32 * DPI_UNIT, 26000);
+        assert_eq!((get(0x04).first_code, get(0x04).values[0]), (0, 2));
+        assert_eq!(get(0x70).values.len(), 290);
     }
 
     #[test]

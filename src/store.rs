@@ -279,7 +279,7 @@ fn sanitize(mut c: AppConfig) -> AppConfig {
     }
     c.dpi.active = c.dpi.active.min(STAGE_COUNT - 1);
     for s in c.dpi.stages.iter_mut() {
-        *s = (*s).min(crate::protocol::DPI_STEPS - 1);
+        *s = (*s).min(crate::protocol::dpi_steps() - 1);
     }
 
     let l = &mut c.lighting;
