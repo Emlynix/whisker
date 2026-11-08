@@ -8,7 +8,7 @@
 //!        |  gfx::Gfx, hid::Channel, window::post, …
 //!   platform  (this module: contract types + cfg switch)
 //!        |
-//!   windows (Win32, D2D)  |  linux (TODO)  |  macos (TODO)
+//!   windows (Win32, D2D)  |  linux (TODO)  |  macos (AppKit, IOKit)
 //! ```
 //!
 //! # Contract
@@ -112,3 +112,5 @@ mod linux;
 
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "macos")]
+pub use self::macos::*;
