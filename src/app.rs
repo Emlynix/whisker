@@ -81,6 +81,8 @@ struct Controller {
     ident: Option<Ident>,
     /// A driver-based mouse answered the last poll.
     basic_online: bool,
+    /// Driver the mouse service was last pointed at.
+    target: Target,
 }
 
 pub fn run(mode: StartMode) {
@@ -107,7 +109,7 @@ pub fn run(mode: StartMode) {
         view: initial_view(&cfg, first_run),
         cfg,
         stats: Stats::start(),
-        mouse: MouseService::start(target, |ev| post(move |c| c.on_mouse(ev))),
+        mouse: MouseService::start(target.clone(), |ev| post(move |c| c.on_mouse(ev))),
         status: None,
         link: T::LinkSearching,
         level: Level::Offline,
@@ -118,6 +120,7 @@ pub fn run(mode: StartMode) {
         mice: Vec::new(),
         ident: None,
         basic_online: false,
+        target: target.clone(),
     };
     ctrl.stats.set_vendor(stats_vendor(ctrl.cfg.device.as_deref()));
     CTRL.with(|c| *c.borrow_mut() = Some(ctrl));
@@ -221,6 +224,31 @@ fn target_of(device: Option<&str>) -> Target {
         None => Target::Lionel,
         Some(id) => devices::by_id(id).map_or(Target::Nothing, |m| m.family.target()),
     }
+}
+
+/// Whether an event can come from the driver now in use. Events queued
+/// by the previous driver arrive after a switch and must not overwrite
+/// the new mouse's state.
+fn belongs_to(ev: &Event, t: &Target) -> bool {
+    let driver = matches!(t, Target::Hidpp | Target::Razer | Target::Eternico);
+    match ev {
+        Event::Status(_) => *t == Target::Lionel,
+        Event::Device(_) => *t == Target::Lionel || driver,
+        Event::Ident(..) => driver,
+        Event::Basic(_) => driver || matches!(t, Target::Bluetooth(_)),
+        Event::Offline | Event::Absent => *t != Target::Nothing,
+    }
+}
+
+/// Clears what the previous mouse reported; flags follow the new one's
+/// capabilities until it reports itself.
+fn forget_mouse(v: &mut View, caps: Caps) {
+    v.basic = BasicView::default();
+    v.connected = false;
+    v.battery = 0;
+    v.charge = Charge::Discharging;
+    v.has_battery = caps.battery;
+    v.link = tr(T::LinkSearching).into();
 }
 
 fn support_badge(s: Support) -> (&'static str, Badge) {
@@ -508,6 +536,9 @@ impl Controller {
     // ---- device status ----
 
     fn on_mouse(&mut self, ev: Event) {
+        if !belongs_to(&ev, &self.target) {
+            return;
+        }
         let (link, level) = match ev {
             Event::Device(info) => {
                 self.device_info = Some(info);
@@ -693,13 +724,18 @@ impl Controller {
         }
     }
 
+    fn retarget(&mut self, t: Target) {
+        self.target = t.clone();
+        self.mouse.send(Command::Target(t));
+    }
+
     /// Mice without a driver but connected over Bluetooth still report a
     /// battery through Windows: point the mouse service at their address.
     fn retarget_bluetooth(&mut self) {
         let Some(addr) = self.chosen_detected().and_then(|d| d.bt_address.clone()) else {
             return;
         };
-        self.mouse.send(Command::Target(Target::Bluetooth(addr)));
+        self.retarget(Target::Bluetooth(addr));
     }
 
     /// A driver-based mouse opened: name, DPI range and report rates.
@@ -748,13 +784,13 @@ impl Controller {
         store::save_config(&self.cfg);
 
         // New driver: forget what the previous one reported.
-        self.mouse.send(Command::Target(target_of(self.cfg.device.as_deref())));
+        self.retarget(target_of(self.cfg.device.as_deref()));
         (self.status, self.ident, self.device_info, self.basic_online) = (None, None, None, false);
-        self.view.basic = BasicView::default();
-        self.view.has_battery = self.view.caps.battery;
+        let caps = caps_of(self.cfg.device.as_deref());
+        self.view.caps = caps;
+        forget_mouse(&mut self.view, caps);
         self.retarget_bluetooth();
 
-        self.view.caps = caps_of(self.cfg.device.as_deref());
         self.view.device_name = device_name(self.cfg.device.as_deref());
         self.stats.set_vendor(stats_vendor(self.cfg.device.as_deref()));
         if !view::page_visible(self.view.page, &self.view.caps) {
@@ -773,6 +809,11 @@ impl Controller {
         };
         let info = owned.as_ref();
         let mut rows: Vec<(T, String)> = Vec::new();
+
+        // "Other mouse": count only that mouse, not every mouse connected.
+        if model.is_none() {
+            self.stats.set_vendor(info.map(|i| i.vid));
+        }
 
         // "Other mouse": show the name the detected mouse reports.
         if model.is_none() {
@@ -1168,6 +1209,27 @@ fn chart(samples: &[stats::BatterySample], now: u64) -> Vec<(f32, f32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn switching_to_driverless_mouse_drops_old_battery() {
+        // Lionel was connected at 56 %, then "other mouse" is chosen.
+        let mut v = initial_view(&AppConfig::default(), false);
+        (v.connected, v.has_battery, v.battery) = (true, true, 56);
+        forget_mouse(&mut v, CAPS_NONE);
+        assert!(!v.connected);
+        assert!(!v.has_battery);
+        assert_eq!(v.battery, 0);
+    }
+
+    #[test]
+    fn late_events_of_previous_driver_are_ignored() {
+        let lionel_status = Event::Offline;
+        assert!(!belongs_to(&lionel_status, &Target::Nothing));
+        let basic = Event::Basic(crate::drivers::Reading::default());
+        assert!(!belongs_to(&basic, &Target::Lionel));
+        assert!(belongs_to(&basic, &Target::Bluetooth("B66B18D71E00".into())));
+        assert!(belongs_to(&Event::Offline, &Target::Lionel));
+    }
 
     #[test]
     fn groups_thousands() {
