@@ -486,11 +486,12 @@ fn mouse_logo(g: &Gfx, x: f32, y: f32) {
     const NOSE: Color = Color::rgb(0xff8fa8);
     g.circle(x + 9.0, y + 0.5, 3.0, NOSE);
 
-    // Three short whiskers per side, slanting up and out.
+    // Three short whiskers per side, from beside the nose, slanting up and out.
     const LEN: f32 = 6.0;
-    let wy = y + 6.0;
-    for (side, x0) in [(-1.0, x - 1.5), (1.0, x + 19.5)] {
-        for (oy, rise) in [(0.0, 3.0), (2.5, 1.7), (5.0, 0.5)] {
+    let (cx, wy) = (x + 9.0, y + 2.5);
+    for side in [-1.0, 1.0] {
+        for (oy, inset, rise) in [(0.0, 0.0, 2.6), (1.8, 0.6, 1.5), (3.6, 1.4, 0.5)] {
+            let x0 = cx + side * (6.5 + inset);
             g.line(x0, wy + oy, x0 + side * LEN, wy + oy - rise, 1.1, th().text);
         }
     }
