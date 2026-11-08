@@ -405,7 +405,11 @@ impl Asus {
         let Ok(p) = self.query(CMD_PROFILE, &[]) else {
             return false;
         };
-        let active = parse_preset(&p).filter(|&i| i < self.model.presets).unwrap_or(0);
+        // Unknown preset: writing and saving preset 0 would change one the
+        // user did not pick.
+        let Some(active) = parse_preset(&p).filter(|&i| i < self.model.presets) else {
+            return false;
+        };
         self.query(CMD_SET, &self.model.dpi_params(active, dpi)).is_ok() && self.save()
     }
 

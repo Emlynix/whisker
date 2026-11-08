@@ -223,6 +223,17 @@ fn version(v: u32) -> String {
     format!("v{}.{}.{}", b[0], b[1], b[2])
 }
 
+/// Model to drive when `dev` answers the PID query with `pid`, so writes
+/// never reach a keyboard or headset: a cable device must report itself,
+/// a dongle its own mouse, a shared receiver any known mouse.
+fn accept(dev: &'static Model, pid: u32) -> Option<&'static Model> {
+    match dev.link {
+        Link::Cable => (pid == dev.pid as u32).then_some(dev),
+        Link::Dongle => paired_model(pid).filter(|m| m.name == dev.name).map(|_| dev),
+        Link::Shared => paired_model(pid),
+    }
+}
+
 pub struct Corsair {
     ch: Channel,
     model: &'static Model,
@@ -250,12 +261,10 @@ impl Corsair {
             let Some(pid) = d.hello() else {
                 continue;
             };
-            if dev.link == Link::Shared {
-                let Some(mouse) = paired_model(pid) else {
-                    continue;
-                };
-                d.model = mouse;
-            }
+            let Some(mouse) = accept(dev, pid) else {
+                continue;
+            };
+            d.model = mouse;
             return Some((d, iface.info));
         }
         None
@@ -334,8 +343,10 @@ impl Corsair {
 
     /// `None` when the mouse does not answer (asleep or off).
     pub fn read(&mut self) -> Option<Reading> {
+        // Out-of-range DPI would skew the distance statistics.
         let dpi = self.get(PROP_DPI_X)?;
-        let mut r = Reading { dpi: Some(dpi), rate_hz: self.get(PROP_RATE).and_then(rate_hz), ..Reading::default() };
+        let dpi = (DPI_MIN..=self.model.dpi_max).contains(&dpi).then_some(dpi);
+        let mut r = Reading { dpi, rate_hz: self.get(PROP_RATE).and_then(rate_hz), ..Reading::default() };
 
         let Some(level) = self.get(PROP_BATTERY).and_then(battery_pct) else {
             return Some(r);
@@ -347,7 +358,7 @@ impl Corsair {
 
     /// Same value on both axes, clamped to the model range.
     pub fn set_dpi(&mut self, dpi: u32) -> bool {
-        let v = dpi.clamp(DPI_MIN, self.model.dpi_max) as u16;
+        let v = dpi.clamp(DPI_MIN, self.model.dpi_max.max(DPI_MIN)) as u16;
         self.set(PROP_DPI_X, v) && self.set(PROP_DPI_Y, v)
     }
 
@@ -362,6 +373,21 @@ impl Corsair {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hello_must_match_link() {
+        let cable = model(0x1B80).unwrap();
+        let dongle = model(0x1B81).unwrap();
+        let shared = model(0x1B65).unwrap();
+        assert!(accept(cable, 0x1B80).is_some());
+        assert!(accept(cable, 0x1B9E).is_none());
+        // Dongle: the paired device must be the receiver's own mouse.
+        assert!(accept(dongle, 0x1B80).is_some());
+        assert!(accept(dongle, 0x1BF0).is_none());
+        assert!(accept(dongle, 0x1B3D).is_none());
+        assert_eq!(accept(shared, 0x1BF0).map(|m| m.pid), Some(0x1BF0));
+        assert!(accept(shared, 0x1B3D).is_none());
+    }
 
     #[test]
     fn pids_are_unique() {

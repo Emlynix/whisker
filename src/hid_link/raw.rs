@@ -7,7 +7,7 @@ use crate::win::wide;
 use std::time::{Duration, Instant};
 use windows_sys::Win32::Devices::HumanInterfaceDevice::*;
 use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_IO_PENDING, GENERIC_READ, GENERIC_WRITE, GetLastError, HANDLE, INVALID_HANDLE_VALUE, WAIT_TIMEOUT,
+    CloseHandle, ERROR_IO_PENDING, GENERIC_READ, GENERIC_WRITE, GetLastError, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAG_OVERLAPPED, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, ReadFile, WriteFile,
@@ -113,7 +113,8 @@ impl Channel {
             return None;
         }
         let ms = timeout.as_millis().min(u32::MAX as u128) as u32;
-        if unsafe { WaitForSingleObject(self.event, ms) } == WAIT_TIMEOUT {
+        // Timeout or a failed wait: cancel, so the blocking result below returns.
+        if unsafe { WaitForSingleObject(self.event, ms) } != WAIT_OBJECT_0 {
             unsafe { CancelIoEx(self.handle, ov) };
         }
         let mut n = 0u32;
