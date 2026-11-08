@@ -8,6 +8,7 @@
 
 pub mod eternico;
 pub mod hidpp;
+pub mod oemhid;
 pub mod razer;
 
 /// DPI values a mouse accepts.
