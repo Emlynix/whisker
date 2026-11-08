@@ -27,8 +27,6 @@
 //! (2CED, older protocol), Kone Pure Optical (2DB4), Kone Pure Military,
 //! Kone AIMO, Kova/Kova+, Kain, Burst, Tyon, Savu, Lua, Pyra.
 
-// Not wired into `mouse.rs` yet; drop this once it is.
-#![allow(dead_code)]
 
 use super::{Ability, DpiRange, Ident, Reading};
 use crate::hid_link::DeviceInfo;

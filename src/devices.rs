@@ -19,6 +19,8 @@ pub enum Family {
     SteelSeries,
     /// One Chinese OEM protocol behind ATK, VXE, VGN, Lamzu web apps.
     OemHid,
+    /// Roccat Kone family, checksummed settings blocks.
+    Roccat,
     /// Corsair wireless mice, Bragi protocol.
     Corsair,
     /// ASUS ROG mice, 64-byte vendor reports.
@@ -42,6 +44,7 @@ impl Family {
             Family::Sinowealth => Target::Sinowealth,
             Family::SteelSeries => Target::SteelSeries,
             Family::OemHid => Target::OemHid,
+            Family::Roccat => Target::Roccat,
             Family::Corsair => Target::Corsair,
             Family::Asus => Target::Asus,
             Family::NoDriver => Target::Nothing,
@@ -230,6 +233,17 @@ pub static MODELS: &[Model] = &[
         vid: crate::drivers::corsair::VID,
         pids: &[],
         family: Family::Corsair,
+        support: Support::Experimental,
+        caps: CAPS_BASIC,
+        stage_dpi: &[],
+    },
+    Model {
+        id: "roccat",
+        vendor: "Roccat",
+        name: "",
+        vid: crate::drivers::roccat::VID,
+        pids: &[],
+        family: Family::Roccat,
         support: Support::Experimental,
         caps: CAPS_BASIC,
         stage_dpi: &[],

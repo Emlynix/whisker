@@ -125,16 +125,18 @@ fn detected_rows(f: &mut Frame, d: &Detect, inner: Rect) {
     }
 }
 
-/// Catalogue models: two columns of compact tiles, badge as a dot.
+/// Catalogue models: compact tiles, badge as a dot. Two columns, three
+/// once the list outgrows them (tiles would drop below ~35 px).
 fn model_grid(f: &mut Frame, d: &Detect, area: Rect) {
-    const COLS: usize = 2;
+    const TWO_COL_MAX: usize = 12;
     const GAP: f32 = 8.0;
-    let rows = d.rows.len().div_ceil(COLS).max(1);
+    let cols = if d.rows.len() > TWO_COL_MAX { 3 } else { 2 };
+    let rows = d.rows.len().div_ceil(cols).max(1);
     let h = ((area.h - (rows - 1) as f32 * GAP) / rows as f32).min(44.0);
-    let w = (area.w - GAP) / COLS as f32;
+    let w = (area.w - (cols - 1) as f32 * GAP) / cols as f32;
 
     for (i, r) in d.rows.iter().enumerate() {
-        let (row, col) = ((i / COLS) as f32, (i % COLS) as f32);
+        let (row, col) = ((i / cols) as f32, (i % cols) as f32);
         let rr = Rect::new(area.x + col * (w + GAP), area.y + row * (h + GAP), w, h);
         let hot = f.button(Act::DetectSel(i), rr);
         tile(f, rr, i == d.sel, hot);
