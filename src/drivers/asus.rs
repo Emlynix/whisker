@@ -108,7 +108,8 @@ struct Model {
     presets: u8,
     layout: Layout,
     link: Link,
-    /// Physical buttons (informational).
+    /// Physical buttons; for a future button remap page.
+    #[allow(dead_code)]
     buttons: u8,
 }
 

@@ -26,8 +26,6 @@
 //! which reroutes buttons; we never do). Some firmware may refuse a
 //! property there; the call then fails cleanly.
 
-// Not wired into the catalogue yet.
-#![allow(dead_code)]
 
 use super::{Ability, DpiRange, Ident, Reading};
 use crate::hid_link::DeviceInfo;

@@ -19,6 +19,10 @@ pub enum Family {
     SteelSeries,
     /// One Chinese OEM protocol behind ATK, VXE, VGN, Lamzu web apps.
     OemHid,
+    /// Corsair wireless mice, Bragi protocol.
+    Corsair,
+    /// ASUS ROG mice, 64-byte vendor reports.
+    Asus,
     /// Recognized, but no configuration protocol is known.
     NoDriver,
 }
@@ -38,6 +42,8 @@ impl Family {
             Family::Sinowealth => Target::Sinowealth,
             Family::SteelSeries => Target::SteelSeries,
             Family::OemHid => Target::OemHid,
+            Family::Corsair => Target::Corsair,
+            Family::Asus => Target::Asus,
             Family::NoDriver => Target::Nothing,
         }
     }
@@ -202,6 +208,28 @@ pub static MODELS: &[Model] = &[
         vid: crate::drivers::oemhid::VIDS[1],
         pids: &[],
         family: Family::OemHid,
+        support: Support::Experimental,
+        caps: CAPS_BASIC,
+        stage_dpi: &[],
+    },
+    Model {
+        id: "asus",
+        vendor: "ASUS ROG",
+        name: "",
+        vid: crate::drivers::asus::VID,
+        pids: &[],
+        family: Family::Asus,
+        support: Support::Experimental,
+        caps: CAPS_BASIC,
+        stage_dpi: &[],
+    },
+    Model {
+        id: "corsair",
+        vendor: "Corsair",
+        name: "",
+        vid: crate::drivers::corsair::VID,
+        pids: &[],
+        family: Family::Corsair,
         support: Support::Experimental,
         caps: CAPS_BASIC,
         stage_dpi: &[],

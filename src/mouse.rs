@@ -10,6 +10,8 @@
 use crate::drivers::eternico::Eternico;
 use crate::drivers::hidpp::Hidpp;
 use crate::drivers::oemhid::OemHid;
+use crate::drivers::corsair::Corsair;
+use crate::drivers::asus::Asus;
 use crate::drivers::razer::Razer;
 use crate::drivers::sinowealth::Sinowealth;
 use crate::drivers::steelseries::SteelSeries;
@@ -40,6 +42,8 @@ pub enum Target {
     Sinowealth,
     SteelSeries,
     OemHid,
+    Asus,
+    Corsair,
     /// Bluetooth LE mouse without a driver: battery from Windows only.
     Bluetooth(String),
     /// Mouse without a driver: statistics only.
@@ -107,6 +111,8 @@ enum Driver {
     Sinowealth(Sinowealth),
     SteelSeries(SteelSeries),
     OemHid(OemHid),
+    Asus(Asus),
+    Corsair(Corsair),
 }
 
 impl Driver {
@@ -118,6 +124,8 @@ impl Driver {
             Target::Sinowealth => Sinowealth::open().map(|(d, i)| (Driver::Sinowealth(d), i)),
             Target::SteelSeries => SteelSeries::open().map(|(d, i)| (Driver::SteelSeries(d), i)),
             Target::OemHid => OemHid::open().map(|(d, i)| (Driver::OemHid(d), i)),
+            Target::Corsair => Corsair::open().map(|(d, i)| (Driver::Corsair(d), i)),
+            Target::Asus => Asus::open().map(|(d, i)| (Driver::Asus(d), i)),
             _ => None,
         }
     }
@@ -130,6 +138,8 @@ impl Driver {
             Driver::Sinowealth(d) => (d.ident(), d.ability()),
             Driver::SteelSeries(d) => (d.ident(), d.ability()),
             Driver::OemHid(d) => (d.ident(), d.ability()),
+            Driver::Corsair(d) => (d.ident(), d.ability()),
+            Driver::Asus(d) => (d.ident(), d.ability()),
         }
     }
 
@@ -141,6 +151,8 @@ impl Driver {
             Driver::Sinowealth(d) => d.read(),
             Driver::SteelSeries(d) => d.read(),
             Driver::OemHid(d) => d.read(),
+            Driver::Corsair(d) => d.read(),
+            Driver::Asus(d) => d.read(),
         }
     }
 
@@ -153,6 +165,8 @@ impl Driver {
             Driver::Sinowealth(d) => d.set_dpi(dpi),
             Driver::SteelSeries(d) => d.set_dpi(dpi),
             Driver::OemHid(d) => d.set_dpi(dpi),
+            Driver::Corsair(d) => d.set_dpi(dpi),
+            Driver::Asus(d) => d.set_dpi(dpi),
         };
     }
 
@@ -164,6 +178,8 @@ impl Driver {
             Driver::Sinowealth(d) => d.set_rate(hz),
             Driver::SteelSeries(d) => d.set_rate(hz),
             Driver::OemHid(d) => d.set_rate(hz),
+            Driver::Corsair(d) => d.set_rate(hz),
+            Driver::Asus(d) => d.set_rate(hz),
         };
     }
 }
@@ -271,7 +287,7 @@ fn run(target: Target, rx: Receiver<Command>, on_event: impl Fn(Event)) {
     loop {
         match &w.target {
             Target::Lionel => w.poll_lionel(&on_event),
-            Target::Hidpp | Target::Razer | Target::Eternico | Target::Sinowealth | Target::SteelSeries | Target::OemHid => {
+            Target::Hidpp | Target::Razer | Target::Eternico | Target::Sinowealth | Target::SteelSeries | Target::OemHid | Target::Asus | Target::Corsair => {
                 w.poll_driver(&on_event)
             }
             Target::Bluetooth(addr) => match crate::bluetooth::battery(addr) {

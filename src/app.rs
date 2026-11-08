@@ -230,7 +230,7 @@ fn target_of(device: Option<&str>) -> Target {
 /// by the previous driver arrive after a switch and must not overwrite
 /// the new mouse's state.
 fn belongs_to(ev: &Event, t: &Target) -> bool {
-    let driver = matches!(t, Target::Hidpp | Target::Razer | Target::Eternico | Target::Sinowealth | Target::SteelSeries | Target::OemHid);
+    let driver = matches!(t, Target::Hidpp | Target::Razer | Target::Eternico | Target::Sinowealth | Target::SteelSeries | Target::OemHid | Target::Asus | Target::Corsair);
     match ev {
         Event::Status(_) => *t == Target::Lionel,
         Event::Device(_) => *t == Target::Lionel || driver,
