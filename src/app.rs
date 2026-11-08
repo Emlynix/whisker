@@ -195,7 +195,8 @@ fn initial_view(cfg: &AppConfig, ask_setup: bool) -> View {
         device: DeviceView::default(),
         detect: None,
         basic: BasicView::default(),
-        has_battery: true,
+        // Until a reading arrives: only mice that can report a battery show one.
+        has_battery: caps_of(cfg.device.as_deref()).battery,
     }
 }
 

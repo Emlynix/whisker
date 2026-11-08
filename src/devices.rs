@@ -37,7 +37,6 @@ pub enum Support {
     /// Driver written from protocol documentation, not yet verified.
     Experimental,
     /// Recognized; statistics only.
-    #[allow(dead_code)] // for recognized models without a known protocol
     Basic,
 }
 
@@ -136,6 +135,20 @@ pub static MODELS: &[Model] = &[
         support: Support::Experimental,
         caps: CAPS_STATUS,
         stage_dpi: &[1200, 2400, 3200, 6400],
+    },
+    // Receiver reuses an Apple keyboard id (05AC:024F); only its mouse
+    // collection is matched, so a real Apple keyboard is never listed.
+    // It broadcasts only a link state, no battery or DPI.
+    Model {
+        id: "eternico-mvs490b",
+        vendor: "Eternico",
+        name: "AET-MVS490B",
+        vid: 0x05AC,
+        pids: &[(0x024F, Link::Receiver)],
+        family: Family::NoDriver,
+        support: Support::Basic,
+        caps: CAPS_NONE,
+        stage_dpi: &[],
     },
 ];
 
