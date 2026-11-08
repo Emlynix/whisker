@@ -477,9 +477,19 @@ fn icon(g: &Gfx, page: usize, x: f32, y: f32, c: Color) {
     }
 }
 
+/// The app's mouse with whiskers, matching the exe icon.
 fn mouse_logo(g: &Gfx, x: f32, y: f32) {
     g.stroke(Rect::new(x, y, 18.0, 27.0), 9.0, 2.0, th().accent);
     g.line(x + 9.0, y + 1.0, x + 9.0, y + 10.0, 2.0, th().accent);
+
+    // Three whiskers per side, fanning out from the nose height.
+    const LEN: f32 = 8.0;
+    let ny = y + 8.0;
+    for (side, x0) in [(-1.0, x - 2.0), (1.0, x + 20.0)] {
+        for (oy, fan) in [(-2.0, -3.0), (0.0, 0.0), (2.0, 3.0)] {
+            g.line(x0, ny + oy, x0 + side * LEN, ny + oy + fan, 1.2, th().text);
+        }
+    }
 }
 
 // ---- sidebar -------------------------------------------------------------
@@ -487,9 +497,9 @@ fn mouse_logo(g: &Gfx, x: f32, y: f32) {
 fn sidebar(f: &mut Frame, v: &View) {
     f.g.fill(Rect::new(0.0, 0.0, SIDE_W, HEIGHT), 0.0, th().side);
 
-    mouse_logo(f.g, 26.0, 20.0);
-    f.g.text(crate::APP_NAME, Rect::new(56.0, 16.0, 140.0, 24.0), 18.0, Weight::Bold, Align::Left, th().text);
-    let sub = Rect::new(56.0, 38.0, SIDE_W - 70.0, 16.0);
+    mouse_logo(f.g, 24.0, 20.0);
+    f.g.text(crate::APP_NAME, Rect::new(62.0, 16.0, 140.0, 24.0), 18.0, Weight::Bold, Align::Left, th().text);
+    let sub = Rect::new(62.0, 38.0, SIDE_W - 76.0, 16.0);
     f.g.text(&v.device_name, sub, fit_size(&v.device_name, sub.w, 11.0), Weight::Normal, Align::Left, th().faint);
 
     let visible = PAGES.iter().enumerate().filter(|(i, _)| page_visible(*i, &v.caps));
