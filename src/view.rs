@@ -225,6 +225,9 @@ pub struct View {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BasicView {
     pub dpi: Option<u32>,
+    /// Current / total DPI stage for mice that only report the stage.
+    pub stage: Option<u8>,
+    pub stages: Option<u8>,
     /// Selectable DPI values (slider positions).
     pub values: Vec<u32>,
     pub rates: Vec<u32>,
@@ -345,6 +348,11 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
     sidebar(&mut f, v);
     let title = Rect::new(X0, 18.0, CW, 36.0);
     f.g.text(tr(PAGES[v.page]), title, 24.0, Weight::Bold, Align::Left, th().text);
+    // Overview names the mouse it describes.
+    if v.page == 0 {
+        let size = fit_size(&v.device_name, title.w - 200.0, 16.0);
+        f.g.text(&v.device_name, Rect::new(title.x + 200.0, title.y + 2.0, title.w - 200.0, title.h), size, Weight::Semibold, Align::Right, th().muted);
+    }
 
     match v.page {
         0 => overview(&mut f, v),
@@ -551,7 +559,17 @@ fn overview(f: &mut Frame, v: &View) {
     let y = TOP + 118.0 + GAP;
     let stages = v.caps.dpi == DpiUi::Stages;
     let (dpi, note) = match v.stages.get(v.active) {
-        _ if !stages => (v.basic.dpi.map_or("—".into(), |d| d.to_string()), String::new()),
+        _ if !stages => {
+            let stage_note = match (v.basic.stage, v.basic.stages) {
+                (Some(s), Some(n)) => fill(tr(T::StageOf), &[&s.to_string(), &n.to_string()]),
+                _ => String::new(),
+            };
+            match (v.basic.dpi, v.basic.stage, v.basic.stages) {
+                (Some(d), ..) => (d.to_string(), stage_note),
+                (None, Some(s), Some(n)) => (format!("{s} / {n}"), stage_note),
+                _ => ("—".into(), String::new()),
+            }
+        }
         Some(s) => (s.dpi.to_string(), fill(tr(T::StageOf), &[&(v.active + 1).to_string(), &v.stages.iter().filter(|s| s.enabled).count().to_string()])),
         None => ("—".into(), String::new()),
     };
@@ -560,7 +578,12 @@ fn overview(f: &mut Frame, v: &View) {
         true => format!("{} Hz", RATES[v.polling]),
         false => v.basic.rate.map_or("—".into(), |r| format!("{r} Hz")),
     };
-    stat_card(f, Rect::new(X0 + w + GAP, y, w, 110.0), tr(T::PollingRate), &hz, &fill(tr(T::MeasuredValue), &[&v.measured]));
+    if v.caps.polling {
+        stat_card(f, Rect::new(X0 + w + GAP, y, w, 110.0), tr(T::PollingRate), &hz, &fill(tr(T::MeasuredValue), &[&v.measured]));
+    } else {
+        // The mouse doesn't report its rate: show what Raw Input measures.
+        stat_card(f, Rect::new(X0 + w + GAP, y, w, 110.0), tr(T::Measured), &v.measured, tr(T::PollingRate));
+    }
     let today = fill(tr(T::ClicksMoved), &[&v.today_distance]);
     stat_card(f, Rect::new(X0 + 2.0 * (w + GAP), y, w, 110.0), tr(T::Today), &v.today_clicks, &today);
 

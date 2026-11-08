@@ -124,6 +124,7 @@ impl Razer {
             dpi: Some(DEFAULT_DPI),
             rates: RATES.iter().map(|(hz, _)| *hz).collect(),
             battery: self.call(0x07, 0x80, 2, &[]).is_ok(),
+            stages: None,
         }
     }
 

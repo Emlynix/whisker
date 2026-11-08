@@ -7,6 +7,7 @@
 //!        +-------Event (status)-----+
 //! ```
 
+use crate::drivers::eternico::Eternico;
 use crate::drivers::hidpp::Hidpp;
 use crate::drivers::razer::Razer;
 use crate::drivers::{Ability, Ident, Reading};
@@ -31,6 +32,8 @@ pub enum Target {
     Lionel,
     Hidpp,
     Razer,
+    /// Eternico receiver, listen-only.
+    Eternico,
     /// Bluetooth LE mouse without a driver: battery from Windows only.
     Bluetooth(String),
     /// Mouse without a driver: statistics only.
@@ -94,6 +97,7 @@ impl MouseService {
 enum Driver {
     Hidpp(Hidpp),
     Razer(Razer),
+    Eternico(Eternico),
 }
 
 impl Driver {
@@ -101,6 +105,7 @@ impl Driver {
         match t {
             Target::Hidpp => Hidpp::open().map(|(d, i)| (Driver::Hidpp(d), i)),
             Target::Razer => Razer::open().map(|(d, i)| (Driver::Razer(d), i)),
+            Target::Eternico => Eternico::open().map(|(d, i)| (Driver::Eternico(d), i)),
             _ => None,
         }
     }
@@ -109,6 +114,7 @@ impl Driver {
         match self {
             Driver::Hidpp(d) => (d.ident(), d.ability()),
             Driver::Razer(d) => (d.ident(), d.ability()),
+            Driver::Eternico(d) => (d.ident(), d.ability()),
         }
     }
 
@@ -116,6 +122,7 @@ impl Driver {
         match self {
             Driver::Hidpp(d) => d.read(),
             Driver::Razer(d) => d.read(),
+            Driver::Eternico(d) => d.read(),
         }
     }
 
@@ -123,6 +130,8 @@ impl Driver {
         match self {
             Driver::Hidpp(d) => d.set_dpi(dpi),
             Driver::Razer(d) => d.set_dpi(dpi),
+            // Listen-only.
+            Driver::Eternico(_) => false,
         };
     }
 
@@ -130,6 +139,7 @@ impl Driver {
         match self {
             Driver::Hidpp(d) => d.set_rate(hz),
             Driver::Razer(d) => d.set_rate(hz),
+            Driver::Eternico(_) => false,
         };
     }
 }
@@ -237,7 +247,7 @@ fn run(target: Target, rx: Receiver<Command>, on_event: impl Fn(Event)) {
     loop {
         match &w.target {
             Target::Lionel => w.poll_lionel(&on_event),
-            Target::Hidpp | Target::Razer => w.poll_driver(&on_event),
+            Target::Hidpp | Target::Razer | Target::Eternico => w.poll_driver(&on_event),
             Target::Bluetooth(addr) => match crate::bluetooth::battery(addr) {
                 Some(pct) => on_event(Event::Basic(Reading { battery: Some(pct), ..Reading::default() })),
                 None => on_event(Event::Absent),

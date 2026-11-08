@@ -6,6 +6,7 @@
 //!   mouse service ──> Driver::{Hidpp, Razer} ──> hid_link::raw::Channel
 //! ```
 
+pub mod eternico;
 pub mod hidpp;
 pub mod razer;
 
@@ -33,6 +34,8 @@ pub struct Ability {
     /// Report rates in Hz, ascending.
     pub rates: Vec<u32>,
     pub battery: bool,
+    /// Number of DPI stages, for mice that only report the stage.
+    pub stages: Option<u8>,
 }
 
 /// Identity details for the Device page.
@@ -51,6 +54,8 @@ pub struct Reading {
     pub charging: bool,
     pub dpi: Option<u32>,
     pub rate_hz: Option<u32>,
+    /// Current DPI stage (1-based), for mice that only report the stage.
+    pub stage: Option<u8>,
 }
 
 /// Battery % from a Li-ion cell voltage (rough discharge curve).

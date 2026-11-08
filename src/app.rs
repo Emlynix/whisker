@@ -519,12 +519,22 @@ impl Controller {
             }
             Event::Basic(r) => {
                 self.basic_online = true;
-                self.view.basic.dpi = r.dpi;
                 self.view.basic.rate = r.rate_hz;
+                self.view.basic.dpi = r.dpi;
+                if let Some(s) = r.stage.filter(|s| Some(*s) != self.cfg.last_stage) {
+                    self.cfg.last_stage = Some(s);
+                    store::save_config(&self.cfg);
+                }
+                self.view.basic.stage = r.stage.or(self.cfg.last_stage);
+                // Stage-only mice: DPI from the catalogue table.
+                if r.dpi.is_none() {
+                    self.view.basic.dpi = self.stage_dpi();
+                }
+                let dpi = self.view.basic.dpi;
                 self.view.has_battery = r.battery.is_some();
                 self.view.battery = r.battery.unwrap_or(0);
                 self.view.charge = if r.charging { Charge::Charging } else { Charge::Discharging };
-                if let Some(d) = r.dpi {
+                if let Some(d) = dpi {
                     self.stats.set_dpi(d);
                 }
                 let level = match r.battery {
@@ -665,6 +675,13 @@ impl Controller {
 
     // ---- device ----
 
+    /// DPI of the current stage from the model's table, e.g. stage 2 -> 2400.
+    fn stage_dpi(&self) -> Option<u32> {
+        let model = self.cfg.device.as_deref().and_then(devices::by_id)?;
+        let stage = self.view.basic.stage? as usize;
+        model.stage_dpi.get(stage.checked_sub(1)?).copied()
+    }
+
     /// The chosen mouse's entry among the detected ones (no-driver models
     /// and "other mouse" only; driver-based mice report their own identity).
     fn chosen_detected(&self) -> Option<&DeviceInfo> {
@@ -694,6 +711,7 @@ impl Controller {
         }
         self.view.basic.values = ability.dpi.map(|r| r.values()).unwrap_or_default();
         self.view.basic.rates = ability.rates;
+        self.view.basic.stages = ability.stages;
         self.view.has_battery = ability.battery;
         self.ident = Some(ident);
         self.refresh_device();
@@ -769,7 +787,7 @@ impl Controller {
             });
             rows.push((T::DevConnection, link.unwrap_or_default()));
         }
-        let ident = self.ident.as_ref().filter(|_| model.is_some_and(|m| matches!(m.family, Family::Hidpp | Family::Razer)));
+        let ident = self.ident.as_ref().filter(|_| model.is_some_and(|m| matches!(m.family, Family::Hidpp | Family::Razer | Family::Eternico)));
         if let Some(addr) = info.and_then(|i| i.bt_address.as_deref()) {
             // AA:BB:CC:DD:EE:FF
             let pretty: Vec<&str> = (0..addr.len()).step_by(2).map(|k| &addr[k..k + 2]).collect();

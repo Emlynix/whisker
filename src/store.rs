@@ -50,6 +50,8 @@ pub struct AppConfig {
     /// Chosen mouse model id, `GENERIC_DEVICE` for statistics only, `None`
     /// until the user confirmed one.
     pub device: Option<String>,
+    /// Last DPI stage reported by a stage-only mouse (it reports changes only).
+    pub last_stage: Option<u8>,
     /// First-run install question was answered.
     pub setup_asked: bool,
     pub theme: theme::Choice,
@@ -71,6 +73,7 @@ impl Default for AppConfig {
             buttons: DEFAULT_ACTIONS,
             macros: vec![Vec::new(); MACRO_COUNT],
             device: None,
+            last_stage: None,
             setup_asked: false,
             theme: theme::Choice::System,
             lang: None,
@@ -207,6 +210,7 @@ fn parse_config(text: &str, mut c: AppConfig) -> AppConfig {
                 c.macros[i] = v.split(',').filter_map(triple).filter_map(MacroEvent::decode).take(MACRO_MAX_EVENTS).collect();
             }
             ("device", _) if !v.is_empty() => c.device = Some(v.to_string()),
+            ("stage", Some(x)) if x > 0 => c.last_stage = Some(x as u8),
             ("setup_asked", _) => c.setup_asked = v == "1",
             ("theme", _) => c.theme = theme::Choice::from_id(v),
             ("lang", _) => c.lang = Lang::from_code(v),
@@ -235,6 +239,7 @@ fn format_config(c: &AppConfig) -> String {
         format!("dark_moving={}", c.power.dark_while_moving as u8),
         format!("buttons={}", c.buttons.iter().map(|a| triple_hex(a.to_stored())).collect::<Vec<_>>().join(",")),
         format!("device={}", c.device.as_deref().unwrap_or("")),
+        format!("stage={}", c.last_stage.unwrap_or(0)),
         format!("setup_asked={}", c.setup_asked as u8),
         format!("theme={}", c.theme.id()),
         format!("lang={}", c.lang.map(|l| l.code()).unwrap_or("system")),

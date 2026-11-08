@@ -12,6 +12,8 @@ pub enum Family {
     /// Logitech HID++ 2.0.
     Hidpp,
     Razer,
+    /// Eternico receiver: listen-only status (battery, DPI stage).
+    Eternico,
     /// Recognized, but no configuration protocol is known.
     NoDriver,
 }
@@ -22,6 +24,7 @@ impl Family {
             Family::TelinkM022 => Target::Lionel,
             Family::Hidpp => Target::Hidpp,
             Family::Razer => Target::Razer,
+            Family::Eternico => Target::Eternico,
             Family::NoDriver => Target::Nothing,
         }
     }
@@ -34,6 +37,7 @@ pub enum Support {
     /// Driver written from protocol documentation, not yet verified.
     Experimental,
     /// Recognized; statistics only.
+    #[allow(dead_code)] // for recognized models without a known protocol
     Basic,
 }
 
@@ -61,6 +65,8 @@ pub struct Caps {
 /// Mouse without a driver: statistics only.
 pub const CAPS_NONE: Caps = Caps { dpi: DpiUi::None, polling: false, extras: false, lighting: false, buttons: false, battery: false };
 const CAPS_ALL: Caps = Caps { dpi: DpiUi::Stages, polling: true, extras: true, lighting: true, buttons: true, battery: true };
+/// Listen-only mice: battery and DPI stage, nothing to set.
+const CAPS_STATUS: Caps = Caps { dpi: DpiUi::None, polling: false, extras: false, lighting: false, buttons: false, battery: true };
 /// Driver-based mice: DPI, report rate, battery.
 const CAPS_BASIC: Caps = Caps { dpi: DpiUi::Single, polling: true, extras: false, lighting: false, buttons: false, battery: true };
 
@@ -76,6 +82,8 @@ pub struct Model {
     pub family: Family,
     pub support: Support,
     pub caps: Caps,
+    /// DPI of each stage for mice that only report the stage number.
+    pub stage_dpi: &'static [u32],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,6 +102,7 @@ pub static MODELS: &[Model] = &[
         family: Family::TelinkM022,
         support: Support::Full,
         caps: CAPS_ALL,
+        stage_dpi: &[],
     },
     Model {
         id: "logitech-hidpp",
@@ -104,6 +113,7 @@ pub static MODELS: &[Model] = &[
         family: Family::Hidpp,
         support: Support::Experimental,
         caps: CAPS_BASIC,
+        stage_dpi: &[],
     },
     Model {
         id: "razer",
@@ -114,16 +124,18 @@ pub static MODELS: &[Model] = &[
         family: Family::Razer,
         support: Support::Experimental,
         caps: CAPS_BASIC,
+        stage_dpi: &[],
     },
     Model {
         id: "eternico-ms480b",
         vendor: "Eternico",
         name: "AET-MS480B",
-        vid: 0x1D57,
-        pids: &[(0xFA60, Link::Receiver)],
-        family: Family::NoDriver,
-        support: Support::Basic,
-        caps: CAPS_NONE,
+        vid: crate::drivers::eternico::VID,
+        pids: &[(crate::drivers::eternico::PID, Link::Receiver)],
+        family: Family::Eternico,
+        support: Support::Experimental,
+        caps: CAPS_STATUS,
+        stage_dpi: &[1200, 2400, 3200, 6400],
     },
 ];
 
