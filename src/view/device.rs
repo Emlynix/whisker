@@ -40,6 +40,8 @@ pub struct Detect {
 pub struct DeviceView {
     pub rows: Vec<(T, String)>,
     pub offline: bool,
+    /// Driver not yet verified on hardware: ask for reports.
+    pub experimental: bool,
 }
 
 fn badge_color(k: Badge) -> Color {
@@ -64,7 +66,12 @@ pub(super) fn device_page(f: &mut Frame, v: &View) {
         f.g.text(&text, r, size, Weight::Normal, Align::Left, color);
     }
 
-    let y = card.y + card.h + 14.0;
+    let mut y = card.y + card.h + 14.0;
+    if d.experimental {
+        let r = Rect::new(X0, y, CW, 36.0);
+        f.g.text(tr(T::ExperimentalNote), r, 12.0, Weight::Normal, Align::Wrap, th().warn);
+        y += 44.0;
+    }
     f.push_button(Act::ChangeMouse, Rect::new(X0, y, 180.0, 36.0), tr(T::ChangeMouse), false);
     if d.offline {
         let r = Rect::new(X0 + 196.0, y, CW - 196.0, 36.0);

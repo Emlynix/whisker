@@ -200,9 +200,10 @@ pub enum T {
     DevStatus,
     NotReported,
     DevOffline,
+    ExperimentalNote,
 }
 
-const COUNT: usize = T::DevOffline as usize + 1;
+const COUNT: usize = T::ExperimentalNote as usize + 1;
 type Table = [&'static str; COUNT];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -540,6 +541,7 @@ const EN: Table = [
     "STATUS DATA",
     "not reported",
     "The mouse is not connected – values are from the last connection.",
+    "Experimental support: written from protocol documentation, not yet verified on this mouse. Please report on GitHub whether it works.",
 ];
 
 const SK: Table = [
@@ -735,6 +737,7 @@ const SK: Table = [
     "STAVOVÉ DÁTA",
     "neuvádza",
     "Myš nie je pripojená – údaje sú z posledného pripojenia.",
+    "Experimentálna podpora: napísaná podľa dokumentácie protokolu, na tejto myši ešte neoverená. Nahlás prosím na GitHube, či funguje.",
 ];
 
 const CS: Table = [
@@ -930,6 +933,7 @@ const CS: Table = [
     "STAVOVÁ DATA",
     "neuvádí",
     "Myš není připojena – údaje jsou z posledního připojení.",
+    "Experimentální podpora: napsaná podle dokumentace protokolu, na této myši zatím neověřená. Nahlaste prosím na GitHubu, zda funguje.",
 ];
 
 const PL: Table = [
@@ -1125,6 +1129,7 @@ const PL: Table = [
     "DANE STANU",
     "brak danych",
     "Mysz nie jest podłączona – wartości pochodzą z ostatniego połączenia.",
+    "Obsługa eksperymentalna: napisana na podstawie dokumentacji protokołu, jeszcze niesprawdzona na tej myszy. Zgłoś na GitHubie, czy działa.",
 ];
 
 const DE: Table = [
@@ -1320,6 +1325,7 @@ const DE: Table = [
     "STATUSDATEN",
     "nicht angegeben",
     "Die Maus ist nicht verbunden – Werte stammen von der letzten Verbindung.",
+    "Experimentelle Unterstützung: nach Protokolldokumentation geschrieben, auf dieser Maus noch nicht geprüft. Bitte auf GitHub melden, ob es funktioniert.",
 ];
 
 const FR: Table = [
@@ -1515,6 +1521,7 @@ const FR: Table = [
     "DONNÉES D'ÉTAT",
     "non indiqué",
     "La souris n'est pas connectée – valeurs de la dernière connexion.",
+    "Prise en charge expérimentale : écrite d'après la documentation du protocole, pas encore vérifiée sur cette souris. Merci d'indiquer sur GitHub si elle fonctionne.",
 ];
 
 const ES: Table = [
@@ -1710,6 +1717,7 @@ const ES: Table = [
     "DATOS DE ESTADO",
     "no indicado",
     "El ratón no está conectado – valores de la última conexión.",
+    "Compatibilidad experimental: escrita a partir de la documentación del protocolo, aún sin verificar en este ratón. Indique en GitHub si funciona.",
 ];
 
 const PT: Table = [
@@ -1905,6 +1913,7 @@ const PT: Table = [
     "DADOS DE ESTADO",
     "não indicado",
     "O rato não está ligado – valores da última ligação.",
+    "Suporte experimental: escrito a partir da documentação do protocolo, ainda não verificado neste rato. Indique no GitHub se funciona.",
 ];
 
 const IT: Table = [
@@ -2100,6 +2109,7 @@ const IT: Table = [
     "DATI DI STATO",
     "non indicato",
     "Il mouse non è connesso – valori dell'ultima connessione.",
+    "Supporto sperimentale: scritto in base alla documentazione del protocollo, non ancora verificato su questo mouse. Segnala su GitHub se funziona.",
 ];
 
 const JA: Table = [
@@ -2295,6 +2305,7 @@ const JA: Table = [
     "ステータス データ",
     "未報告",
     "マウスが接続されていません – 値は前回の接続時のものです。",
+    "試験的サポート: プロトコル資料に基づいて実装し、このマウスではまだ検証されていません。動作したかどうかを GitHub でお知らせください。",
 ];
 
 const KO: Table = [
@@ -2490,6 +2501,7 @@ const KO: Table = [
     "상태 데이터",
     "보고되지 않음",
     "마우스가 연결되어 있지 않습니다 – 마지막 연결 시의 값입니다.",
+    "실험적 지원: 프로토콜 문서를 바탕으로 작성되었으며 이 마우스에서는 아직 검증되지 않았습니다. 작동 여부를 GitHub에 알려 주세요.",
 ];
 
 const ZH_HANS: Table = [
@@ -2685,6 +2697,7 @@ const ZH_HANS: Table = [
     "状态数据",
     "未提供",
     "鼠标未连接 – 数值来自上次连接。",
+    "实验性支持：根据协议文档编写，尚未在此鼠标上验证。请在 GitHub 上反馈是否可用。",
 ];
 
 const ZH_HANT: Table = [
@@ -2880,6 +2893,7 @@ const ZH_HANT: Table = [
     "狀態資料",
     "未提供",
     "滑鼠未連線 – 數值來自上次連線。",
+    "實驗性支援：依據通訊協定文件撰寫，尚未在此滑鼠上驗證。請在 GitHub 上回報是否可用。",
 ];
 
 #[cfg(test)]

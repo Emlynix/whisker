@@ -865,7 +865,8 @@ impl Controller {
         // Only driver-based or Bluetooth mice have a connection state to report.
         let driven = model.is_some_and(|m| m.family != Family::NoDriver) || info.is_some_and(|i| i.bt_address.is_some());
         let offline = driven && !self.view.connected && info.is_some();
-        self.view.device = DeviceView { rows, offline };
+        let experimental = model.is_some_and(|m| m.support == Support::Experimental);
+        self.view.device = DeviceView { rows, offline, experimental };
         window::invalidate();
     }
 
