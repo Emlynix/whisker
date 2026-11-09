@@ -236,7 +236,13 @@ pub(super) fn buttons_page(f: &mut Frame, v: &View) {
     }
 
     let y = card.y + card.h + GAP;
-    f.push_button(Act::ResetButtons, Rect::new(X0, y, 200.0, 36.0), tr(T::ResetAll), false);
+    // Nothing to reset while the layout is the default one.
+    let reset = Rect::new(X0, y, 200.0, 36.0);
+    if v.buttons == DEFAULT_ACTIONS {
+        f.dead_button(reset, tr(T::ResetAll));
+    } else {
+        f.push_button(Act::ResetButtons, reset, tr(T::ResetAll), false);
+    }
     let note = Rect::new(X0 + 216.0, y - 2.0, CW - 216.0, 40.0);
     f.g.text(tr(T::ButtonsNote), note, 12.0, Weight::Normal, Align::Wrap, th().muted);
     if !v.notice.is_empty() {

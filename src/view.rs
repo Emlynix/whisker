@@ -766,7 +766,8 @@ fn sidebar(f: &mut Frame, v: &View) {
 
     // Pinned at the bottom: Settings, then About right under it.
     let about = Rect::new(14.0, BOTTOM - ITEM_H, SIDE_W - 28.0, ITEM_H);
-    nav_item(f, Nav::About, about, Mark::of(v.dialog == Some(Dialog::About)));
+    // About opens a dialog, never a page: hover only, no current-page bar.
+    nav_item(f, Nav::About, about, Mark::Other);
     let r = Rect::new(14.0, about.y - NAV_STEP, SIDE_W - 28.0, ITEM_H);
     nav_item(f, Nav::Page(Page::General), r, Mark::of(v.page.nav() == Page::General));
 
