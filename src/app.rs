@@ -238,6 +238,7 @@ fn initial_view(cfg: &AppConfig, ask_setup: bool) -> View {
         tiles: Vec::new(),
         chart: Vec::new(),
         chart_ticks: Vec::new(),
+        chart_since: None,
         autostart: autostart::is_enabled(),
         installed: install::is_installed_copy(),
         install_dir: install::install_dir().map(|d| d.display().to_string()).unwrap_or_default(),
@@ -1759,7 +1760,7 @@ impl Controller {
         ];
 
         let history = self.stats.battery_history();
-        (self.view.chart, self.view.chart_ticks) = chart(&history, stats::unix_now(), self.period);
+        (self.view.chart, self.view.chart_ticks, self.view.chart_since) = chart(&history, stats::unix_now(), self.period);
         self.view.battery_note = battery_note(stats::hours_left(&history));
         window::invalidate();
     }
@@ -1798,31 +1799,39 @@ fn battery_note(hours: Option<f64>) -> String {
 /// Battery samples of the last days as (0..1 time, %) points.
 /// Battery samples of the period as (0..1 time, %) points, plus X labels:
 /// hours back for today (last 24 h), dates for 7 days and all history.
-fn chart(samples: &[stats::BatterySample], now: u64, period: Period) -> (Vec<(f32, f32)>, Vec<(f32, String)>) {
+/// A history shorter than the period starts the axis at its first sample
+/// and returns that day ("collecting since").
+fn chart(samples: &[stats::BatterySample], now: u64, period: Period) -> (Vec<(f32, f32)>, Vec<(f32, String)>, Option<String>) {
     const HOUR_TICKS: [u64; 3] = [18, 12, 6];
+    const HOUR_SECS: u64 = 3600;
     let days = match period {
         Period::Today => 1,
         Period::Week => CHART_DAYS,
         // Whole days back to the oldest sample.
         Period::All => samples.first().map_or(1, |s| now.saturating_sub(s.t).div_ceil(DAY_SECS).max(1)),
     };
-    let span = days * DAY_SECS;
-    let start = now.saturating_sub(span);
+    let period_start = now.saturating_sub(days * DAY_SECS);
+    let first = samples.first().map(|s| s.t).filter(|&t| t > period_start && t < now);
+    let start = first.unwrap_or(period_start);
+    let span = (now - start).max(1);
     let at = |back: u64| 1.0 - back as f32 / span as f32;
     let points = samples.iter().filter(|s| s.t >= start).map(|s| ((s.t - start) as f32 / span as f32, s.pct as f32)).collect();
 
     let ticks = match period {
         Period::Today => {
-            let mut t: Vec<(f32, String)> = HOUR_TICKS.iter().map(|h| (at(h * 3600), format!("−{h} h"))).collect();
+            let hours = HOUR_TICKS.iter().filter(|h| *h * HOUR_SECS <= span);
+            let mut t: Vec<(f32, String)> = hours.map(|h| (at(h * HOUR_SECS), format!("−{h} h"))).collect();
             t.push((1.0, tr(T::ChartNow).into()));
             t
         }
         _ => {
             let step = days.div_ceil(CHART_MAX_TICKS);
-            (0..=days).step_by(step as usize).map(|d| (at(d * DAY_SECS), day_label(d as i64))).collect()
+            let within = (0..=days).step_by(step as usize).filter(|d| d * DAY_SECS <= span);
+            within.map(|d| (at(d * DAY_SECS), day_label(d as i64))).collect()
         }
     };
-    (points, ticks)
+    let since = first.map(|t| day_label(((now - t) / DAY_SECS) as i64));
+    (points, ticks, since)
 }
 
 /// Date `days_back` days ago, e.g. "11/9" (English, East Asian) or "9.11.".
@@ -2003,19 +2012,24 @@ mod tests {
         let samples = [stats::BatterySample { t: now - 3 * DAY_SECS, pct: 80, charging: false }, stats::BatterySample { t: now, pct: 60, charging: false }];
 
         // Today: only the last 24 h, hour labels ending with "now".
-        let (pts, ticks) = chart(&samples, now, Period::Today);
+        let (pts, ticks, since) = chart(&samples, now, Period::Today);
         assert_eq!(pts, [(1.0, 60.0)]);
         assert_eq!(ticks.last().unwrap().1, tr(T::ChartNow));
+        assert_eq!(since, None);
 
-        // 7 days: both samples, a label per day.
-        let (pts, ticks) = chart(&samples, now, Period::Week);
+        // 7 days, 3 days of history: the axis starts at the first sample,
+        // a label per day of it, and "collecting since" that day.
+        let (pts, ticks, since) = chart(&samples, now, Period::Week);
         assert_eq!(pts.len(), 2);
-        assert_eq!(ticks.len(), CHART_DAYS as usize + 1);
-
-        // All: spans back to the oldest sample.
-        let (pts, ticks) = chart(&samples, now, Period::All);
         assert_eq!(pts[0].0, 0.0);
         assert_eq!(ticks.len(), 4);
+        assert_eq!(since, Some(day_label(3)));
+
+        // All: spans back to the oldest sample.
+        let (pts, ticks, since) = chart(&samples, now, Period::All);
+        assert_eq!(pts[0].0, 0.0);
+        assert_eq!(ticks.len(), 4);
+        assert_eq!(since, None);
     }
 
     #[test]

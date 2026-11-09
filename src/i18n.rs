@@ -225,9 +225,14 @@ pub enum T {
     AboutTagline,
     Disconnected,
     RecordingSteps,
+    MacroEmptyHint,
+    MacroNone,
+    ChartSince,
+    DirForward,
+    DirReverse,
 }
 
-const COUNT: usize = T::RecordingSteps as usize + 1;
+const COUNT: usize = T::DirReverse as usize + 1;
 type Table = [&'static str; COUNT];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -608,6 +613,11 @@ const EN: Table = [
     "Lightweight control app for gaming mice.",
     "Disconnected",
     "Recording… {} steps",
+    "Empty · Record keys",
+    "Empty",
+    "Collecting data since {}",
+    "Forward",
+    "Reverse",
 ];
 
 const SK: Table = [
@@ -662,7 +672,7 @@ const SK: Table = [
     "Údaje: {}",
     "TÉMA",
     "JAZYK",
-    "Podľa systému",
+    "Systém",
     "Nainštalovať Whisker?",
     "Aplikácia sa skopíruje do tvojho profilu ({}), pridá sa do ponuky Štart a dá sa odinštalovať cez Nastavenia → Aplikácie.",
     "Spúšťať pri štarte Windows (skrytá v oblasti oznámení)",
@@ -829,6 +839,11 @@ const SK: Table = [
     "Ľahká aplikácia na nastavenie herných myší.",
     "Odpojená",
     "Nahrávam… {} krokov",
+    "Prázdne · Nahraj klávesy",
+    "Prázdne",
+    "Zbieram dáta od {}",
+    "Dopredu",
+    "Dozadu",
 ];
 
 const CS: Table = [
@@ -883,7 +898,7 @@ const CS: Table = [
     "Data: {}",
     "MOTIV",
     "JAZYK",
-    "Podle systému",
+    "Systém",
     "Nainstalovat Whisker?",
     "Aplikace se zkopíruje do vašeho profilu ({}), přidá se do nabídky Start a lze ji odebrat v Nastavení → Aplikace.",
     "Spouštět se systémem Windows (skrytě v oznamovací oblasti)",
@@ -1050,6 +1065,11 @@ const CS: Table = [
     "Lehká aplikace pro nastavení herních myší.",
     "Odpojeno",
     "Nahrávám… {} kroků",
+    "Prázdné · Nahrajte klávesy",
+    "Prázdné",
+    "Sbírám data od {}",
+    "Vpřed",
+    "Vzad",
 ];
 
 const PL: Table = [
@@ -1271,6 +1291,11 @@ const PL: Table = [
     "Lekka aplikacja do konfiguracji myszy gamingowych.",
     "Rozłączono",
     "Nagrywanie… {} kroków",
+    "Puste · Nagraj klawisze",
+    "Puste",
+    "Zbieram dane od {}",
+    "Do przodu",
+    "Do tyłu",
 ];
 
 const DE: Table = [
@@ -1351,7 +1376,7 @@ const DE: Table = [
     "Bunt statisch",
     "Welle",
     "HELLIGKEIT",
-    "GESCHWINDIGKEIT",
+    "TEMPO",
     "RICHTUNG",
     "FARBE",
     "FARBEN (BIS ZU 7)",
@@ -1492,6 +1517,11 @@ const DE: Table = [
     "Schlanke App zum Einstellen von Gaming-Mäusen.",
     "Getrennt",
     "Aufnahme… {} Schritte",
+    "Leer · Tasten aufnehmen",
+    "Leer",
+    "Daten werden seit {} gesammelt",
+    "Vorwärts",
+    "Rückwärts",
 ];
 
 const FR: Table = [
@@ -1713,6 +1743,11 @@ const FR: Table = [
     "Application légère pour régler les souris de jeu.",
     "Déconnectée",
     "Enregistrement… {} étapes",
+    "Vide · Enregistrez",
+    "Vide",
+    "Collecte des données depuis le {}",
+    "Avant",
+    "Arrière",
 ];
 
 const ES: Table = [
@@ -1934,6 +1969,11 @@ const ES: Table = [
     "Aplicación ligera para configurar ratones gaming.",
     "Desconectado",
     "Grabando… {} pasos",
+    "Vacía · Graba teclas",
+    "Vacía",
+    "Recopilando datos desde el {}",
+    "Adelante",
+    "Atrás",
 ];
 
 const PT: Table = [
@@ -2155,6 +2195,11 @@ const PT: Table = [
     "Aplicação leve para configurar ratos gaming.",
     "Desligado",
     "A gravar… {} passos",
+    "Vazia · Grave teclas",
+    "Vazia",
+    "A recolher dados desde {}",
+    "Avançar",
+    "Recuar",
 ];
 
 const IT: Table = [
@@ -2376,6 +2421,11 @@ const IT: Table = [
     "App leggera per configurare i mouse da gioco.",
     "Disconnesso",
     "Registrazione… {} passi",
+    "Vuota · Registra tasti",
+    "Vuota",
+    "Raccolta dati dal {}",
+    "Avanti",
+    "Indietro",
 ];
 
 const JA: Table = [
@@ -2597,6 +2647,11 @@ const JA: Table = [
     "ゲーミングマウス用の軽量設定アプリ。",
     "未接続",
     "記録中… {} ステップ",
+    "空 · キーを記録",
+    "空",
+    "{} からデータを収集中",
+    "順方向",
+    "逆方向",
 ];
 
 const KO: Table = [
@@ -2818,6 +2873,11 @@ const KO: Table = [
     "게이밍 마우스용 가벼운 설정 앱.",
     "연결 끊김",
     "녹화 중… {}단계",
+    "비어 있음 · 키 녹화",
+    "비어 있음",
+    "{}부터 데이터 수집 중",
+    "정방향",
+    "역방향",
 ];
 
 const ZH_HANS: Table = [
@@ -3039,6 +3099,11 @@ const ZH_HANS: Table = [
     "轻量的游戏鼠标设置工具。",
     "未连接",
     "录制中… {} 步",
+    "空 · 录制按键",
+    "空",
+    "自 {} 起收集数据",
+    "正向",
+    "反向",
 ];
 
 const ZH_HANT: Table = [
@@ -3260,6 +3325,11 @@ const ZH_HANT: Table = [
     "輕量的電競滑鼠設定工具。",
     "未連線",
     "錄製中… {} 步",
+    "空白 · 錄製按鍵",
+    "空白",
+    "自 {} 起收集資料",
+    "正向",
+    "反向",
 ];
 
 #[cfg(test)]

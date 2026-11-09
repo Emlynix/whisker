@@ -1,7 +1,7 @@
 //! Settings › Mouse tab (hardware info, diagnostics) and the "which mouse
 //! do you use?" dialog.
 
-use super::{Act, BODY, CW, Frame, GAP, HEIGHT, RADIUS, View, WIDTH, X0, th};
+use super::{Act, BODY, CW, Frame, GAP, Glyph, HEIGHT, Place, R_CTRL, RADIUS, View, WIDTH, X0, art, check_badge, th};
 use crate::gfx::{Align, Color, Rect, Size, Weight};
 use crate::i18n::{T, tr};
 
@@ -67,8 +67,7 @@ pub(super) fn device_page(f: &mut Frame, v: &View) {
         f.caption_in(tr(*caption), card.x + PAD, y + 6.0, 190.0);
         let (text, color) = if value.is_empty() { (tr(T::NotReported).to_string(), th().subtle) } else { (value.clone(), th().text) };
         let r = Rect::new(card.x + 230.0, y, card.w - 250.0, ROW);
-        let size = Size::Body;
-        f.g.text(&text, r, size, Weight::Normal, Align::Left, color);
+        f.g.text(&text, r, Size::Body, Weight::Normal, Align::Left, color);
     }
 
     let mut y = card.y + card.h + GAP;
@@ -83,9 +82,8 @@ pub(super) fn device_page(f: &mut Frame, v: &View) {
         y += 26.0;
     }
     f.push_button(Act::ChangeMouse, Rect::new(X0, y, 170.0, 36.0), tr(T::ChangeMouse), false);
-    let arrow = if v.diagnostics { "▾" } else { "▸" };
-    let diag = format!("{} {arrow}", tr(T::Diagnostics));
-    f.push_button(Act::Diagnostics, Rect::new(X0 + 180.0, y, 170.0, 36.0), &diag, false);
+    let chevron = if v.diagnostics { Glyph::ChevronDown } else { Glyph::ChevronRight };
+    f.glyph_button(Act::Diagnostics, Rect::new(X0 + 180.0, y, 170.0, 36.0), tr(T::Diagnostics), chevron, Place::Trail);
     if v.diagnostics {
         diagnostics(f, d, y + 36.0 + 10.0);
     }
@@ -126,6 +124,7 @@ pub(super) fn detect_dialog(f: &mut Frame, d: &Detect) {
         legend(f, inner.x, grid.y + grid.h + 8.0);
     } else {
         detected_rows(f, d, inner);
+        detect_art(f, d, inner);
     }
 
     // Left: switch list; right: Cancel (keeps the current mouse) and Use.
@@ -133,7 +132,7 @@ pub(super) fn detect_dialog(f: &mut Frame, d: &Detect) {
     if !d.manual {
         f.push_button(Act::DetectManual, Rect::new(inner.x, by, 230.0, 36.0), tr(T::ChooseManually), false);
     } else if !d.empty {
-        f.push_button(Act::DetectBack, Rect::new(inner.x, by, 120.0, 36.0), &format!("‹ {}", tr(T::Back)), false);
+        f.glyph_button(Act::DetectBack, Rect::new(inner.x, by, 120.0, 36.0), tr(T::Back), Glyph::ChevronLeft, Place::Lead);
     }
     let use_btn = Rect::new(dlg.x + dlg.w - 24.0 - 170.0, by, 170.0, 36.0);
     if !d.rows.is_empty() {
@@ -141,6 +140,24 @@ pub(super) fn detect_dialog(f: &mut Frame, d: &Detect) {
     }
     let cancel = Rect::new(use_btn.x - 10.0 - 120.0, by, 120.0, 36.0);
     f.push_button(Act::DetectCancel, cancel, tr(T::Cancel), false);
+}
+
+/// The mouse drawing in the free space under the detected mice, when
+/// there is room for it (one or two rows, or none found).
+fn detect_art(f: &mut Frame, d: &Detect, inner: Rect) {
+    const MIN_H: f32 = 96.0;
+    const MAX_H: f32 = 120.0;
+    let used = d.rows.len().min(MAX_ROWS) as f32 * (ROW_H + 8.0);
+    let top = inner.y + ROWS_TOP + used + 8.0;
+    // Bottom: above the button row (36 px + 16 px gap).
+    let room = inner.y + inner.h - 52.0 - top;
+    if room < MIN_H {
+        return;
+    }
+    let h = room.min(MAX_H);
+    let w = h * 2.0 / 3.0;
+    let r = Rect::new(inner.x + (inner.w - w) / 2.0, top + (room - h) / 2.0, w, h);
+    art::mouse(f, r, art::Marks::None);
 }
 
 /// What the dots of the model grid mean.
@@ -157,12 +174,15 @@ fn legend(f: &mut Frame, x: f32, y: f32) {
     }
 }
 
+const ROW_H: f32 = 58.0;
+const MAX_ROWS: usize = 4;
+/// First detected row below the dialog's top text.
+const ROWS_TOP: f32 = 88.0;
+
 /// Detected mice: up to four wide rows with product line and badge.
 fn detected_rows(f: &mut Frame, d: &Detect, inner: Rect) {
-    const ROW_H: f32 = 58.0;
-    const MAX_ROWS: usize = 4;
     for (i, r) in d.rows.iter().take(MAX_ROWS).enumerate() {
-        let rr = Rect::new(inner.x, inner.y + 88.0 + i as f32 * (ROW_H + 8.0), inner.w, ROW_H);
+        let rr = Rect::new(inner.x, inner.y + ROWS_TOP + i as f32 * (ROW_H + 8.0), inner.w, ROW_H);
         let hot = f.button(Act::DetectSel(i), rr);
         tile(f, rr, i == d.sel, hot);
 
@@ -171,8 +191,7 @@ fn detected_rows(f: &mut Frame, d: &Detect, inner: Rect) {
         let sub = Rect::new(rr.x + 16.0, rr.y + 31.0, rr.w - 250.0, 18.0);
         f.g.text(&r.sub, sub, Size::Caption, Weight::Normal, Align::Left, th().muted);
         let badge = Rect::new(rr.x + rr.w - 236.0, rr.y, 220.0, rr.h);
-        let size = Size::Caption;
-        f.g.text(&r.badge, badge, size, Weight::Semibold, Align::Right, badge_color(r.kind));
+        f.g.text(&r.badge, badge, Size::Caption, Weight::Semibold, Align::Right, badge_color(r.kind));
     }
 }
 
@@ -192,14 +211,16 @@ fn model_grid(f: &mut Frame, d: &Detect, area: Rect) {
         let hot = f.button(Act::DetectSel(i), rr);
         tile(f, rr, i == d.sel, hot);
         f.g.circle(rr.x + 14.0, rr.y + h / 2.0, 4.0, badge_color(r.kind));
-        let title = Rect::new(rr.x + 26.0, rr.y, rr.w - 34.0, h);
-        let size = Size::Body;
-        f.g.text(&r.title, title, size, Weight::Semibold, Align::Left, th().text);
+        let title = Rect::new(rr.x + 24.0, rr.y, rr.w - 30.0, h);
+        f.g.text(&r.title, title, Size::Body, Weight::Semibold, Align::Left, th().text);
     }
 }
 
 fn tile(f: &mut Frame, r: Rect, selected: bool, hot: bool) {
-    f.g.fill(r, 10.0, if selected { th().accent_soft } else if hot { th().hover } else { th().card });
+    f.g.fill(r, R_CTRL, if selected { th().accent_soft } else if hot { th().hover } else { th().card });
     let (bw, bc) = if selected { (2.0, th().accent) } else { (1.0, th().border) };
-    f.g.stroke(r, 10.0, bw, bc);
+    f.g.stroke(r, R_CTRL, bw, bc);
+    if selected {
+        check_badge(f.g, r);
+    }
 }
