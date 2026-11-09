@@ -3,14 +3,17 @@
 //! so coordinates are top-left DIPs (points); AppKit scales them by the
 //! screen's `backingScaleFactor`, nothing to do here for DPI.
 
-use crate::gfx::{Align, Color, Rect, Weight};
+use crate::gfx::{Align, Color, Rect, Seg, Size, Weight};
 use objc2::AnyThread;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2_app_kit::{NSAttributedStringNSStringDrawing, NSColor, NSFont, NSFontAttributeName, NSFontWeightBold, NSFontWeightRegular, NSFontWeightSemibold, NSForegroundColorAttributeName};
+use objc2_app_kit::{
+    NSAttributedStringNSStringDrawing, NSColor, NSFont, NSFontAttributeName, NSFontWeightBold, NSFontWeightRegular, NSFontWeightSemibold,
+    NSForegroundColorAttributeName, NSKernAttributeName,
+};
 use objc2_core_foundation::{CFRetained, CGFloat, CGPoint, CGRect, CGSize};
-use objc2_core_graphics::{CGColor, CGContext, CGLineJoin, CGPath};
-use objc2_foundation::{NSAttributedString, NSDictionary, NSString};
+use objc2_core_graphics::{CGColor, CGContext, CGLineCap, CGLineJoin, CGPath};
+use objc2_foundation::{NSAttributedString, NSDictionary, NSNumber, NSString};
 use std::collections::HashMap;
 
 fn cg_rect(r: Rect) -> CGRect {
@@ -32,7 +35,7 @@ pub struct Gfx {
     ctx: Option<CFRetained<CGContext>>,
     width: f32,
     height: f32,
-    fonts: HashMap<(u32, Weight), Retained<NSFont>>,
+    fonts: HashMap<(Size, Weight), Retained<NSFont>>,
 }
 
 impl Gfx {
@@ -124,24 +127,50 @@ impl Gfx {
         self.polyline(&[(x0, y0), (x1, y1)], width, c);
     }
 
+    /// Connected line with round joins (icons, chart).
     pub fn polyline(&self, pts: &[(f32, f32)], width: f32, c: Color) {
         let Some(((x0, y0), rest)) = pts.split_first() else {
             return;
         };
+        let mut segs = vec![Seg::Move(*x0, *y0)];
+        segs.extend(rest.iter().map(|&(x, y)| Seg::Line(x, y)));
+        self.stroke_path(&segs, width, c);
+    }
+
+    /// Adds `segs` to the context's current path.
+    fn add_path(ctx: &CGContext, segs: &[Seg]) {
+        let f = |v: f32| v as CGFloat;
+        CGContext::begin_path(Some(ctx));
+        for s in segs {
+            match *s {
+                Seg::Move(x, y) => CGContext::move_to_point(Some(ctx), f(x), f(y)),
+                Seg::Line(x, y) => CGContext::add_line_to_point(Some(ctx), f(x), f(y)),
+                Seg::Curve(x1, y1, x2, y2, x, y) => CGContext::add_curve_to_point(Some(ctx), f(x1), f(y1), f(x2), f(y2), f(x), f(y)),
+                Seg::Close => CGContext::close_path(Some(ctx)),
+            }
+        }
+    }
+
+    pub fn fill_path(&self, segs: &[Seg], c: Color) {
+        let Some(ctx) = self.set_fill(c) else {
+            return;
+        };
+        Self::add_path(ctx, segs);
+        CGContext::fill_path(Some(ctx));
+    }
+
+    pub fn stroke_path(&self, segs: &[Seg], width: f32, c: Color) {
         let Some(ctx) = self.set_stroke(width, c) else {
             return;
         };
         CGContext::set_line_join(Some(ctx), CGLineJoin::Round);
-        CGContext::begin_path(Some(ctx));
-        CGContext::move_to_point(Some(ctx), *x0 as CGFloat, *y0 as CGFloat);
-        for (x, y) in rest {
-            CGContext::add_line_to_point(Some(ctx), *x as CGFloat, *y as CGFloat);
-        }
+        CGContext::set_line_cap(Some(ctx), CGLineCap::Round);
+        Self::add_path(ctx, segs);
         CGContext::stroke_path(Some(ctx));
     }
 
-    fn font(&mut self, size: f32, weight: Weight) -> Retained<NSFont> {
-        let key = ((size * 10.0) as u32, weight);
+    fn font(&mut self, size: Size, weight: Weight) -> Retained<NSFont> {
+        let key = (size, weight);
         if let Some(f) = self.fonts.get(&key) {
             return f.clone();
         }
@@ -154,30 +183,43 @@ impl Gfx {
                 Weight::Bold => NSFontWeightBold,
             }
         };
-        let f = NSFont::systemFontOfSize_weight(size as CGFloat, w);
+        // The system font picks its optical size (Text / Display) by itself.
+        let f = NSFont::systemFontOfSize_weight(size.px() as CGFloat, w);
         self.fonts.insert(key, f.clone());
         f
     }
 
-    pub fn text(&mut self, s: &str, r: Rect, size: f32, weight: Weight, align: Align, c: Color) {
+    pub fn text(&mut self, s: &str, r: Rect, size: Size, weight: Weight, align: Align, c: Color) {
         if self.ctx.is_none() {
             return;
         }
         let font = self.font(size, weight);
         let (red, g, b, a) = channels(c);
         let color = NSColor::colorWithSRGBRed_green_blue_alpha(red, g, b, a);
+        let kern = NSNumber::numberWithDouble(size.tracking() as f64);
 
         // SAFETY: AppKit constants, initialized when the framework loads.
-        let keys = unsafe { [NSFontAttributeName, NSForegroundColorAttributeName] };
-        let values: [&AnyObject; 2] = [font.as_ref(), color.as_ref()];
+        let keys = unsafe { [NSFontAttributeName, NSForegroundColorAttributeName, NSKernAttributeName] };
+        let values: [&AnyObject; 3] = [font.as_ref(), color.as_ref(), kern.as_ref()];
         let attrs = NSDictionary::from_slices(&keys, &values);
         // SAFETY: the dictionary holds the value types the keys expect.
-        let text = unsafe { NSAttributedString::initWithString_attributes(NSAttributedString::alloc(), &NSString::from_str(s), Some(&attrs)) };
+        let styled = |s: &str| unsafe { NSAttributedString::initWithString_attributes(NSAttributedString::alloc(), &NSString::from_str(s), Some(&attrs)) };
+        let mut text = styled(s);
 
         if align == Align::Wrap {
             // Wraps at word boundaries inside the rect, top-left first line.
             text.drawInRect(cg_rect(r));
             return;
+        }
+
+        // A line too long for its box ends in "…" instead of spilling out.
+        if text.size().width as f32 > r.w {
+            let chars: Vec<char> = s.chars().collect();
+            let mut n = chars.len();
+            while n > 0 && text.size().width as f32 > r.w {
+                n -= 1;
+                text = styled(&format!("{}…", chars[..n].iter().collect::<String>().trim_end()));
+            }
         }
 
         // One line, centered vertically; `x` by alignment.

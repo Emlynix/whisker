@@ -2,7 +2,7 @@
 //! do you use?" dialog.
 
 use super::{Act, BODY, CW, Frame, GAP, HEIGHT, RADIUS, View, WIDTH, X0, th};
-use crate::gfx::{Align, Color, Rect, Weight};
+use crate::gfx::{Align, Color, Rect, Size, Weight};
 use crate::i18n::{T, tr};
 
 const ROW: f32 = 26.0;
@@ -67,19 +67,19 @@ pub(super) fn device_page(f: &mut Frame, v: &View) {
         f.caption_in(tr(*caption), card.x + PAD, y + 6.0, 190.0);
         let (text, color) = if value.is_empty() { (tr(T::NotReported).to_string(), th().faint) } else { (value.clone(), th().text) };
         let r = Rect::new(card.x + 230.0, y, card.w - 250.0, ROW);
-        let size = super::fit_size(&text, r.w, 13.5);
+        let size = Size::Body;
         f.g.text(&text, r, size, Weight::Normal, Align::Left, color);
     }
 
     let mut y = card.y + card.h + GAP;
     if d.experimental {
         let r = Rect::new(X0, y, CW, 36.0);
-        f.g.text(tr(T::ExperimentalNote), r, 12.0, Weight::Normal, Align::Wrap, th().warn);
+        f.g.text(tr(T::ExperimentalNote), r, Size::Caption, Weight::Normal, Align::Wrap, th().warn);
         y += 42.0;
     }
     if d.offline {
         let r = Rect::new(X0, y, CW, 18.0);
-        f.g.text(tr(T::DevOffline), r, 12.0, Weight::Normal, Align::Left, th().muted);
+        f.g.text(tr(T::DevOffline), r, Size::Caption, Weight::Normal, Align::Left, th().muted);
         y += 26.0;
     }
     f.push_button(Act::ChangeMouse, Rect::new(X0, y, 170.0, 36.0), tr(T::ChangeMouse), false);
@@ -99,7 +99,7 @@ fn diagnostics(f: &mut Frame, d: &DeviceView, y: f32) {
     f.caption(tr(T::DevStatus), card.x + PAD, card.y + 8.0);
     let (text, color) = if d.status.is_empty() { (tr(T::NotReported), th().faint) } else { (d.status.as_str(), th().text) };
     let r = Rect::new(card.x + PAD, card.y + 26.0, card.w - 2.0 * PAD - BTN_W - 12.0, 22.0);
-    f.g.text(text, r, super::fit_size(text, r.w, 12.5), Weight::Normal, Align::Left, color);
+    f.g.text(text, r, Size::Caption, Weight::Normal, Align::Left, color);
     let btn = Rect::new(card.x + card.w - PAD - BTN_W + 8.0, card.y + 10.0, BTN_W - 8.0, 36.0);
     f.push_button(Act::CopyDiagnostics, btn, tr(T::CopySupport), false);
 }
@@ -112,13 +112,13 @@ pub(super) fn detect_dialog(f: &mut Frame, d: &Detect) {
     f.g.stroke(dlg, RADIUS, 1.0, th().border);
 
     let inner = dlg.inset(24.0);
-    f.g.text(tr(T::DetectTitle), Rect::new(inner.x, inner.y, inner.w, 28.0), 18.0, Weight::Bold, Align::Left, th().text);
+    f.g.text(tr(T::DetectTitle), Rect::new(inner.x, inner.y, inner.w, 28.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
     let text = match (d.manual, d.empty) {
         (true, _) => tr(T::DetectManualText),
         (false, true) => tr(T::NoMouse),
         (false, false) => tr(T::DetectText),
     };
-    f.g.text(text, Rect::new(inner.x, inner.y + 36.0, inner.w, 40.0), 13.0, Weight::Normal, Align::Wrap, th().muted);
+    f.g.text(text, Rect::new(inner.x, inner.y + 36.0, inner.w, 40.0), Size::Body, Weight::Normal, Align::Wrap, th().muted);
 
     if d.manual {
         let grid = Rect::new(inner.x, inner.y + 84.0, inner.w, dlg.h - 84.0 - 2.0 * 24.0 - 48.0 - LEGEND_H);
@@ -145,7 +145,7 @@ pub(super) fn detect_dialog(f: &mut Frame, d: &Detect) {
 
 /// What the dots of the model grid mean.
 fn legend(f: &mut Frame, x: f32, y: f32) {
-    const SIZE: f32 = 12.0;
+    const SIZE: Size = Size::Caption;
     let items = [(Badge::Good, T::BadgeFull), (Badge::Warn, T::BadgeExperimental), (Badge::Muted, T::LegendStats)];
     let mut x = x;
     for (kind, key) in items {
@@ -167,11 +167,11 @@ fn detected_rows(f: &mut Frame, d: &Detect, inner: Rect) {
         tile(f, rr, i == d.sel, hot);
 
         let left = Rect::new(rr.x + 16.0, rr.y + 9.0, rr.w - 250.0, 22.0);
-        f.g.text(&r.title, left, 14.5, Weight::Semibold, Align::Left, th().text);
+        f.g.text(&r.title, left, Size::Body, Weight::Semibold, Align::Left, th().text);
         let sub = Rect::new(rr.x + 16.0, rr.y + 31.0, rr.w - 250.0, 18.0);
-        f.g.text(&r.sub, sub, 12.0, Weight::Normal, Align::Left, th().muted);
+        f.g.text(&r.sub, sub, Size::Caption, Weight::Normal, Align::Left, th().muted);
         let badge = Rect::new(rr.x + rr.w - 236.0, rr.y, 220.0, rr.h);
-        let size = super::fit_size(&r.badge, badge.w, 12.5);
+        let size = Size::Caption;
         f.g.text(&r.badge, badge, size, Weight::Semibold, Align::Right, badge_color(r.kind));
     }
 }
@@ -193,7 +193,7 @@ fn model_grid(f: &mut Frame, d: &Detect, area: Rect) {
         tile(f, rr, i == d.sel, hot);
         f.g.circle(rr.x + 14.0, rr.y + h / 2.0, 4.0, badge_color(r.kind));
         let title = Rect::new(rr.x + 26.0, rr.y, rr.w - 34.0, h);
-        let size = super::fit_size(&r.title, title.w, 13.0);
+        let size = Size::Body;
         f.g.text(&r.title, title, size, Weight::Semibold, Align::Left, th().text);
     }
 }

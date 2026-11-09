@@ -46,8 +46,13 @@
 //! `gfx::Gfx` — drawing in DIPs, given to `Hooks::draw` per frame:
 //! `clear(c)`, `fill(r, radius, c)`, `stroke(r, radius, width, c)` (inside
 //! `r`), `circle(cx, cy, radius, c)`, `ring(cx, cy, radius, width, c)`,
-//! `line(x0, y0, x1, y1, width, c)`, `polyline(pts, width, c)`,
-//! `text(s, r, size, weight, align, c)` (system UI font).
+//! `line(x0, y0, x1, y1, width, c)`, `polyline(pts, width, c)` (round
+//! joins), `fill_path(segs, c)`, `stroke_path(segs, width, c)` (`gfx::Seg`:
+//! move / line / cubic curve / close; round caps and joins),
+//! `text(s, r, size, weight, align, c)`: system UI font at a `gfx::Size` of
+//! the type ramp, in its `Face` (Windows: Segoe UI Variable Text / Display,
+//! Segoe UI where missing; macOS: system font), with the size's letter
+//! spacing; a one-line text wider than `r` ends in "…".
 //!
 //! `hid` — HID collections, descriptors read without sending anything:
 //! - `interfaces(vid) -> Vec<hid_link::Interface>`: collections of a vendor.

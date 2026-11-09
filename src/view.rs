@@ -16,7 +16,7 @@
 //!    210 px          content x = 234 .. 796
 //! ```
 
-use crate::gfx::{Align, Color, Gfx, Rect, Weight};
+use crate::gfx::{Align, Color, Gfx, Rect, Size, Weight};
 use crate::i18n::{Lang, T, fill, tr};
 use crate::protocol::{
     Action, BRIGHTNESS_MAX, BUTTON_COUNT, DPI_COLOR_SLOTS, Direction, Effect, Lighting, Lod, MacroEvent, MacroMode, Power,
@@ -404,10 +404,9 @@ impl Frame<'_> {
         self.caption_in(s, x, y, 300.0);
     }
 
-    /// Caption shrunk to fit `w` (long translations).
+    /// Upper-case section caption; a long translation ends in "…" at `w`.
     fn caption_in(&mut self, s: &str, x: f32, y: f32, w: f32) {
-        let size = fit_size(s, w, 11.5);
-        self.g.text(s, Rect::new(x, y, w, 16.0), size, Weight::Semibold, Align::Left, th().muted);
+        self.g.text(s, Rect::new(x, y, w, 16.0), Size::Label, Weight::Semibold, Align::Left, th().muted);
     }
 
     fn bar(&self, r: Rect, pct: u8, c: Color) {
@@ -437,8 +436,7 @@ impl Frame<'_> {
 
     fn push_button(&mut self, act: Act, r: Rect, label: &str, primary: bool) {
         let hot = self.button(act, r);
-        // Long translations shrink rather than spill out of the button.
-        let size = fit_size(label, r.w - 16.0, 14.0);
+        let size = Size::Body;
         if primary {
             self.g.fill(r, 8.0, if hot { th().accent_hover } else { th().accent });
             self.g.text(label, r, size, Weight::Semibold, Align::Center, th().on_accent);
@@ -452,12 +450,12 @@ impl Frame<'_> {
     /// Button that can't be pressed now, e.g. "Clear" on an empty macro.
     fn dead_button(&mut self, r: Rect, label: &str) {
         self.g.stroke(r, 8.0, 1.0, th().border);
-        self.g.text(label, r, 14.0, Weight::Semibold, Align::Center, th().faint);
+        self.g.text(label, r, Size::Body, Weight::Semibold, Align::Center, th().faint);
     }
 
     /// Underlined text tabs, e.g. "Buttons | Macros"; a tab is a page.
     fn tabs(&mut self, items: &[(Page, T)], current: Page) {
-        const SIZE: f32 = 14.0;
+        const SIZE: Size = Size::Body;
         const PAD: f32 = 12.0;
         let y = TOP;
         self.g.fill(Rect::new(X0, y + TAB_H - 1.0, CW, 1.0), 0.0, th().border);
@@ -489,11 +487,11 @@ impl Frame<'_> {
 
         let color = if selected { th().text } else { th().muted };
         if sub.is_empty() {
-            self.g.text(title, r, fit_size(title, r.w - 14.0, 15.0), Weight::Semibold, Align::Center, color);
+            self.g.text(title, r, Size::Large, Weight::Semibold, Align::Center, color);
             return;
         }
         // Compact tiles (< 56 px) get smaller type so the two lines don't touch.
-        let (title_size, sub_size, pad) = if r.h < 56.0 { (14.0, 11.0, 4.0) } else { (17.0, 12.0, 8.0) };
+        let (title_size, sub_size, pad) = if r.h < 56.0 { (Size::Body, Size::Caption, 4.0) } else { (Size::Large, Size::Caption, 8.0) };
         let top = Rect::new(r.x, r.y + pad, r.w, r.h / 2.0);
         let bottom = Rect::new(r.x, r.y + r.h / 2.0 + pad / 2.0, r.w, r.h / 2.0 - pad - 2.0);
         self.g.text(title, top, title_size, Weight::Semibold, Align::Center, color);
@@ -501,25 +499,14 @@ impl Frame<'_> {
     }
 }
 
-/// Shrinks a font size so a one-line label fits `width` (rough estimate:
-/// a Latin glyph is ~0.56 em, CJK ~1 em).
-fn fit_size(text: &str, width: f32, size: f32) -> f32 {
-    const MIN: f32 = 10.0;
-    let ems = ems(text);
-    if ems * size <= width {
-        return size;
-    }
-    (width / ems).max(MIN)
-}
-
-/// Rough text width in em (see `fit_size`).
+/// Rough text width in em: a Latin glyph is ~0.56 em, CJK ~1 em.
 fn ems(text: &str) -> f32 {
     text.chars().map(|c| if (c as u32) < 0x2E80 { 0.56 } else { 1.0 }).sum()
 }
 
 /// Rough width of a one-line text in DIPs.
-fn text_w(text: &str, size: f32) -> f32 {
-    ems(text) * size
+fn text_w(text: &str, size: Size) -> f32 {
+    ems(text) * size.px()
 }
 
 pub fn battery_color(v: &View) -> Color {
@@ -537,7 +524,7 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
 
     sidebar(&mut f, v);
     let title = Rect::new(X0, 18.0, CW, 36.0);
-    f.g.text(tr(v.page.title()), title, 24.0, Weight::Bold, Align::Left, th().text);
+    f.g.text(tr(v.page.title()), title, Size::Subtitle, Weight::Bold, Align::Left, th().text);
     header_status(&mut f, v);
 
     match v.page {
@@ -607,7 +594,7 @@ fn focus_ring(f: &Frame, focus: Option<Focus>) {
 /// mouse, otherwise whether the last change reached it.
 fn header_status(f: &mut Frame, v: &View) {
     const H: f32 = 28.0;
-    const SIZE: f32 = 12.5;
+    const SIZE: Size = Size::Caption;
     const MAX_W: f32 = 380.0;
     let offline = v.page.configures() && !v.connected;
     let (text, dot, alpha) = match v.sync {
@@ -622,7 +609,7 @@ fn header_status(f: &mut Frame, v: &View) {
     f.g.stroke(r, H / 2.0, 1.0, Color(th().border.0, alpha));
     f.g.circle(r.x + 15.0, r.y + H / 2.0, 4.0, Color(dot.0, alpha));
     let label = Rect::new(r.x + 26.0, r.y, r.w - 34.0, H);
-    f.g.text(text, label, fit_size(text, label.w, SIZE), Weight::Normal, Align::Left, Color(th().muted.0, alpha));
+    f.g.text(text, label, SIZE, Weight::Normal, Align::Left, Color(th().muted.0, alpha));
 }
 
 /// Bottom message with an optional "Undo".
@@ -633,16 +620,16 @@ fn toast(f: &mut Frame, t: &Toast) {
     f.g.fill(r, 10.0, th().card_hi);
     f.g.stroke(r, 10.0, 1.0, th().faint);
 
-    let undo_w = if t.undo { text_w(tr(T::UndoBtn), 14.0) + 32.0 } else { 0.0 };
+    let undo_w = if t.undo { text_w(tr(T::UndoBtn), Size::Body) + 32.0 } else { 0.0 };
     let label = Rect::new(r.x + 18.0, r.y, r.w - 36.0 - undo_w, r.h);
-    f.g.text(&t.text, label, fit_size(&t.text, label.w, 13.5), Weight::Normal, Align::Left, th().text);
+    f.g.text(&t.text, label, Size::Body, Weight::Normal, Align::Left, th().text);
     if !t.undo {
         return;
     }
     let b = Rect::new(r.x + r.w - undo_w - 8.0, r.y + 6.0, undo_w, r.h - 12.0);
     let hot = f.button(Act::Undo, b);
     f.g.fill(b, 8.0, if hot { th().hover } else { th().card_hi });
-    f.g.text(tr(T::UndoBtn), b, 14.0, Weight::Semibold, Align::Center, th().accent);
+    f.g.text(tr(T::UndoBtn), b, Size::Body, Weight::Semibold, Align::Center, th().accent);
 }
 
 // ---- icons (24 x 24 grid scaled into `s` px at x, y) -----------------------
@@ -749,14 +736,14 @@ fn sidebar(f: &mut Frame, v: &View) {
     let hot = f.button(Act::About, brand);
     mouse_logo(f.g, 24.0, 20.0);
     let name_c = if hot { th().accent } else { th().text };
-    f.g.text(crate::APP_NAME, Rect::new(62.0, 16.0, 140.0, 24.0), 18.0, Weight::Bold, Align::Left, name_c);
+    f.g.text(crate::APP_NAME, Rect::new(62.0, 16.0, 140.0, 24.0), Size::Subtitle, Weight::Bold, Align::Left, name_c);
     // Mouse name and its status line open Settings › Mouse.
     let sub = Rect::new(62.0, 38.0, SIDE_W - 76.0, 16.0);
     let status = (v.caps.battery || v.has_battery).then(|| Rect::new(sub.x, sub.y + 18.0, sub.w, 16.0));
     let area_h = status.map_or(sub.h, |r| r.y + r.h - sub.y);
     let hot = f.button(Act::Nav(Page::Mouse), Rect::new(sub.x, sub.y - 2.0, sub.w, area_h + 4.0));
     let sub_c = if hot { th().accent } else { th().faint };
-    f.g.text(&v.device_name, sub, fit_size(&v.device_name, sub.w, 11.0), Weight::Normal, Align::Left, sub_c);
+    f.g.text(&v.device_name, sub, Size::Caption, Weight::Normal, Align::Left, sub_c);
     if let Some(r) = status {
         status_line(f, v, r);
     }
@@ -778,7 +765,7 @@ fn sidebar(f: &mut Frame, v: &View) {
 /// "● Connected · 55 %" (⚡ while charging): green, warn colour when the
 /// battery runs low, muted "● Disconnected" offline.
 fn status_line(f: &mut Frame, v: &View, r: Rect) {
-    const SIZE: f32 = 11.5;
+    const SIZE: Size = Size::Caption;
     const LOW_PCT: u8 = 20;
     let (text, c) = if !v.connected {
         (tr(T::Disconnected).to_string(), th().muted)
@@ -791,7 +778,7 @@ fn status_line(f: &mut Frame, v: &View, r: Rect) {
     };
     f.g.circle(r.x + 3.5, r.y + r.h / 2.0, 3.5, c);
     let label = Rect::new(r.x + 12.0, r.y, r.w - 12.0, r.h);
-    f.g.text(&text, label, fit_size(&text, label.w, SIZE), Weight::Normal, Align::Left, c);
+    f.g.text(&text, label, SIZE, Weight::Normal, Align::Left, c);
 }
 
 /// Sidebar entry: a page, or About (opens its dialog).
@@ -822,7 +809,7 @@ fn nav_item(f: &mut Frame, item: Nav, r: Rect, mark: Mark) {
     }
     let text_r = Rect::new(r.x + 42.0, r.y, r.w - 42.0, r.h);
     let weight = if sel { Weight::Semibold } else { Weight::Normal };
-    f.g.text(label, text_r, 14.0, weight, Align::Left, if sel { th().text } else { th().muted });
+    f.g.text(label, text_r, Size::Body, weight, Align::Left, if sel { th().text } else { th().muted });
 }
 
 // ---- pages ---------------------------------------------------------------
@@ -830,8 +817,8 @@ fn nav_item(f: &mut Frame, item: Nav, r: Rect, mark: Mark) {
 fn stat_card(f: &mut Frame, r: Rect, label: &str, value: &str, note: &str) {
     f.card(r);
     f.caption_in(label, r.x + 16.0, r.y + 16.0, r.w - 32.0);
-    f.g.text(value, Rect::new(r.x + 16.0, r.y + 34.0, r.w - 32.0, 36.0), 26.0, Weight::Bold, Align::Left, th().text);
-    f.g.text(note, Rect::new(r.x + 16.0, r.y + 74.0, r.w - 32.0, 32.0), 12.0, Weight::Normal, Align::Wrap, th().muted);
+    f.g.text(value, Rect::new(r.x + 16.0, r.y + 34.0, r.w - 32.0, 36.0), Size::Title, Weight::Bold, Align::Left, th().text);
+    f.g.text(note, Rect::new(r.x + 16.0, r.y + 74.0, r.w - 32.0, 32.0), Size::Caption, Weight::Normal, Align::Wrap, th().muted);
 }
 
 fn overview(f: &mut Frame, v: &View) {
@@ -847,7 +834,7 @@ fn overview(f: &mut Frame, v: &View) {
     let shown = v.connected && v.has_battery;
     let big = if shown { format!("{} %", v.battery) } else { "—".into() };
     let big_c = if shown { tint } else { th().faint };
-    f.g.text(&big, Rect::new(card.x + 20.0, card.y + 40.0, 170.0, 56.0), 44.0, Weight::Bold, Align::Left, big_c);
+    f.g.text(&big, Rect::new(card.x + 20.0, card.y + 40.0, 170.0, 56.0), Size::Hero, Weight::Bold, Align::Left, big_c);
 
     let note = match v.charge {
         _ if !shown => v.link.as_str(),
@@ -856,7 +843,7 @@ fn overview(f: &mut Frame, v: &View) {
         Charge::Discharging => v.battery_note.as_str(),
     };
     f.bar(Rect::new(card.x + 200.0, card.y + 46.0, card.w - 220.0, 10.0), if shown { v.battery } else { 0 }, tint);
-    f.g.text(note, Rect::new(card.x + 200.0, card.y + 64.0, card.w - 220.0, 22.0), 13.0, Weight::Normal, Align::Left, th().muted);
+    f.g.text(note, Rect::new(card.x + 200.0, card.y + 64.0, card.w - 220.0, 22.0), Size::Body, Weight::Normal, Align::Left, th().muted);
 
     let w = (CW - 2.0 * GAP) / 3.0;
     let y = TOP + 118.0 + GAP;
@@ -924,11 +911,11 @@ fn device_line(f: &mut Frame, v: &View, y: f32) {
     let fw = &v.device.firmware;
     let text = if fw.is_empty() { v.device_name.clone() } else { format!("{} · FW {fw}", v.device_name) };
     let details = format!("{} ›", tr(T::Details));
-    let link_w = text_w(&details, 13.0) + 20.0;
+    let link_w = text_w(&details, Size::Body) + 20.0;
     let left = Rect::new(r.x + 18.0, r.y, r.w - 36.0 - link_w, H);
-    f.g.text(&text, left, fit_size(&text, left.w, 13.0), Weight::Normal, Align::Left, th().muted);
+    f.g.text(&text, left, Size::Body, Weight::Normal, Align::Left, th().muted);
     let right = Rect::new(r.x + r.w - 18.0 - link_w, r.y, link_w, H);
-    f.g.text(&details, right, 13.0, Weight::Semibold, Align::Right, if hot { th().accent_hover } else { th().accent });
+    f.g.text(&details, right, Size::Body, Weight::Semibold, Align::Right, if hot { th().accent_hover } else { th().accent });
 }
 
 /// Overview for a mouse without a driver: model and today's statistics.
@@ -936,14 +923,14 @@ fn overview_basic(f: &mut Frame, v: &View) {
     let card = Rect::new(X0, TOP, CW, 96.0);
     f.card(card);
     f.caption(tr(T::DevModel), card.x + 20.0, card.y + 20.0);
-    f.g.text(&v.device_name, Rect::new(card.x + 20.0, card.y + 40.0, card.w - 240.0, 36.0), 24.0, Weight::Bold, Align::Left, th().text);
+    f.g.text(&v.device_name, Rect::new(card.x + 20.0, card.y + 40.0, card.w - 240.0, 36.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
 
     // Bluetooth battery, when Windows reports one.
     if v.connected && v.has_battery {
         let tint = battery_color(v);
         f.caption(tr(T::Battery), card.x + card.w - 200.0, card.y + 20.0);
         let pct = Rect::new(card.x + card.w - 200.0, card.y + 36.0, 180.0, 30.0);
-        f.g.text(&format!("{} %", v.battery), pct, 22.0, Weight::Bold, Align::Left, tint);
+        f.g.text(&format!("{} %", v.battery), pct, Size::Subtitle, Weight::Bold, Align::Left, tint);
         f.bar(Rect::new(card.x + card.w - 200.0, card.y + 70.0, 180.0, 8.0), v.battery, tint);
     }
 
@@ -961,7 +948,7 @@ fn dpi_single(f: &mut Frame, v: &View) {
     f.card(card);
     f.caption(tr(T::ActiveDpi), card.x + 20.0, card.y + 18.0);
     let value = v.basic.dpi.map_or("—".into(), |d| format!("{d} DPI"));
-    f.g.text(&value, Rect::new(card.x + 20.0, card.y + 36.0, card.w - 40.0, 44.0), 32.0, Weight::Bold, Align::Left, th().text);
+    f.g.text(&value, Rect::new(card.x + 20.0, card.y + 36.0, card.w - 40.0, 44.0), Size::Title, Weight::Bold, Align::Left, th().text);
 
     let vals = &v.basic.values;
     if vals.len() < 2 {
@@ -978,8 +965,8 @@ fn dpi_single(f: &mut Frame, v: &View) {
     f.hits.push(Hit { act: Act::BasicDpi, rect: area, kind: Kind::Slider { x0, x1, steps: vals.len() } });
 
     let ends = Rect::new(x0, cy + 10.0, x1 - x0, 18.0);
-    f.g.text(&vals[0].to_string(), ends, 11.0, Weight::Normal, Align::Left, th().faint);
-    f.g.text(&vals[vals.len() - 1].to_string(), ends, 11.0, Weight::Normal, Align::Right, th().faint);
+    f.g.text(&vals[0].to_string(), ends, Size::Caption, Weight::Normal, Align::Left, th().faint);
+    f.g.text(&vals[vals.len() - 1].to_string(), ends, Size::Caption, Weight::Normal, Align::Right, th().faint);
 }
 
 fn dpi(f: &mut Frame, v: &View) {
@@ -1022,7 +1009,7 @@ fn dpi(f: &mut Frame, v: &View) {
         }
 
         let num_c = if s.enabled { th().text } else { th().faint };
-        f.g.text(&(i + 1).to_string(), Rect::new(card.x + 50.0, y, 16.0, ROW), 14.0, Weight::Semibold, Align::Left, num_c);
+        f.g.text(&(i + 1).to_string(), Rect::new(card.x + 50.0, y, 16.0, ROW), Size::Body, Weight::Semibold, Align::Left, num_c);
 
         // The active stage can't be switched off (note under the card).
         let toggle_act = (!active).then_some(Act::Toggle(i));
@@ -1052,12 +1039,12 @@ fn dpi(f: &mut Frame, v: &View) {
         }
 
         let label = Rect::new(card.x + card.w - 108.0, y, 92.0, ROW);
-        f.g.text(&format!("{} DPI", s.dpi), label, 15.0, Weight::Semibold, Align::Right, num_c);
+        f.g.text(&format!("{} DPI", s.dpi), label, Size::Large, Weight::Semibold, Align::Right, num_c);
     }
 
     // Why the active stage's switch is greyed out.
     let r = Rect::new(X0, card.y + card.h + 12.0, CW, 36.0);
-    f.g.text(tr(T::ActiveLocked), r, 12.0, Weight::Normal, Align::Wrap, th().muted);
+    f.g.text(tr(T::ActiveLocked), r, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
 }
 
 fn performance(f: &mut Frame, v: &View) {
@@ -1084,9 +1071,9 @@ fn performance(f: &mut Frame, v: &View) {
     // Measured rate: one line, then how to measure it.
     let y = TILE_Y + TILE_H + 10.0;
     let line = fill(tr(T::MeasuredValue), &[&measured(v)]);
-    f.g.text(&line, Rect::new(X0, y, CW, 20.0), 13.5, Weight::Semibold, Align::Left, th().text);
+    f.g.text(&line, Rect::new(X0, y, CW, 20.0), Size::Body, Weight::Semibold, Align::Left, th().text);
     let hint = Rect::new(X0, y + 22.0, CW, 32.0);
-    f.g.text(tr(T::PollingHelp), hint, 12.0, Weight::Normal, Align::Wrap, th().muted);
+    f.g.text(tr(T::PollingHelp), hint, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
 
     if !v.caps.extras {
         return;
@@ -1097,7 +1084,7 @@ fn performance(f: &mut Frame, v: &View) {
     f.card(card);
     f.caption(tr(T::Debounce), card.x + 20.0, card.y + 16.0);
     let help = Rect::new(card.x + 20.0, card.y + 34.0, card.w - 40.0, 32.0);
-    f.g.text(tr(T::DebounceHelp), help, 12.0, Weight::Normal, Align::Wrap, th().muted);
+    f.g.text(tr(T::DebounceHelp), help, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
     for (i, ms) in DEBOUNCE_CHOICES.iter().enumerate() {
         let r = Rect::new(card.x + 20.0 + i as f32 * 86.0, card.y + 68.0, 78.0, 32.0);
         f.choice(Act::Debounce(i), r, &format!("{ms} ms"), "", v.debounce == *ms);
@@ -1188,10 +1175,10 @@ fn lighting(f: &mut Frame, v: &View) {
     let card = Rect::new(X0, y, CW, 56.0);
     f.card(card);
     let label = Rect::new(card.x + PAD, card.y, card.w - 100.0, card.h);
-    f.g.text(tr(T::DarkMoving), label, 14.0, Weight::Semibold, Align::Left, th().text);
+    f.g.text(tr(T::DarkMoving), label, Size::Body, Weight::Semibold, Align::Left, th().text);
     f.toggle(Some(Act::DarkMoving), card.x + card.w - 58.0, card.y + 17.0, v.power.dark_while_moving);
     let note = Rect::new(X0, card.y + card.h + 10.0, CW, 34.0);
-    f.g.text(tr(T::LightingNote), note, 12.0, Weight::Normal, Align::Wrap, th().muted);
+    f.g.text(tr(T::LightingNote), note, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
 }
 
 fn stats(f: &mut Frame, v: &View) {
@@ -1206,7 +1193,7 @@ fn stats(f: &mut Frame, v: &View) {
         let r = Rect::new(X0 + col * (w + GAP), TOP + 48.0 + row * (78.0 + 12.0), w, 78.0);
         f.card(r);
         f.caption(label, r.x + 14.0, r.y + 14.0);
-        f.g.text(value, Rect::new(r.x + 14.0, r.y + 32.0, r.w - 28.0, 34.0), 22.0, Weight::Bold, Align::Left, th().text);
+        f.g.text(value, Rect::new(r.x + 14.0, r.y + 32.0, r.w - 28.0, 34.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
     }
 
     let card = Rect::new(X0, TOP + 48.0 + 2.0 * 90.0, CW, HEIGHT - (TOP + 48.0 + 180.0) - 24.0);
@@ -1218,7 +1205,7 @@ fn stats(f: &mut Frame, v: &View) {
     let plot = Rect::new(card.x + 16.0, card.y + 40.0, card.w - 64.0, card.h - 72.0);
     if v.chart.len() < 2 {
         let msg = tr(T::ChartEmpty);
-        f.g.text(msg, plot, 13.0, Weight::Normal, Align::Center, th().faint);
+        f.g.text(msg, plot, Size::Body, Weight::Normal, Align::Center, th().faint);
         return;
     }
 
@@ -1226,7 +1213,7 @@ fn stats(f: &mut Frame, v: &View) {
         let y = plot.y + plot.h * (1.0 - pct / 100.0);
         f.g.line(plot.x, y, plot.x + plot.w, y, 1.0, th().border);
         let r = Rect::new(plot.x + plot.w + 6.0, y - 8.0, 40.0, 16.0);
-        f.g.text(label, r, 10.5, Weight::Normal, Align::Left, th().faint);
+        f.g.text(label, r, Size::Caption, Weight::Normal, Align::Left, th().faint);
     }
 
     // Time axis: a tick and a label per day (hours for "today").
@@ -1236,7 +1223,7 @@ fn stats(f: &mut Frame, v: &View) {
         f.g.line(x, plot.y + plot.h, x, plot.y + plot.h + 4.0, 1.0, th().border);
         let lx = (x - LABEL_W / 2.0).clamp(plot.x - 8.0, plot.x + plot.w + 8.0 - LABEL_W);
         let r = Rect::new(lx, plot.y + plot.h + 6.0, LABEL_W, 16.0);
-        f.g.text(label, r, 10.5, Weight::Normal, Align::Center, th().faint);
+        f.g.text(label, r, Size::Caption, Weight::Normal, Align::Center, th().faint);
     }
 
     let pts: Vec<(f32, f32)> = v.chart.iter().map(|&(t, pct)| (plot.x + t * plot.w, plot.y + plot.h * (1.0 - pct / 100.0))).collect();
@@ -1247,11 +1234,11 @@ fn settings(f: &mut Frame, v: &View) {
     let card = Rect::new(X0, BODY, CW, 104.0);
     f.card(card);
     let title = if v.installed { tr(T::Installed) } else { tr(T::NotInstalled) };
-    f.g.text(title, Rect::new(card.x + 18.0, card.y + 16.0, 380.0, 22.0), 15.0, Weight::Semibold, Align::Left, th().text);
+    f.g.text(title, Rect::new(card.x + 18.0, card.y + 16.0, 380.0, 22.0), Size::Large, Weight::Semibold, Align::Left, th().text);
     let desc = if v.installed { v.install_dir.clone() } else { fill(tr(T::InstallDesc), &[&v.install_dir]) };
-    f.g.text(&desc, Rect::new(card.x + 18.0, card.y + 42.0, 390.0, 34.0), 12.0, Weight::Normal, Align::Wrap, th().muted);
+    f.g.text(&desc, Rect::new(card.x + 18.0, card.y + 42.0, 390.0, 34.0), Size::Caption, Weight::Normal, Align::Wrap, th().muted);
     if !v.error.is_empty() {
-        f.g.text(&v.error, Rect::new(card.x + 18.0, card.y + 78.0, 390.0, 20.0), 12.0, Weight::Normal, Align::Left, th().bad);
+        f.g.text(&v.error, Rect::new(card.x + 18.0, card.y + 78.0, 390.0, 20.0), Size::Caption, Weight::Normal, Align::Left, th().bad);
     }
     let btn = Rect::new(card.x + card.w - 150.0, card.y + 34.0, 132.0, 36.0);
     if v.installed {
@@ -1263,9 +1250,9 @@ fn settings(f: &mut Frame, v: &View) {
     let card = Rect::new(X0, card.y + card.h + GAP, CW, 76.0);
     f.card(card);
     let title = Rect::new(card.x + 18.0, card.y + 16.0, 400.0, 22.0);
-    f.g.text(tr(T::Autostart), title, 15.0, Weight::Semibold, Align::Left, th().text);
+    f.g.text(tr(T::Autostart), title, Size::Large, Weight::Semibold, Align::Left, th().text);
     let desc = Rect::new(card.x + 18.0, card.y + 40.0, 420.0, 20.0);
-    f.g.text(tr(T::AutostartDesc), desc, 12.0, Weight::Normal, Align::Left, th().muted);
+    f.g.text(tr(T::AutostartDesc), desc, Size::Caption, Weight::Normal, Align::Left, th().muted);
     // Autostart only points at the installed copy.
     let act = v.installed.then_some(Act::Autostart);
     f.toggle(act, card.x + card.w - 58.0, card.y + 27.0, v.autostart);
@@ -1274,9 +1261,9 @@ fn settings(f: &mut Frame, v: &View) {
     let card = Rect::new(X0, card.y + card.h + GAP, CW, 88.0);
     f.card(card);
     let r = Rect::new(card.x + 18.0, card.y + 14.0, card.w - 36.0, 34.0);
-    f.g.text(tr(T::AboutTray), r, 12.0, Weight::Normal, Align::Wrap, th().muted);
+    f.g.text(tr(T::AboutTray), r, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
     let r = Rect::new(card.x + 18.0, card.y + 58.0, card.w - 36.0, 18.0);
-    f.g.text(&fill(tr(T::DataDir), &[&v.data_dir]), r, 12.0, Weight::Normal, Align::Left, th().faint);
+    f.g.text(&fill(tr(T::DataDir), &[&v.data_dir]), r, Size::Caption, Weight::Normal, Align::Left, th().faint);
 }
 
 fn setup_dialog(f: &mut Frame, v: &View) {
@@ -1287,14 +1274,14 @@ fn setup_dialog(f: &mut Frame, v: &View) {
     f.g.stroke(d, RADIUS, 1.0, th().border);
 
     let inner = d.inset(24.0);
-    f.g.text(tr(T::SetupTitle), Rect::new(inner.x, inner.y, inner.w, 28.0), 18.0, Weight::Bold, Align::Left, th().text);
+    f.g.text(tr(T::SetupTitle), Rect::new(inner.x, inner.y, inner.w, 28.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
     let text = fill(tr(T::SetupText), &[&v.install_dir]);
-    f.g.text(&text, Rect::new(inner.x, inner.y + 38.0, inner.w, 64.0), 13.0, Weight::Normal, Align::Wrap, th().muted);
+    f.g.text(&text, Rect::new(inner.x, inner.y + 38.0, inner.w, 64.0), Size::Body, Weight::Normal, Align::Wrap, th().muted);
 
     let ty = inner.y + 118.0;
     f.toggle(Some(Act::SetupAutostart), inner.x, ty, v.setup_autostart);
     let label = Rect::new(inner.x + 52.0, ty - 6.0, inner.w - 52.0, 34.0);
-    f.g.text(tr(T::SetupAutostart), label, 13.0, Weight::Normal, Align::Left, th().text);
+    f.g.text(tr(T::SetupAutostart), label, Size::Body, Weight::Normal, Align::Left, th().text);
 
     let by = d.y + d.h - 24.0 - 36.0;
     f.push_button(Act::SetupSkip, Rect::new(d.x + d.w - 24.0 - 128.0 - 10.0 - 120.0, by, 120.0, 36.0), tr(T::JustRun), false);
@@ -1314,20 +1301,20 @@ fn about_dialog(f: &mut Frame) {
     f.caption(tr(T::About), inner.x, inner.y);
     mouse_logo(f.g, inner.x + 4.0, inner.y + 34.0);
     let name = Rect::new(inner.x + 40.0, inner.y + 28.0, inner.w - 40.0, 30.0);
-    f.g.text(crate::APP_NAME, name, 22.0, Weight::Bold, Align::Left, th().text);
-    let ver = Rect::new(name.x + text_w(crate::APP_NAME, 22.0) + 10.0, name.y + 4.0, 120.0, 26.0);
-    f.g.text(VERSION, ver, 15.0, Weight::Normal, Align::Left, th().muted);
+    f.g.text(crate::APP_NAME, name, Size::Subtitle, Weight::Bold, Align::Left, th().text);
+    let ver = Rect::new(name.x + text_w(crate::APP_NAME, Size::Subtitle) + 10.0, name.y + 4.0, 120.0, 26.0);
+    f.g.text(VERSION, ver, Size::Large, Weight::Normal, Align::Left, th().muted);
     let tag = Rect::new(name.x, name.y + 30.0, name.w, 18.0);
-    f.g.text(tr(T::AboutTagline), tag, 12.5, Weight::Normal, Align::Left, th().muted);
+    f.g.text(tr(T::AboutTagline), tag, Size::Caption, Weight::Normal, Align::Left, th().muted);
 
     let y = inner.y + 98.0;
-    f.g.text(COPYRIGHT, Rect::new(inner.x, y, inner.w, 18.0), 12.5, Weight::Normal, Align::Left, th().text);
+    f.g.text(COPYRIGHT, Rect::new(inner.x, y, inner.w, 18.0), Size::Caption, Weight::Normal, Align::Left, th().text);
     let license = fill(tr(T::License), &[LICENSE]);
-    f.g.text(&license, Rect::new(inner.x, y + 20.0, inner.w, 18.0), 12.5, Weight::Normal, Align::Left, th().text);
+    f.g.text(&license, Rect::new(inner.x, y + 20.0, inner.w, 18.0), Size::Caption, Weight::Normal, Align::Left, th().text);
 
     let by = d.y + d.h - 24.0 - 36.0;
     let report = tr(T::ReportMouse);
-    let report_w = text_w(report, 14.0) + 32.0;
+    let report_w = text_w(report, Size::Body) + 32.0;
     f.push_button(Act::OpenWeb(Web::Repo), Rect::new(inner.x, by, 100.0, 36.0), "GitHub", false);
     f.push_button(Act::OpenWeb(Web::NewIssue), Rect::new(inner.x + 110.0, by, report_w, 36.0), report, false);
     f.push_button(Act::CloseDialog, Rect::new(d.x + d.w - 24.0 - 110.0, by, 110.0, 36.0), tr(T::Close), true);
@@ -1346,7 +1333,7 @@ fn theme_tile(f: &mut Frame, act: Act, r: Rect, t: &Theme, name: &str, selected:
         f.g.circle(r.x + 16.0 + k as f32 * 14.0, r.y + 18.0, 5.5, c);
     }
     let label = Rect::new(r.x + 10.0, r.y + 30.0, r.w - 20.0, 22.0);
-    f.g.text(name, label, 12.5, Weight::Semibold, Align::Left, t.text);
+    f.g.text(name, label, Size::Caption, Weight::Semibold, Align::Left, t.text);
 }
 
 fn appearance(f: &mut Frame, v: &View) {

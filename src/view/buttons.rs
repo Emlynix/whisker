@@ -10,7 +10,7 @@
 //! ```
 
 use super::{Act, BODY, Frame, GAP, HEIGHT, Mark, RADIUS, View, WIDTH, X0, CW, th};
-use crate::gfx::{Align, Color, Rect, Weight};
+use crate::gfx::{Align, Color, Rect, Size, Weight};
 use crate::i18n::{T, fill, tr};
 use crate::keys;
 use crate::protocol::{
@@ -228,11 +228,11 @@ pub(super) fn buttons_page(f: &mut Frame, v: &View) {
             f.g.fill(r, 8.0, th().hover);
         }
         let name = Rect::new(r.x + 14.0, r.y, 210.0, r.h);
-        f.g.text(button_name(i), name, 14.0, Weight::Semibold, Align::Left, th().text);
+        f.g.text(button_name(i), name, Size::Body, Weight::Semibold, Align::Left, th().text);
         let label = Rect::new(r.x + 230.0, r.y, r.w - 270.0, r.h);
         let color = if *a == DEFAULT_ACTIONS[i] { th().muted } else { th().accent };
-        f.g.text(&action_label(*a), label, 13.5, Weight::Normal, Align::Left, color);
-        f.g.text("›", Rect::new(r.x + r.w - 30.0, r.y, 20.0, r.h), 20.0, Weight::Normal, Align::Center, th().faint);
+        f.g.text(&action_label(*a), label, Size::Body, Weight::Normal, Align::Left, color);
+        f.g.text("›", Rect::new(r.x + r.w - 30.0, r.y, 20.0, r.h), Size::Subtitle, Weight::Normal, Align::Center, th().faint);
     }
 
     let y = card.y + card.h + GAP;
@@ -244,10 +244,10 @@ pub(super) fn buttons_page(f: &mut Frame, v: &View) {
         f.push_button(Act::ResetButtons, reset, tr(T::ResetAll), false);
     }
     let note = Rect::new(X0 + 216.0, y - 2.0, CW - 216.0, 40.0);
-    f.g.text(tr(T::ButtonsNote), note, 12.0, Weight::Normal, Align::Wrap, th().muted);
+    f.g.text(tr(T::ButtonsNote), note, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
     if !v.notice.is_empty() {
         let r = Rect::new(X0, y + 46.0, CW, 20.0);
-        f.g.text(&v.notice, r, 13.0, Weight::Semibold, Align::Left, th().bad);
+        f.g.text(&v.notice, r, Size::Body, Weight::Semibold, Align::Left, th().bad);
     }
 }
 
@@ -293,7 +293,7 @@ pub(super) fn macros_page(f: &mut Frame, v: &View) {
     // Title with "Assign to button…" on the right.
     const ASSIGN_W: f32 = 180.0;
     let title = fill(tr(T::ActMacro), &[&(sel + 1).to_string()]);
-    f.g.text(&title, Rect::new(x, card.y + 14.0, w - ASSIGN_W, 26.0), 18.0, Weight::Bold, Align::Left, th().text);
+    f.g.text(&title, Rect::new(x, card.y + 14.0, w - ASSIGN_W, 26.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
     let assign = Rect::new(x + w - ASSIGN_W, card.y + 12.0, ASSIGN_W, 32.0);
     if v.macros[sel].is_empty() {
         f.dead_button(assign, tr(T::AssignMacro));
@@ -302,7 +302,7 @@ pub(super) fn macros_page(f: &mut Frame, v: &View) {
     }
     let users = users_of(v, sel);
     let used = if users.is_empty() { tr(T::MacroUnused).to_string() } else { fill(tr(T::MacroUsedBy), &[&users.join(", ")]) };
-    f.g.text(&used, Rect::new(x, card.y + 40.0, w, 18.0), 12.0, Weight::Normal, Align::Left, th().muted);
+    f.g.text(&used, Rect::new(x, card.y + 40.0, w, 18.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
 
     let y = card.y + 68.0;
     let rec = if v.recording { tr(T::StopRec) } else { tr(T::Record) };
@@ -341,7 +341,7 @@ pub(super) fn macros_page(f: &mut Frame, v: &View) {
         f.g.circle(inner.x + 5.0, inner.y + 9.0, 5.0, Color(th().bad.0, v.pulse));
         let head = fill(tr(T::RecordingSteps), &[&events.len().to_string()]);
         let r = Rect::new(inner.x + 16.0, inner.y, inner.w - 16.0, 18.0);
-        f.g.text(&head, r, 13.0, Weight::Semibold, Align::Left, th().accent);
+        f.g.text(&head, r, Size::Body, Weight::Semibold, Align::Left, th().accent);
         inner = Rect::new(inner.x, inner.y + 26.0, inner.w, inner.h - 26.0);
     }
 
@@ -353,11 +353,11 @@ pub(super) fn macros_page(f: &mut Frame, v: &View) {
         tr(T::MacroEmpty).into()
     };
     let color = if events.is_empty() { th().faint } else { th().text };
-    f.g.text(&text, Rect::new(inner.x, inner.y, inner.w, inner.h - 34.0), 13.0, Weight::Normal, Align::Wrap, color);
+    f.g.text(&text, Rect::new(inner.x, inner.y, inner.w, inner.h - 34.0), Size::Body, Weight::Normal, Align::Wrap, color);
 
     // Macros are plain data on disk and in the mouse: warn before passwords end up there.
     let warn = Rect::new(inner.x, inner.y + inner.h - 32.0, inner.w, 32.0);
-    f.g.text(tr(T::MacroWarn), warn, 11.5, Weight::Normal, Align::Wrap, th().warn);
+    f.g.text(tr(T::MacroWarn), warn, Size::Caption, Weight::Normal, Align::Wrap, th().warn);
 }
 
 /// "Assign macro N to button": one row per button with what it does now.
@@ -372,7 +372,7 @@ pub(super) fn assign_dialog(f: &mut Frame, v: &View) {
 
     let name = fill(tr(T::ActMacro), &[&(v.macro_sel + 1).to_string()]);
     let title = fill(tr(T::AssignMacroTitle), &[&name]);
-    f.g.text(&title, Rect::new(d.x + 24.0, d.y + 18.0, d.w - 48.0, 28.0), 18.0, Weight::Bold, Align::Left, th().text);
+    f.g.text(&title, Rect::new(d.x + 24.0, d.y + 18.0, d.w - 48.0, 28.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
 
     for (i, a) in v.buttons.iter().enumerate() {
         let r = Rect::new(d.x + 16.0, d.y + 60.0 + i as f32 * ITEM_H, d.w - 32.0, ITEM_H - 4.0);
@@ -380,10 +380,10 @@ pub(super) fn assign_dialog(f: &mut Frame, v: &View) {
             f.g.fill(r, 8.0, th().hover);
         }
         let left = Rect::new(r.x + 12.0, r.y, 170.0, r.h);
-        f.g.text(button_name(i), left, 14.0, Weight::Semibold, Align::Left, th().text);
+        f.g.text(button_name(i), left, Size::Body, Weight::Semibold, Align::Left, th().text);
         let right = Rect::new(r.x + 190.0, r.y, r.w - 202.0, r.h);
         let label = action_label(*a);
-        f.g.text(&label, right, super::fit_size(&label, right.w, 13.0), Weight::Normal, Align::Left, th().muted);
+        f.g.text(&label, right, Size::Body, Weight::Normal, Align::Left, th().muted);
     }
 
     let by = d.y + d.h - 24.0 - 36.0;
@@ -399,7 +399,7 @@ pub(super) fn picker(f: &mut Frame, v: &View, p: &Picker) {
     f.g.stroke(d, RADIUS, 1.0, th().border);
 
     let title = fill(tr(T::PickTitle), &[button_name(p.button)]);
-    f.g.text(&title, Rect::new(d.x + 24.0, d.y + 18.0, d.w - 48.0, 28.0), 18.0, Weight::Bold, Align::Left, th().text);
+    f.g.text(&title, Rect::new(d.x + 24.0, d.y + 18.0, d.w - 48.0, 28.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
 
     // Categories: a plain list with a bar, unlike the action tiles.
     for (k, (tab, name)) in TABS.iter().enumerate() {
@@ -459,7 +459,7 @@ fn category(f: &mut Frame, act: Act, r: Rect, label: &str, mark: Mark) {
     }
     let label_r = Rect::new(r.x + 16.0, r.y, r.w - 20.0, r.h);
     let weight = if selected { Weight::Semibold } else { Weight::Normal };
-    f.g.text(label, label_r, 14.0, weight, Align::Left, if selected { th().text } else { th().muted });
+    f.g.text(label, label_r, Size::Body, weight, Align::Left, if selected { th().text } else { th().muted });
 }
 
 /// Two-column grid of presets; a click picks, "Apply" assigns.
@@ -491,7 +491,7 @@ fn keyboard_tab(f: &mut Frame, area: Rect, p: &Picker) {
 
     if let Some(k) = p.key {
         let preview = Rect::new(area.x, area.y + 162.0, area.w, 30.0);
-        f.g.text(&combo(p.mods, k), preview, 20.0, Weight::Bold, Align::Center, th().accent);
+        f.g.text(&combo(p.mods, k), preview, Size::Subtitle, Weight::Bold, Align::Center, th().accent);
     }
 }
 
@@ -509,7 +509,7 @@ fn fire_tab(f: &mut Frame, area: Rect, p: &Picker) {
     }
     if let Some(a) = p.built() {
         let preview = Rect::new(area.x, area.y + 150.0, area.w, 30.0);
-        f.g.text(&action_label(a), preview, 15.0, Weight::Semibold, Align::Left, th().accent);
+        f.g.text(&action_label(a), preview, Size::Large, Weight::Semibold, Align::Left, th().accent);
     }
 }
 
@@ -535,5 +535,5 @@ fn macro_tab(f: &mut Frame, area: Rect, v: &View, p: &Picker) {
         f.choice(Act::PickMode(*m), r, &mode_label(*m), "", p.mode == *m);
     }
     let hint = Rect::new(area.x, y + 110.0, area.w, 20.0);
-    f.g.text(tr(T::MacroPickHint), hint, 12.0, Weight::Normal, Align::Left, th().muted);
+    f.g.text(tr(T::MacroPickHint), hint, Size::Caption, Weight::Normal, Align::Left, th().muted);
 }

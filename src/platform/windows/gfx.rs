@@ -1,17 +1,20 @@
 //! Drawing driver over Direct2D + DirectWrite (both ship with Windows).
 //! Works in device-independent pixels; the render target handles DPI.
 
-use crate::gfx::{Align, Color, Rect, Weight};
+use crate::gfx::{Align, Color, Face, Rect, Seg, Size, Weight};
 use std::collections::HashMap;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Direct2D::Common::*;
 use windows::Win32::Graphics::Direct2D::*;
 use windows::Win32::Graphics::DirectWrite::*;
-use windows::core::w;
+use windows::core::{BOOL, Interface, PCWSTR, w};
 use windows_numerics::Vector2;
 
-const FONT: windows::core::PCWSTR = w!("Segoe UI");
-const LOCALE: windows::core::PCWSTR = w!("sk-SK");
+/// Windows 11 UI font in its optical cuts; Windows 10 has only Segoe UI.
+const FONT_TEXT: PCWSTR = w!("Segoe UI Variable Text");
+const FONT_DISPLAY: PCWSTR = w!("Segoe UI Variable Display");
+const FONT_FALLBACK: PCWSTR = w!("Segoe UI");
+const LOCALE: PCWSTR = w!("sk-SK");
 const BASE_DPI: f32 = 96.0;
 
 fn rect(r: Rect) -> D2D_RECT_F {
@@ -23,13 +26,38 @@ fn color(c: Color) -> D2D1_COLOR_F {
     D2D1_COLOR_F { r: ch(16), g: ch(8), b: ch(0), a: c.1 as f32 / 255.0 }
 }
 
+fn pt(x: f32, y: f32) -> Vector2 {
+    Vector2 { X: x, Y: y }
+}
+
+/// `name` if the system has that font family, else Segoe UI.
+fn family_or_fallback(dw: &IDWriteFactory, name: PCWSTR) -> PCWSTR {
+    let mut fonts = None;
+    if unsafe { dw.GetSystemFontCollection(&mut fonts, false) }.is_err() {
+        return FONT_FALLBACK;
+    }
+    let Some(fonts) = fonts else {
+        return FONT_FALLBACK;
+    };
+    let (mut index, mut exists) = (0u32, BOOL(0));
+    if unsafe { fonts.FindFamilyName(name, &mut index, &mut exists) }.is_err() || !exists.as_bool() {
+        return FONT_FALLBACK;
+    }
+    name
+}
+
 pub struct Gfx {
     hwnd: HWND,
     d2d: ID2D1Factory,
     dw: IDWriteFactory,
     rt: Option<ID2D1HwndRenderTarget>,
     brush: Option<ID2D1SolidColorBrush>,
-    formats: HashMap<(u32, Weight, Align), IDWriteTextFormat>,
+    formats: HashMap<(Size, Weight, Align), IDWriteTextFormat>,
+    /// Font family of `Face::Text` and `Face::Display`.
+    text_font: PCWSTR,
+    display_font: PCWSTR,
+    /// Round caps and joins for paths and polylines.
+    round: Option<ID2D1StrokeStyle>,
     dpi: f32,
 }
 
@@ -37,7 +65,17 @@ impl Gfx {
     pub fn new(hwnd: HWND) -> Option<Self> {
         let d2d = unsafe { D2D1CreateFactory::<ID2D1Factory>(D2D1_FACTORY_TYPE_SINGLE_THREADED, None).ok()? };
         let dw = unsafe { DWriteCreateFactory::<IDWriteFactory>(DWRITE_FACTORY_TYPE_SHARED).ok()? };
-        Some(Self { hwnd, d2d, dw, rt: None, brush: None, formats: HashMap::new(), dpi: BASE_DPI })
+        let (text_font, display_font) = (family_or_fallback(&dw, FONT_TEXT), family_or_fallback(&dw, FONT_DISPLAY));
+        let props = D2D1_STROKE_STYLE_PROPERTIES {
+            startCap: D2D1_CAP_STYLE_ROUND,
+            endCap: D2D1_CAP_STYLE_ROUND,
+            dashCap: D2D1_CAP_STYLE_ROUND,
+            lineJoin: D2D1_LINE_JOIN_ROUND,
+            miterLimit: 10.0,
+            ..Default::default()
+        };
+        let round = unsafe { d2d.CreateStrokeStyle(&props, None).ok() };
+        Some(Self { hwnd, d2d, dw, rt: None, brush: None, formats: HashMap::new(), text_font, display_font, round, dpi: BASE_DPI })
     }
 
     /// Frees the render target while the window is hidden; rebuilt on next paint.
@@ -147,14 +185,66 @@ impl Gfx {
         self.paint(c, |rt, b| unsafe { rt.DrawLine(p0, p1, b, width, None) });
     }
 
+    /// Connected line with round joins (icons, chart).
     pub fn polyline(&self, pts: &[(f32, f32)], width: f32, c: Color) {
-        for w in pts.windows(2) {
-            self.line(w[0].0, w[0].1, w[1].0, w[1].1, width, c);
-        }
+        let Some(((x0, y0), rest)) = pts.split_first() else {
+            return;
+        };
+        let mut segs = vec![Seg::Move(*x0, *y0)];
+        segs.extend(rest.iter().map(|&(x, y)| Seg::Line(x, y)));
+        self.stroke_path(&segs, width, c);
     }
 
-    fn format(&mut self, size: f32, weight: Weight, align: Align) -> Option<IDWriteTextFormat> {
-        let key = ((size * 10.0) as u32, weight, align);
+    pub fn fill_path(&self, segs: &[Seg], c: Color) {
+        let Some(geo) = self.geometry(segs) else {
+            return;
+        };
+        self.paint(c, |rt, b| unsafe { rt.FillGeometry(&geo, b, None) });
+    }
+
+    pub fn stroke_path(&self, segs: &[Seg], width: f32, c: Color) {
+        let Some(geo) = self.geometry(segs) else {
+            return;
+        };
+        self.paint(c, |rt, b| unsafe { rt.DrawGeometry(&geo, b, width, self.round.as_ref()) });
+    }
+
+    /// Path geometry of `segs`; figures left open are still filled.
+    fn geometry(&self, segs: &[Seg]) -> Option<ID2D1PathGeometry> {
+        let geo = unsafe { self.d2d.CreatePathGeometry().ok()? };
+        let sink = unsafe { geo.Open().ok()? };
+        let mut open = false;
+        for s in segs {
+            match *s {
+                Seg::Move(x, y) => {
+                    if open {
+                        unsafe { sink.EndFigure(D2D1_FIGURE_END_OPEN) };
+                    }
+                    unsafe { sink.BeginFigure(pt(x, y), D2D1_FIGURE_BEGIN_FILLED) };
+                    open = true;
+                }
+                Seg::Line(x, y) if open => unsafe { sink.AddLine(pt(x, y)) },
+                Seg::Curve(x1, y1, x2, y2, x, y) if open => {
+                    let b = D2D1_BEZIER_SEGMENT { point1: pt(x1, y1), point2: pt(x2, y2), point3: pt(x, y) };
+                    unsafe { sink.AddBezier(&b) };
+                }
+                Seg::Close if open => {
+                    unsafe { sink.EndFigure(D2D1_FIGURE_END_CLOSED) };
+                    open = false;
+                }
+                // A segment before any `Move` has no start point.
+                _ => {}
+            }
+        }
+        if open {
+            unsafe { sink.EndFigure(D2D1_FIGURE_END_OPEN) };
+        }
+        unsafe { sink.Close().ok()? };
+        Some(geo)
+    }
+
+    fn format(&mut self, size: Size, weight: Weight, align: Align) -> Option<IDWriteTextFormat> {
+        let key = (size, weight, align);
         if let Some(f) = self.formats.get(&key) {
             return Some(f.clone());
         }
@@ -164,7 +254,11 @@ impl Gfx {
             Weight::Semibold => DWRITE_FONT_WEIGHT_SEMI_BOLD,
             Weight::Bold => DWRITE_FONT_WEIGHT_BOLD,
         };
-        let f = unsafe { self.dw.CreateTextFormat(FONT, None, w, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, LOCALE).ok()? };
+        let family = match size.face() {
+            Face::Text => self.text_font,
+            Face::Display => self.display_font,
+        };
+        let f = unsafe { self.dw.CreateTextFormat(family, None, w, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size.px(), LOCALE).ok()? };
 
         let (ta, pa, wrap) = match align {
             Align::Left => (DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_WORD_WRAPPING_NO_WRAP),
@@ -177,18 +271,41 @@ impl Gfx {
             let _ = f.SetParagraphAlignment(pa);
             let _ = f.SetWordWrapping(wrap);
         }
+        // A line too long for its box ends in "…" instead of spilling out.
+        if align != Align::Wrap {
+            let trim = DWRITE_TRIMMING { granularity: DWRITE_TRIMMING_GRANULARITY_CHARACTER, delimiter: 0, delimiterCount: 0 };
+            if let Ok(sign) = unsafe { self.dw.CreateEllipsisTrimmingSign(&f) } {
+                let _ = unsafe { f.SetTrimming(&trim, &sign) };
+            }
+        }
         self.formats.insert(key, f.clone());
         Some(f)
     }
 
-    pub fn text(&mut self, s: &str, r: Rect, size: f32, weight: Weight, align: Align, c: Color) {
+    pub fn text(&mut self, s: &str, r: Rect, size: Size, weight: Weight, align: Align, c: Color) {
         let Some(f) = self.format(size, weight, align) else {
             return;
         };
         let utf16: Vec<u16> = s.encode_utf16().collect();
+        if size.tracking() > 0.0 {
+            self.tracked(&utf16, &f, r, size.tracking(), c);
+            return;
+        }
         let rect = rect(r);
         self.paint(c, |rt, b| unsafe {
             rt.DrawText(&utf16, &f, &rect, b, D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL)
         });
+    }
+
+    /// Letter-spaced text: spacing needs a text layout, `DrawText` has none.
+    fn tracked(&self, utf16: &[u16], f: &IDWriteTextFormat, r: Rect, spacing: f32, c: Color) {
+        let Ok(layout) = (unsafe { self.dw.CreateTextLayout(utf16, f, r.w.max(0.0), r.h.max(0.0)) }) else {
+            return;
+        };
+        if let Ok(spaced) = layout.cast::<IDWriteTextLayout1>() {
+            let all = DWRITE_TEXT_RANGE { startPosition: 0, length: utf16.len() as u32 };
+            let _ = unsafe { spaced.SetCharacterSpacing(0.0, spacing, 0.0, all) };
+        }
+        self.paint(c, |rt, b| unsafe { rt.DrawTextLayout(pt(r.x, r.y), &layout, b, D2D1_DRAW_TEXT_OPTIONS_NONE) });
     }
 }
