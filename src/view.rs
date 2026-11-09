@@ -39,7 +39,10 @@ fn th() -> &'static Theme {
 }
 
 pub const WIDTH: f32 = 820.0;
-pub const HEIGHT: f32 = 560.0;
+pub const HEIGHT: f32 = PAGE_H + STATUS_H;
+/// Bottom of pages and sidebar; the status bar sits below.
+const PAGE_H: f32 = 560.0;
+const STATUS_H: f32 = 28.0;
 
 const SIDE_W: f32 = 210.0;
 const X0: f32 = 234.0;
@@ -247,6 +250,7 @@ pub enum Act {
 /// Pages of the project site the About dialog links to.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Web {
+    Site,
     Repo,
     NewIssue,
 }
@@ -694,6 +698,7 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
     f.g.clear(th().bg);
 
     sidebar(&mut f, v);
+    status_bar(&mut f, v);
     let title = Rect::new(X0, 18.0, CW, 36.0);
     f.g.text(tr(v.page.title()), title, Size::Title, Weight::Semibold, Align::Left, th().text);
     header_status(&mut f, v);
@@ -799,7 +804,7 @@ fn header_status(f: &mut Frame, v: &View) {
 fn toast(f: &mut Frame, t: &Toast) {
     const W: f32 = 420.0;
     const H: f32 = 44.0;
-    let r = Rect::new(X0 + (CW - W) / 2.0, HEIGHT - H - 16.0, W, H);
+    let r = Rect::new(X0 + (CW - W) / 2.0, PAGE_H - H - 16.0, W, H);
     f.g.fill(r, RADIUS, th().card_hi);
     f.g.stroke(r, RADIUS, 1.0, th().border);
 
@@ -917,30 +922,32 @@ fn mouse_logo(g: &Gfx, x: f32, y: f32) {
 
 fn sidebar(f: &mut Frame, v: &View) {
     // Same background as the title bar and page, split by a 1 px line.
-    f.g.fill(Rect::new(SIDE_W - 1.0, 0.0, 1.0, HEIGHT), 0.0, th().border);
+    f.g.fill(Rect::new(SIDE_W - 1.0, 0.0, 1.0, PAGE_H), 0.0, th().border);
 
-    const BOTTOM: f32 = HEIGHT - 14.0;
+    const BOTTOM: f32 = PAGE_H - 14.0;
     const ITEM_H: f32 = NAV_STEP - 4.0;
 
     // Logo and name open About; the mouse name opens its details.
     // Kept above the mouse name, so its focus ring leaves that line free.
-    let brand = Rect::new(14.0, 10.0, SIDE_W - 28.0, 30.0);
+    // Logo and name share one centre line, the name as tall as the logo.
+    const LOGO_X: f32 = 24.0;
+    const LOGO_Y: f32 = 18.0;
+    const LOGO_H: f32 = 27.0;
+    let brand = Rect::new(14.0, LOGO_Y - 6.0, SIDE_W - 28.0, LOGO_H + 12.0);
     let hot = f.button(Act::About, brand);
-    mouse_logo(f.g, 24.0, 20.0);
+    mouse_logo(f.g, LOGO_X, LOGO_Y);
     let name_c = if hot { th().accent } else { th().text };
-    f.g.text(crate::APP_NAME, Rect::new(62.0, 13.0, 140.0, 26.0), Size::Subtitle, Weight::Bold, Align::Left, name_c);
-    // Mouse name "White Shark Lionel ▾" opens the "which mouse" dialog;
-    // the status line under it opens Settings › Mouse. The space down to
-    // the nav stays free for a profile switcher.
-    const CHEVRON_W: f32 = 14.0;
+    let title = Rect::new(LOGO_X + 32.0, LOGO_Y + LOGO_H / 2.0 - 18.0, 140.0, 36.0);
+    f.g.text(crate::APP_NAME, title, Size::Title, Weight::Bold, Align::Left, name_c);
+
+    // Mouse name under the logo, flush with the nav icons; a click opens
+    // the "which mouse" dialog. Long names take two lines.
     const LINE_H: f32 = 16.0;
-    let name_w = SIDE_W - 76.0 - CHEVRON_W + 4.0;
-    // Long names ("Logitech Marathon Mouse/Performance Plus M705") take two lines.
+    let name_w = SIDE_W - LOGO_X - 20.0;
     let (first, second) = name_lines(&v.device_name, name_w, Size::Caption);
     let lines = if second.is_some() { 2.0 } else { 1.0 };
-    let sub = Rect::new(62.0, 46.0, SIDE_W - 76.0, LINE_H * lines);
-    // A select-like field: the chevron sits at its right end.
-    let pick = Rect::new(sub.x - 4.0, sub.y - 2.0, sub.w + 8.0, sub.h + 4.0);
+    let sub = Rect::new(LOGO_X, LOGO_Y + LOGO_H + 14.0, name_w, LINE_H * lines);
+    let pick = Rect::new(sub.x - 6.0, sub.y - 4.0, sub.w + 12.0, sub.h + 8.0);
     let hot = f.button(Act::ChangeMouse, pick);
     if hot {
         f.g.fill(pick, R_INNER, th().hover);
@@ -949,16 +956,6 @@ fn sidebar(f: &mut Frame, v: &View) {
     f.g.text(&first, Rect::new(sub.x, sub.y, name_w, LINE_H), Size::Caption, Weight::Normal, Align::Left, name_c);
     if let Some(rest) = &second {
         f.g.text(rest, Rect::new(sub.x, sub.y + LINE_H, name_w, LINE_H), Size::Caption, Weight::Normal, Align::Left, name_c);
-    }
-    glyph(f.g, Glyph::ChevronDown, pick.x + pick.w - CHEVRON_W / 2.0 - 2.0, sub.y + sub.h / 2.0, name_c);
-
-    if v.caps.battery || v.has_battery {
-        let r = Rect::new(sub.x, sub.y + sub.h + 4.0, sub.w, 16.0);
-        let area = Rect::new(r.x - 4.0, r.y - 2.0, r.w + 4.0, r.h + 4.0);
-        if f.button(Act::Nav(Page::Mouse), area) {
-            f.g.fill(area, R_INNER, th().hover);
-        }
-        status_line(f, v, r);
     }
 
     for (k, page) in nav_pages(&v.caps).into_iter().enumerate() {
@@ -977,9 +974,27 @@ fn sidebar(f: &mut Frame, v: &View) {
 
 /// "● Connected · 55 %" (⚡ while charging): green, warn colour when the
 /// battery runs low, muted "● Disconnected" offline.
-fn status_line(f: &mut Frame, v: &View, r: Rect) {
+/// Status bar under the whole window: connection and battery on the right
+/// (a click opens Settings › Mouse).
+fn status_bar(f: &mut Frame, v: &View) {
+    const PAD: f32 = 16.0;
+    f.g.fill(Rect::new(0.0, PAGE_H, WIDTH, 1.0), 0.0, th().border);
+    if !(v.caps.battery || v.has_battery) {
+        return;
+    }
+    let (text, _) = status_text(v);
+    let w = text_w(&text, Size::Caption) + 14.0;
+    let r = Rect::new(WIDTH - PAD - w, PAGE_H + (STATUS_H - 16.0) / 2.0, w, 16.0);
+    let area = Rect::new(r.x - 8.0, PAGE_H + 3.0, r.w + 16.0, STATUS_H - 6.0);
+    if f.button(Act::Nav(Page::Mouse), area) {
+        f.g.fill(area, R_INNER, th().hover);
+    }
+    status_line(f, v, r);
+}
+
+fn status_text(v: &View) -> (String, Color) {
     const LOW_PCT: u8 = 20;
-    let (text, c) = if !v.connected {
+    if !v.connected {
         (tr(T::Disconnected).to_string(), th().muted)
     } else if !v.has_battery {
         (tr(T::LinkConnected).to_string(), th().good)
@@ -987,7 +1002,11 @@ fn status_line(f: &mut Frame, v: &View, r: Rect) {
         let charging = if v.charge == Charge::Charging { " ⚡" } else { "" };
         let c = if v.battery < LOW_PCT { th().warn } else { th().good };
         (format!("{} · {}{charging}", tr(T::LinkConnected), battery_text(v)), c)
-    };
+    }
+}
+
+fn status_line(f: &mut Frame, v: &View, r: Rect) {
+    let (text, c) = status_text(v);
     f.g.circle(r.x + 3.5, r.y + r.h / 2.0, 3.5, c);
     let label = Rect::new(r.x + 12.0, r.y, r.w - 12.0, r.h);
     f.g.text(&text, label, Size::Caption, Weight::Normal, Align::Left, c);
@@ -1455,7 +1474,7 @@ fn stats(f: &mut Frame, v: &View) {
         f.g.text(value, Rect::new(r.x + 14.0, r.y + 32.0, r.w - 28.0, 34.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
     }
 
-    let card = Rect::new(X0, TOP + 48.0 + 2.0 * 90.0, CW, HEIGHT - (TOP + 48.0 + 180.0) - 24.0);
+    let card = Rect::new(X0, TOP + 48.0 + 2.0 * 90.0, CW, PAGE_H - (TOP + 48.0 + 180.0) - 24.0);
     f.card(card);
     // The chart follows the selected period.
     let title = [T::ChartToday, T::ChartTitle, T::ChartAll][v.period.min(PERIODS.len() - 1)];
@@ -1555,7 +1574,7 @@ fn setup_dialog(f: &mut Frame, v: &View) {
 /// About: logo, name and version, copyright, license, project links.
 fn about_dialog(f: &mut Frame) {
     const W: f32 = 480.0;
-    const H: f32 = 244.0;
+    const H: f32 = 268.0;
     f.g.fill(Rect::new(0.0, 0.0, WIDTH, HEIGHT), 0.0, th().scrim);
     let d = Rect::new((WIDTH - W) / 2.0, (HEIGHT - H) / 2.0, W, H);
     f.g.fill(d, RADIUS, th().card_hi);
@@ -1575,6 +1594,16 @@ fn about_dialog(f: &mut Frame) {
     f.g.text(COPYRIGHT, Rect::new(inner.x, y, inner.w, 18.0), Size::Caption, Weight::Normal, Align::Left, th().text);
     let license = fill(tr(T::License), &[LICENSE]);
     f.g.text(&license, Rect::new(inner.x, y + 20.0, inner.w, 18.0), Size::Caption, Weight::Normal, Align::Left, th().text);
+
+    // Product page as a link.
+    const SITE: &str = "www.emlynix.com/whisker";
+    let link = Rect::new(inner.x, y + 42.0, text_w(SITE, Size::Caption) + 4.0, 18.0);
+    let hot = f.button(Act::OpenWeb(Web::Site), link);
+    let c = if hot { th().text } else { th().accent };
+    f.g.text(SITE, link, Size::Caption, Weight::Semibold, Align::Left, c);
+    if hot {
+        f.g.fill(Rect::new(link.x, link.y + link.h - 1.0, link.w - 4.0, 1.0), 0.0, c);
+    }
 
     let by = d.y + d.h - 24.0 - 36.0;
     let report = tr(T::ReportMouse);

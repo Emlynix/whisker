@@ -64,6 +64,7 @@ const CHART_DAYS: u64 = 7;
 /// Most day labels under the battery chart.
 const CHART_MAX_TICKS: u64 = 7;
 const REPO_URL: &str = "https://github.com/Emlynix/whisker";
+const SITE_URL: &str = "https://www.emlynix.com/whisker";
 const NEW_ISSUE_URL: &str = "https://github.com/Emlynix/whisker/issues/new";
 
 /// Windows virtual-key codes the controller reacts to (macOS maps to them).
@@ -1283,6 +1284,7 @@ impl Controller {
             Act::AssignTo(b) => self.assign_macro(b),
             Act::OpenWeb(w) => {
                 let url = match w {
+                    Web::Site => SITE_URL,
                     Web::Repo => REPO_URL,
                     Web::NewIssue => NEW_ISSUE_URL,
                 };
