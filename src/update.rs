@@ -83,7 +83,9 @@ struct Target {
 const TARGET: Option<Target> = Some(Target { key: "windows-x86_64", asset: "whisker-windows-x86_64.exe" });
 #[cfg(target_os = "macos")]
 const TARGET: Option<Target> = Some(Target { key: "macos-universal", asset: "whisker-macos-universal.zip" });
-#[cfg(not(any(all(windows, target_arch = "x86_64"), target_os = "macos")))]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const TARGET: Option<Target> = Some(Target { key: "linux-x86_64", asset: "whisker-linux-x86_64" });
+#[cfg(not(any(all(windows, target_arch = "x86_64"), target_os = "macos", all(target_os = "linux", target_arch = "x86_64"))))]
 const TARGET: Option<Target> = None;
 
 /// `major.minor.patch`; ordered.
