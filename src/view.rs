@@ -706,6 +706,17 @@ fn text_w(text: &str, size: Size) -> f32 {
 }
 
 /// "56 %", or "≈ 50 %" for a coarse level.
+/// Line under the battery bar. A battery reported in a few coarse
+/// steps (M705) gets no runtime estimate: it would only mislead.
+pub fn battery_hint(v: &View) -> &str {
+    match v.charge {
+        Charge::Charging => tr(T::Charging),
+        Charge::Full => tr(T::FullyCharged),
+        Charge::Discharging if v.battery_approx => "",
+        Charge::Discharging => v.battery_note.as_str(),
+    }
+}
+
 pub fn battery_text(v: &View) -> String {
     let approx = if v.battery_approx { "≈ " } else { "" };
     format!("{approx}{} %", v.battery)
@@ -1119,12 +1130,7 @@ fn overview(f: &mut Frame, v: &View) {
     let art = Rect::new(card.x + card.w - SIDE_PAD - ART_W, card.y + (card.h - ART_H) / 2.0, ART_W, ART_H);
     art::mouse(f, art, art::Marks::None);
 
-    let note = match v.charge {
-        _ if !shown => v.link.as_str(),
-        Charge::Charging => tr(T::Charging),
-        Charge::Full => tr(T::FullyCharged),
-        Charge::Discharging => v.battery_note.as_str(),
-    };
+    let note = if shown { battery_hint(v) } else { v.link.as_str() };
     let bar_w = card.w - 200.0 - 2.0 * SIDE_PAD - ART_W;
     f.bar(Rect::new(card.x + 200.0, card.y + 46.0, bar_w, 10.0), if shown { v.battery } else { 0 }, tint);
     f.g.text(note, Rect::new(card.x + 200.0, card.y + 64.0, bar_w, 40.0), Size::Body, Weight::Normal, Align::Wrap, th().muted);

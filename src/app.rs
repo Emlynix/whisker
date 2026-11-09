@@ -2792,6 +2792,20 @@ mod tests {
         assert!(view::battery_color(&v) != th_good());
     }
 
+    #[test]
+    fn coarse_battery_has_no_life_estimate() {
+        // Four battery steps give no usable runtime estimate.
+        let mut v = initial_view(&AppConfig::default(), false);
+        (v.connected, v.has_battery, v.battery, v.charge) = (true, true, 50, Charge::Discharging);
+        v.battery_note = battery_note(None);
+        assert_eq!(view::battery_hint(&v), tr(T::EtaPending));
+
+        v.battery_approx = true;
+        assert_eq!(view::battery_hint(&v), "");
+        v.battery_note = battery_note(Some(100.0));
+        assert_eq!(view::battery_hint(&v), "");
+    }
+
     fn th_good() -> crate::gfx::Color {
         crate::theme::current().good
     }
