@@ -37,6 +37,8 @@ pub(super) struct BrandRec<'a> {
     pub(super) auto: Option<u16>,
     /// Model words verified on hardware through the auto entry.
     pub(super) verified: Vec<&'a str>,
+    /// Product ids of `auto` shared by many models (Unifying, Bolt…).
+    pub(super) receivers: Vec<u16>,
 }
 
 /// One `[[mouse]]` block.
@@ -133,10 +135,15 @@ pub(super) fn parse(src: &str) -> Result<Data<'_>, ParseError> {
     Ok(data)
 }
 
-/// The brand must be declared above; one model name once per brand.
+/// The brand must be declared above; one model name once per brand; no
+/// shared receiver as a model's own id (it would name the wrong mouse).
 fn check_mouse(data: &Data, m: &MouseRec, line: usize) -> Result<(), ParseError> {
-    if !data.brands.iter().any(|b| b.id == m.brand) {
+    let Some(brand) = data.brands.iter().find(|b| b.id == m.brand) else {
         return Err(fail(line, format!("brand {} is not declared above", m.brand)));
+    };
+    let shared = m.pids.iter().find(|(p, _)| brand.auto == Some(m.vid) && brand.receivers.contains(p));
+    if let Some((p, _)) = shared {
+        return Err(fail(line, format!("{HEX_PREFIX}{p:04X} is a shared receiver of {}", m.brand)));
     }
     let id = slug(m.model);
     if id.is_empty() {
@@ -206,7 +213,7 @@ fn strip_comment(s: &str) -> &str {
 
 fn brand<'a>(block: &Block<'a>) -> Result<BrandRec<'a>, ParseError> {
     let (mut id, mut name, mut label, mut in_names, mut family, mut auto) = (None, None, None, false, None, None);
-    let mut verified = Vec::new();
+    let (mut verified, mut receivers) = (Vec::new(), Vec::new());
     for f in &block.fields {
         let at = |msg: String| fail(f.line, format!("{}: {msg}", f.key));
         let v = f.value;
@@ -218,6 +225,7 @@ fn brand<'a>(block: &Block<'a>) -> Result<BrandRec<'a>, ParseError> {
             "family" => family = Some(lookup(&FAMILIES, v).map_err(at)?),
             "auto" => auto = Some(int(v).map_err(at)?),
             "verified" => verified = list(v, string).map_err(at)?,
+            "receivers" => receivers = list(v, int).map_err(at)?,
             key => return Err(fail(f.line, format!("unknown brand key {key}"))),
         }
     }
@@ -228,7 +236,11 @@ fn brand<'a>(block: &Block<'a>) -> Result<BrandRec<'a>, ParseError> {
     if name.is_none() && label.is_none() {
         return Err(missing("name or label"));
     }
-    Ok(BrandRec { id, name: name.unwrap_or(""), label, in_names, family, auto, verified })
+    // Receivers are products of the auto entry's vendor.
+    if auto.is_none() && !receivers.is_empty() {
+        return Err(missing("auto (receivers need it)"));
+    }
+    Ok(BrandRec { id, name: name.unwrap_or(""), label, in_names, family, auto, verified, receivers })
 }
 
 fn mouse<'a>(block: &Block<'a>) -> Result<MouseRec<'a>, ParseError> {
@@ -363,6 +375,7 @@ id = acme        # trailing comment
 name = "Acme #1"
 family = asus
 auto = 0x0B05
+receivers = 0xC52B, 50504
 
 [[mouse]]
 brand = acme
@@ -393,6 +406,7 @@ dpi = 400, 800
         let d = parse(GOOD).unwrap();
         let b = &d.brands[0];
         assert_eq!((b.id, b.name, b.family, b.auto, b.in_names), ("acme", "Acme #1", Family::Asus, Some(0x0B05), false));
+        assert_eq!(b.receivers, [0xC52B, 0xC548]);
 
         let m = &d.mice[0];
         assert_eq!((m.brand, m.model, m.vid, m.support), ("acme", "Rocket", 0x0B05, Support::Experimental));
@@ -443,6 +457,22 @@ dpi = 400, 800
         assert_eq!(line_of(&format!("{brand}[[mouse]]\nbrand = b\nmodel = \"M\"\nvid = 1\nsupport = full")), 5);
         assert_eq!(line_of("[[brand]]\nid = a\nname = \"unterminated\nfamily = asus"), 3);
         assert_eq!(line_of("[[brand]]\nid = a b\n"), 2);
+    }
+
+    #[test]
+    fn shared_receivers_are_checked() {
+        let brand = "[[brand]]\nid = a\nname = \"A\"\nfamily = hidpp\nauto = 0x046D\nreceivers = 0xC52B\n";
+        let mouse = |vid: &str, pids: &str| format!("{brand}[[mouse]]\nbrand = a\nmodel = \"M\"\nvid = {vid}\npids = {pids}\nsupport = full\n");
+        assert!(parse(&mouse("0x046D", "0xC08B cable")).is_ok());
+
+        // Bad list item at its line; receivers belong to the auto vendor.
+        assert_eq!(line_of("[[brand]]\nid = a\nname = \"A\"\nfamily = hidpp\nauto = 1\nreceivers = 0xC52B, x\n"), 6);
+        assert_eq!(line_of("[[brand]]\nid = a\nname = \"A\"\nfamily = hidpp\nreceivers = 0xC52B\n"), 1);
+
+        // A model never claims a shared receiver: the paired mouse is unknown.
+        assert_eq!(line_of(&mouse("0x046D", "0xC08B, 0xC52B receiver")), 7);
+        // Another vendor's product id may be equal.
+        assert!(parse(&mouse("0x1532", "0xC52B")).is_ok());
     }
 
     #[test]

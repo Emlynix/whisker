@@ -20,7 +20,10 @@
 //!   brand is part of the model names), `family`, `auto` (vendor id of
 //!   "Other <brand> mouse (auto-detect)"; none = no such entry),
 //!   `verified` (model words checked on hardware through that entry,
-//!   e.g. `"M705"`: such a mouse gets full support).
+//!   e.g. `"M705"`: such a mouse gets full support, a named model whose
+//!   name holds the word too), `receivers` (product ids of `auto` that
+//!   many models share, e.g. Unifying `0xC52B`: they pick the auto entry,
+//!   never a model, and named models may open through them).
 //! - mouse: `brand`, `model`, `vid`, `support` (`full`, `experimental`,
 //!   `partial`, `stats-only`) are required; `pids` (each with an optional
 //!   `receiver` / `cable`; none = only by vendor id), `family` (default:
@@ -197,6 +200,8 @@ pub struct Brand {
     pub in_names: bool,
     /// Models verified through the auto-detect entry ("M705").
     pub verified: Vec<&'static str>,
+    /// Receiver ids of the auto vendor shared by many models.
+    pub receivers: Vec<u16>,
     pub models: Vec<Model>,
 }
 
@@ -268,13 +273,18 @@ fn build() -> Vec<Brand> {
 /// Records -> brands; each brand with `auto` ends in its Auto entry.
 fn from_data(d: data::Data<'static>) -> Vec<Brand> {
     let data::Data { brands: recs, mice } = d;
-    let mut brands: Vec<Brand> = recs.iter().map(|r| Brand { id: r.id, name: r.name, label: r.label, in_names: r.in_names, verified: r.verified.clone(), models: Vec::new() }).collect();
+    let mut brands: Vec<Brand> = recs
+        .iter()
+        .map(|r| Brand { id: r.id, name: r.name, label: r.label, in_names: r.in_names, verified: r.verified.clone(), receivers: r.receivers.clone(), models: Vec::new() })
+        .collect();
 
     for m in mice {
         let Some(i) = recs.iter().position(|r| r.id == m.brand) else {
             continue;
         };
         let family = m.family.unwrap_or(recs[i].family);
+        // A model checked on hardware through the auto entry is full here too.
+        let support = if names_any(&recs[i].verified, m.model) { Support::Full } else { m.support };
         brands[i].models.push(Model {
             id: format!("{}/{}", m.brand, slug(m.model)),
             brand: recs[i].id,
@@ -283,7 +293,7 @@ fn from_data(d: data::Data<'static>) -> Vec<Brand> {
             vid: m.vid,
             pids: m.pids,
             family,
-            support: m.support,
+            support,
             caps: caps_of(family),
             stage_dpi: Vec::leak(m.stage_dpi),
             dpi: m.dpi,
@@ -342,7 +352,7 @@ fn other_brand() -> Brand {
         rates: Vec::new(),
         buttons: None,
     };
-    Brand { id: "other", name: "", label: Some(T::OtherBrand), in_names: false, verified: Vec::new(), models: vec![other] }
+    Brand { id: "other", name: "", label: Some(T::OtherBrand), in_names: false, verified: Vec::new(), receivers: Vec::new(), models: vec![other] }
 }
 
 /// Distinct families of the catalogue entries with this vendor id, in
@@ -393,9 +403,14 @@ pub fn support_of(m: &Model, reported: &str) -> Support {
     if m.entry != Entry::Auto {
         return m.support;
     }
-    let words: Vec<&str> = reported.split(|c: char| !c.is_ascii_alphanumeric()).collect();
-    let verified = brand_of(m).verified.iter().any(|v| words.iter().any(|w| w.eq_ignore_ascii_case(v)));
-    if verified { Support::Full } else { m.support }
+    if names_any(&brand_of(m).verified, reported) { Support::Full } else { m.support }
+}
+
+/// Whether `text` holds one of `words` as a whole word, any case
+/// ("Marathon M705", ["M705"] -> true; "M7050" -> false).
+fn names_any(words: &[&str], text: &str) -> bool {
+    let parts: Vec<&str> = text.split(|c: char| !c.is_ascii_alphanumeric()).collect();
+    words.iter().any(|v| parts.iter().any(|w| w.eq_ignore_ascii_case(v)))
 }
 
 /// A stored model id, old ids too; `None` for "other mouse" and unknown ids.
@@ -462,16 +477,36 @@ impl Model {
         }
     }
 
+    /// Receiver ids many of the brand's mice share; empty unless this
+    /// entry has the brand's auto vendor id.
+    fn shared(&self) -> &'static [u16] {
+        let brand = brand_of(self);
+        let auto_vid = brand.models.iter().any(|m| m.entry == Entry::Auto && m.vid == self.vid);
+        if auto_vid { &brand.receivers } else { &[] }
+    }
+
+    /// `d` is a shared receiver this model may be paired to, e.g.
+    /// MX Master 3 and a Bolt receiver (046D:C548).
+    pub fn on_receiver(&self, d: &DeviceInfo) -> bool {
+        d.vid == self.vid && self.shared().contains(&d.pid)
+    }
+
     pub fn link_of(&self, pid: u16) -> Option<Link> {
+        if self.shared().contains(&pid) {
+            return Some(Link::Receiver);
+        }
         self.pids.iter().find(|(p, _)| *p == pid).and_then(|(_, l)| *l)
     }
 
     /// The USB devices its driver may open; `usb` = the detected mouse
-    /// the user picked, when it is of this vendor.
+    /// the user picked, when it is of this vendor. A named model may
+    /// also sit behind a shared receiver.
     pub fn pick(&self, usb: Option<(u16, u16)>) -> Pick {
         let pids = match usb {
             Some((vid, pid)) if vid == self.vid => vec![pid],
-            _ => self.pids.iter().map(|(p, _)| *p).collect(),
+            // Any product of the vendor.
+            _ if self.entry == Entry::Auto => Vec::new(),
+            _ => self.pids.iter().map(|(p, _)| *p).chain(self.shared().iter().copied()).collect(),
         };
         Pick { vid: Some(self.vid), pids }
     }
@@ -511,6 +546,74 @@ mod tests {
         // Eternico has no vendor-wide driver: a guess.
         assert!(matches!(match_device(&dev(eternico_vid(), 0x0001)), Match::Guess(_)));
         assert_eq!(match_device(&dev(0x0458, 0x0007)), Match::Unknown);
+    }
+
+    fn known_id(vid: u16, pid: u16) -> String {
+        match match_device(&dev(vid, pid)) {
+            Match::Known(m) => m.id.clone(),
+            other => format!("{other:?}"),
+        }
+    }
+
+    const LOGITECH: u16 = 0x046D;
+    const RAZER: u16 = 0x1532;
+    const BOLT: u16 = 0xC548;
+
+    #[test]
+    fn razer_models_by_product_id() {
+        assert_eq!(known_id(RAZER, 0x0084), "razer/deathadder-v2");
+        // Cable and dongle of one model.
+        assert_eq!(known_id(RAZER, 0x007A), "razer/viper-ultimate");
+        assert_eq!(known_id(RAZER, 0x007B), "razer/viper-ultimate");
+        let viper = by_id("razer/viper-ultimate").unwrap();
+        assert_eq!((viper.link_of(0x007A), viper.link_of(0x007B)), (Some(Link::Cable), Some(Link::Receiver)));
+        assert_eq!(viper.full_name(), "Razer Viper Ultimate");
+        // Unlisted product: the brand's auto entry.
+        assert_eq!(known_id(RAZER, 0xFFF0), "razer/auto");
+    }
+
+    #[test]
+    fn logitech_cable_ids_name_the_model() {
+        assert_eq!(known_id(LOGITECH, 0xC08B), "logitech/g502-se-hero");
+        assert_eq!(known_id(LOGITECH, 0xC08A), "logitech/mx-vertical");
+    }
+
+    /// Many mice pair with one receiver: the receiver never names a model.
+    #[test]
+    fn shared_receivers_pick_the_brand_entry() {
+        let brand = brands().iter().find(|b| b.id == "logitech").unwrap();
+        assert!(brand.receivers.contains(&BOLT));
+        for &pid in &brand.receivers {
+            assert_eq!(known_id(LOGITECH, pid), "logitech/auto", "{pid:04X}");
+        }
+
+        // A named model opens through its cable id or any shared receiver.
+        let master = by_id("logitech/mx-master-3").unwrap();
+        let pick = master.pick(None);
+        assert!(pick.allows(LOGITECH, BOLT) && pick.allows(LOGITECH, 0xB023));
+        assert!(!pick.allows(LOGITECH, 0xC08B));
+        assert_eq!(master.link_of(BOLT), Some(Link::Receiver));
+        assert!(master.on_receiver(&dev(LOGITECH, BOLT)));
+        assert!(!master.on_receiver(&dev(LOGITECH, 0xB023)));
+        assert!(!master.on_receiver(&dev(RAZER, BOLT)));
+
+        // The auto entry still takes any product of the vendor.
+        assert!(by_id("logitech/auto").unwrap().pick(None).allows(LOGITECH, 0xC08B));
+        assert_eq!(by_id("logitech/auto").unwrap().link_of(BOLT), Some(Link::Receiver));
+    }
+
+    #[test]
+    fn verified_words_upgrade_named_models() {
+        assert_eq!(by_id("logitech/marathon-m705").unwrap().support, Support::Full);
+        assert_eq!(by_id("logitech/mx-master-3").unwrap().support, Support::Experimental);
+        assert_eq!(by_id("razer/deathadder-v2").unwrap().support, Support::Experimental);
+    }
+
+    #[test]
+    fn razer_and_logitech_list_their_models() {
+        let named = |brand: &str| models().filter(|m| m.brand == brand && m.entry == Entry::Named).count();
+        assert!(named("razer") >= 50, "{}", named("razer"));
+        assert!(named("logitech") >= 30, "{}", named("logitech"));
     }
 
     fn eternico_vid() -> u16 {
@@ -654,7 +757,8 @@ mod tests {
         use std::fmt::Write;
         let mut out = String::new();
         for b in brands() {
-            let _ = writeln!(out, "brand {} name={:?} label={:?} in_names={}", b.id, b.name, b.label, b.in_names);
+            let receivers: Vec<String> = b.receivers.iter().map(|p| format!("{p:04X}")).collect();
+            let _ = writeln!(out, "brand {} name={:?} label={:?} in_names={} receivers=[{}]", b.id, b.name, b.label, b.in_names, receivers.join(","));
             for m in &b.models {
                 let link = |l: Option<Link>| l.map_or(String::new(), |l| format!(":{l:?}"));
                 let pids: Vec<String> = m.pids.iter().map(|(p, l)| format!("{p:04X}{}", link(*l))).collect();
