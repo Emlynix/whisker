@@ -1000,19 +1000,24 @@ fn status_bar(f: &mut Frame, v: &View) {
     if !(v.caps.battery || v.has_battery) {
         return;
     }
-    let (text, _) = status_text(v);
-    let w = text_w(&text, Size::Caption) + 14.0;
-    // Right edge flush with the cards.
-    let r = Rect::new(X0 + CW - w, PAGE_H + (STATUS_H - 16.0) / 2.0, w, 16.0);
-    let area = Rect::new(r.x - 8.0, PAGE_H + 3.0, r.w + 16.0, STATUS_H - 6.0);
+    // Text right-aligned, dot after it at the cards' edge: no width
+    // estimate decides where the text ends (fonts differ per OS).
+    const DOT_R: f32 = 3.5;
+    let (text, c) = status_text(v);
+    let right = X0 + CW;
+    let y = PAGE_H + STATUS_H / 2.0;
+    let area_w = text_w(&text, Size::Caption) + 28.0;
+    let area = Rect::new(right - area_w + 6.0, PAGE_H + 3.0, area_w, STATUS_H - 6.0);
     if f.button(Act::Nav(Page::Mouse), area) {
         f.g.fill(area, R_INNER, th().hover);
     }
-    status_line(f, v, r);
+    f.g.circle(right - DOT_R, y, DOT_R, c);
+    let label = Rect::new(X0 + CW / 2.0, y - 8.0, CW / 2.0 - 2.0 * DOT_R - 6.0, 16.0);
+    f.g.text(&text, label, Size::Caption, Weight::Normal, Align::Right, c);
 }
 
-/// "● Connected · 55 %" (⚡ while charging): green, warn colour when the
-/// battery runs low, muted "● Disconnected" offline.
+/// "Connected · 55 % ●" (⚡ while charging): green, warn colour when the
+/// battery runs low, muted "Disconnected ●" offline.
 fn status_text(v: &View) -> (String, Color) {
     const LOW_PCT: u8 = 20;
     if !v.connected {
@@ -1024,13 +1029,6 @@ fn status_text(v: &View) -> (String, Color) {
         let c = if v.battery < LOW_PCT { th().warn } else { th().good };
         (format!("{} · {}{charging}", tr(T::LinkConnected), battery_text(v)), c)
     }
-}
-
-fn status_line(f: &mut Frame, v: &View, r: Rect) {
-    let (text, c) = status_text(v);
-    f.g.circle(r.x + 3.5, r.y + r.h / 2.0, 3.5, c);
-    let label = Rect::new(r.x + 12.0, r.y, r.w - 12.0, r.h);
-    f.g.text(&text, label, Size::Caption, Weight::Normal, Align::Left, c);
 }
 
 /// Sidebar entry: a page, or About (opens its dialog).

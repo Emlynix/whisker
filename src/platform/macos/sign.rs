@@ -1,4 +1,4 @@
-//! Release signatures: macOS updates open the release page, nothing is
+//! Release signatures: macOS and Linux updates open the release page, nothing is
 //! installed in place, so nothing is verified here yet.
 
 /// Always false: no in-place install on macOS.

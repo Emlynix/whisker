@@ -23,6 +23,9 @@ mod keymap;
 /// Same curl-based client as macOS: `/usr/bin/curl` with fixed arguments.
 #[path = "../macos/net.rs"]
 pub mod net;
+/// No in-place update on Linux either: nothing to verify.
+#[path = "../macos/sign.rs"]
+pub mod sign;
 pub mod single;
 mod sys;
 mod tray;
