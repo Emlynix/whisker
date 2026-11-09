@@ -8,7 +8,7 @@
 //!        |  gfx::Gfx, hid::Channel, window::post, …
 //!   platform  (this module: contract types + cfg switch)
 //!        |
-//!   windows (Win32, D2D)  |  linux (TODO)  |  macos (AppKit, IOKit)
+//!   windows (Win32, D2D)  |  linux (GTK 3, Cairo)  |  macos (AppKit, IOKit)
 //! ```
 //!
 //! # Contract
@@ -35,8 +35,8 @@
 //! - `set_title_colors(TitleColors)`: title bar in the theme's colours.
 //!   Windows 11 sets caption, text and border colours; Windows 10 only
 //!   switches dark/light (`shade`). macOS draws a transparent title bar
-//!   over the window background with the matching appearance. Linux
-//!   (TODO): a client-side or `_GTK_THEME_VARIANT` dark/light hint.
+//!   over the window background with the matching appearance. Linux: the
+//!   GTK header bar styled in the colours, plus the dark/light variant.
 //! - `modifiers() -> shell::Mods`: modifier keys held now.
 //! - `set_clipboard(text) -> bool`: replaces the clipboard with plain text
 //!   (the window owns it on Windows).
@@ -44,7 +44,8 @@
 //!   Tray clicks arrive as `Hooks::tray` (left = open, menu = open/about/quit).
 //! - `notify(title, text)`: system notification from the tray icon; a click
 //!   on it arrives as `TrayAction::Open`. Windows: tray balloon (`NIF_INFO`,
-//!   shown as a toast). macOS: no-op (needs a signed bundle).
+//!   shown as a toast). macOS: no-op (needs a signed bundle). Linux:
+//!   `org.freedesktop.Notifications`.
 //!
 //! `gfx::Gfx` — drawing in DIPs, given to `Hooks::draw` per frame:
 //! `clear(c)`, `fill(r, radius, c)`, `stroke(r, radius, width, c)` (inside
@@ -94,12 +95,13 @@
 //! `net` — `get(&Fetch) -> Result<Reply, NetError>`: one HTTPS GET to port
 //! 443 (blocking), certificate checked by the OS, no redirects followed, no
 //! cookies or credentials sent; body cut off past `limit` (`TooLarge`),
-//! whole request bounded by `timeout`. Windows: WinHTTP. macOS:
+//! whole request bounded by `timeout`. Windows: WinHTTP. macOS, Linux:
 //! `/usr/bin/curl` with fixed arguments.
 //!
 //! `UPDATE_KIND: UpdateKind` — how a downloaded update is installed:
 //! Windows swaps the exe in place, macOS opens the release page (a signed
 //! bundle can't be replaced file by file yet).
+//! Linux opens the release page too.
 
 use crate::gfx::Color;
 
@@ -196,7 +198,7 @@ pub enum NetError {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum UpdateKind {
     /// Download, verify, replace the exe, restart.
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    #[cfg_attr(any(target_os = "macos", target_os = "linux"), allow(dead_code))]
     InPlace,
     /// Open the release page in the browser.
     #[cfg_attr(windows, allow(dead_code))]
@@ -210,6 +212,8 @@ pub use self::windows::*;
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "linux")]
+pub use self::linux::*;
 
 #[cfg(target_os = "macos")]
 mod macos;
