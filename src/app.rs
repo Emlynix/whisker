@@ -344,6 +344,12 @@ fn device_name(device: Option<&str>) -> String {
     }
 }
 
+/// Name of an "other mouse": what it reports, else the generic name.
+fn other_name(info: Option<&DeviceInfo>) -> String {
+    let product = info.map(|i| i.product.clone()).filter(|p| !p.is_empty());
+    product.unwrap_or_else(|| tr(T::GenericMouse).into())
+}
+
 /// Dialog rows for detected mice; an unknown one maps to "statistics only".
 fn detect_rows(mice: &[DeviceInfo]) -> Vec<DetectRow> {
     mice.iter()
@@ -519,13 +525,17 @@ fn key_action(vk: u16, m: Mods, focus: Option<Focus>, acts: &[Act], caps: &Caps,
     }
 }
 
-/// Text for "Copy for support": version, the Mouse tab's rows and the
-/// raw status. Pasted into public issues, so the serial number is left
-/// out and a Bluetooth address keeps only its last two bytes.
-fn support_text(rows: &[(T, String)], status: &str) -> String {
-    let mut lines = vec![format!("{} {}", crate::APP_NAME, env!("CARGO_PKG_VERSION"))];
+/// Text for "Copy for support": version, OS, the Mouse tab's rows and
+/// the raw status. Pasted into public issues, so the serial number is
+/// left out and a Bluetooth address keeps only its last two bytes. The
+/// caller builds it in English (`i18n::with_lang`).
+fn support_text(rows: &[(T, String)], status: &str, os: &str) -> String {
+    let mut lines = vec![format!("{} {}", crate::APP_NAME, env!("CARGO_PKG_VERSION")), format!("OS: {os}")];
     let shared = rows.iter().filter(|(k, _)| *k != T::DevSerial);
-    lines.extend(shared.map(|(k, v)| format!("{}: {}", tr(*k), mask_address(v))));
+    lines.extend(shared.map(|(k, v)| {
+        let v = if v.is_empty() { tr(T::NotReported).to_string() } else { mask_address(v) };
+        format!("{}: {v}", tr(*k))
+    }));
     if !status.is_empty() {
         lines.push(format!("{}: {status}", tr(T::DevStatus)));
     }
@@ -1143,6 +1153,20 @@ impl Controller {
 
     /// Rows of the Device page from the catalogue, USB identity and status.
     fn refresh_device(&mut self) {
+        // "Other mouse": count only that mouse, not every mouse connected,
+        // and show the name it reports.
+        if self.cfg.device.as_deref().and_then(devices::by_id).is_none() {
+            let info = self.chosen_detected().cloned();
+            self.stats.set_vendor(info.as_ref().map(|i| i.vid));
+            self.view.device_name = other_name(info.as_ref());
+        }
+        self.view.device = self.device_view();
+        window::invalidate();
+    }
+
+    /// Mouse tab rows from the catalogue, USB identity and status, in the
+    /// current language.
+    fn device_view(&self) -> DeviceView {
         let model = self.cfg.device.as_deref().and_then(devices::by_id);
         // With a driver: the opened interface; otherwise the detected entry.
         let owned = match model {
@@ -1153,17 +1177,8 @@ impl Controller {
         let mut rows: Vec<(T, String)> = Vec::new();
         let mut status = String::new();
 
-        // "Other mouse": count only that mouse, not every mouse connected.
-        if model.is_none() {
-            self.stats.set_vendor(info.map(|i| i.vid));
-        }
-
-        // "Other mouse": show the name the detected mouse reports.
-        if model.is_none() {
-            let product = info.map(|i| i.product.clone()).filter(|p| !p.is_empty());
-            self.view.device_name = product.unwrap_or_else(|| tr(T::GenericMouse).into());
-        }
-        rows.push((T::DevModel, self.view.device_name.clone()));
+        let name = if model.is_none() { other_name(info) } else { self.view.device_name.clone() };
+        rows.push((T::DevModel, name));
         if let Some(m) = model {
             rows.push((T::DevSupport, support_badge(m.support).0.into()));
             let link = info.and_then(|i| m.link_of(i.pid)).map(|l| match l {
@@ -1204,8 +1219,7 @@ impl Controller {
         let offline = driven && !self.view.connected && info.is_some();
         let experimental = model.is_some_and(|m| m.support == Support::Experimental);
         let firmware = rows.iter().find(|(k, _)| *k == T::DevFirmware).map(|(_, v)| v.clone()).unwrap_or_default();
-        self.view.device = DeviceView { rows, firmware, status, offline, experimental };
-        window::invalidate();
+        DeviceView { rows, firmware, status, offline, experimental }
     }
 
     // ---- buttons ----
@@ -1318,8 +1332,12 @@ impl Controller {
 
     /// Puts the Mouse tab's facts on the clipboard for a bug report.
     fn copy_diagnostics(&mut self) {
-        let d = &self.view.device;
-        if window::set_clipboard(&support_text(&d.rows, &d.status)) {
+        // English for public issues, whatever the UI language.
+        let text = i18n::with_lang(Lang::En, || {
+            let d = self.device_view();
+            support_text(&d.rows, &d.status, &platform::os_version())
+        });
+        if window::set_clipboard(&text) {
             self.show_toast(tr(T::Copied).into(), None);
         }
     }
@@ -1969,11 +1987,12 @@ mod tests {
             (T::DevConnection, "Bluetooth LE · B6:6B:18:D7:1E:00".to_string()),
             (T::DevSerial, "SN12345678".to_string()),
         ];
-        let text = support_text(&rows, "01 10");
+        let text = support_text(&rows, "01 10", "Windows 11 26300");
         assert!(!text.contains("SN12345678"));
         assert!(text.contains("Bluetooth LE · XX:XX:XX:XX:1E:00"));
         assert!(!text.contains("B6:6B"));
         assert!(text.contains("Lionel") && text.contains("01 10"));
+        assert!(text.contains("OS: Windows 11 26300"));
     }
 
     #[test]

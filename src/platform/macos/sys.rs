@@ -1,7 +1,7 @@
 //! System queries: user folders, UI language, light/dark setting, clock.
 
 use objc2_app_kit::NSWorkspace;
-use objc2_foundation::{NSCalendar, NSCalendarUnit, NSDate, NSHomeDirectory, NSLocale, NSString, NSTemporaryDirectory, NSURL, NSUserDefaults};
+use objc2_foundation::{NSCalendar, NSCalendarUnit, NSDate, NSHomeDirectory, NSLocale, NSProcessInfo, NSString, NSTemporaryDirectory, NSURL, NSUserDefaults};
 use std::path::PathBuf;
 
 /// Global default that holds `"Dark"` while the system uses dark mode.
@@ -52,6 +52,12 @@ pub fn open_url(url: &str) -> bool {
         return false;
     };
     NSWorkspace::sharedWorkspace().openURL(&u)
+}
+
+/// OS name and version for bug reports, e.g. `"macOS 15.1.0"`.
+pub fn os_version() -> String {
+    let v = NSProcessInfo::processInfo().operatingSystemVersion();
+    format!("macOS {}.{}.{}", v.majorVersion, v.minorVersion, v.patchVersion)
 }
 
 /// Local date as `(year, month, day)`.

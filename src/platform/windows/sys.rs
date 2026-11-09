@@ -4,7 +4,7 @@ use super::win::{Folder, known_folder, wide};
 use std::path::PathBuf;
 use windows_sys::Win32::Foundation::SYSTEMTIME;
 use windows_sys::Win32::Globalization::{GetUserDefaultUILanguage, LCIDToLocaleName};
-use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
+use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ, RegGetValueW};
 use windows_sys::Win32::System::SystemInformation::GetLocalTime;
 
 const PERSONALIZE_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
@@ -54,6 +54,31 @@ pub fn open_url(url: &str) -> bool {
     let (verb, file) = (wide("open"), wide(url));
     let r = unsafe { ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), file.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL) };
     r as isize > SHELL_OK
+}
+
+/// OS name and build for bug reports, e.g. `"Windows 11 26300"`. The
+/// registry's ProductName still says "Windows 10" on 11, so the build
+/// number decides.
+pub fn os_version() -> String {
+    const KEY: &str = "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion";
+    const BUILD: &str = "CurrentBuild";
+    /// First build of Windows 11.
+    const WIN11_BUILD: u32 = 22000;
+    const CHARS: usize = 32;
+
+    let (key, name) = (wide(KEY), wide(BUILD));
+    let mut buf = [0u16; CHARS];
+    let mut size = (CHARS * size_of::<u16>()) as u32;
+    let r = unsafe {
+        RegGetValueW(HKEY_LOCAL_MACHINE, key.as_ptr(), name.as_ptr(), RRF_RT_REG_SZ, std::ptr::null_mut(), buf.as_mut_ptr().cast(), &mut size)
+    };
+    if r != 0 {
+        return "Windows".into();
+    }
+    let len = buf.iter().position(|&c| c == 0).unwrap_or(CHARS);
+    let build = String::from_utf16_lossy(&buf[..len]);
+    let major = if build.parse::<u32>().is_ok_and(|b| b >= WIN11_BUILD) { 11 } else { 10 };
+    format!("Windows {major} {build}")
 }
 
 /// Local date as `(year, month, day)`.

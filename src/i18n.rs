@@ -328,6 +328,16 @@ pub fn tr(k: T) -> &'static str {
     lang().table()[k as usize]
 }
 
+/// Runs `f` with texts in `l`, then restores the UI language; e.g. a
+/// support report in English (UI thread only).
+pub fn with_lang<R>(l: Lang, f: impl FnOnce() -> R) -> R {
+    let ui = lang();
+    set_lang(l);
+    let r = f();
+    set_lang(ui);
+    r
+}
+
 /// Replaces each `{}` with the next argument: `fill("{} of {}", &["2", "6"])`.
 pub fn fill(s: &str, args: &[&str]) -> String {
     let mut out = String::new();

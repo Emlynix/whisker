@@ -20,6 +20,8 @@
 //! - `user_locale() -> Option<String>`: UI language as a locale name,
 //!   e.g. `"sk-SK"`; `i18n` maps it to a `Lang`.
 //! - `today() -> (i64, i64, i64)`: local date as (year, month, day).
+//! - `os_version() -> String`: OS name and version for bug reports, e.g.
+//!   `"Windows 11 26300"`, `"macOS 15.1.0"`.
 //! - `open_url(url) -> bool`: opens an `http(s)` link in the default
 //!   browser; any other scheme is refused (`is_web_url`).
 //!
@@ -161,5 +163,13 @@ mod tests {
         assert!(!is_web_url("file:///C:/Windows/System32/calc.exe"));
         assert!(!is_web_url(r"C:\Windows\notepad.exe"));
         assert!(!is_web_url("https://x.y/a b"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn os_version_names_windows_and_build() {
+        let v = super::os_version();
+        assert!(v.starts_with("Windows 1"), "{v}");
+        assert!(v.rsplit(' ').next().is_some_and(|b| b.parse::<u32>().is_ok()), "{v}");
     }
 }
