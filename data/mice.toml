@@ -24,6 +24,8 @@ id = logitech
 name = "Logitech"
 family = hidpp
 auto = 0x046D
+# Checked on hardware: name, firmware, battery (2026-11-09).
+verified = "M705"
 
 [[brand]]
 id = razer

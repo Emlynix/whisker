@@ -658,7 +658,7 @@ fn name_lines(name: &str, width: f32, size: Size) -> (String, Option<String>) {
 
     // Last break (after a space or "/") whose first line still fits.
     let breaks = name.char_indices().filter(|&(_, c)| c == ' ' || c == '/').map(|(i, c)| i + c.len_utf8());
-    let Some(at) = breaks.filter(|&i| text_w(name[..i].trim_end(), size) <= width).last() else {
+    let Some(at) = breaks.rev().find(|&i| text_w(name[..i].trim_end(), size) <= width) else {
         return (name.to_string(), None);
     };
     (name[..at].trim_end().to_string(), Some(name[at..].trim_start().to_string()))

@@ -809,8 +809,11 @@ fn device_rows(f: &MouseFacts) -> DeviceView {
 
     let name = if model.is_none() { other_name(info) } else { f.name.clone() };
     rows.push((T::DevModel, name));
+    // What the mouse calls itself decides verified auto-detected models.
+    let reported = f.ident.as_ref().map_or("", |i| i.name.as_str());
+    let support = model.map(|m| devices::support_of(m, reported));
     if let Some(m) = model {
-        rows.push((T::DevSupport, support_badge(m.support).0.into()));
+        rows.push((T::DevSupport, support_badge(support.unwrap_or(m.support)).0.into()));
         let link = info.and_then(|i| m.link_of(i.pid)).map(|l| match l {
             Link::Receiver => tr(T::LinkReceiver).to_string(),
             Link::Cable => tr(T::LinkCable).to_string(),
@@ -847,7 +850,7 @@ fn device_rows(f: &MouseFacts) -> DeviceView {
     // Only driver-based or Bluetooth mice have a connection state to report.
     let driven = model.is_some_and(|m| m.family != Family::NoDriver) || info.is_some_and(|i| i.bt_address.is_some());
     let offline = driven && !f.connected && info.is_some();
-    let experimental = model.is_some_and(|m| m.support == Support::Experimental);
+    let experimental = support == Some(Support::Experimental);
     let firmware = rows.iter().find(|(k, _)| *k == T::DevFirmware).map(|(_, v)| v.clone()).unwrap_or_default();
     DeviceView { rows, firmware, status, offline, experimental }
 }
@@ -2958,6 +2961,21 @@ mod tests {
         // Back to normal, or not reported: nothing to send.
         assert!(restore_cmds(&r, Some(1600), Some(1000)).is_empty());
         assert!(restore_cmds(&r, None, None).is_empty());
+    }
+
+    #[test]
+    fn verified_m705_is_not_experimental() {
+        let logitech = devices::by_id("logitech/auto").unwrap();
+        let ident = |name: &str| Some(Ident { name: name.into(), ..Ident::default() });
+        let facts = |id| MouseFacts { model: Some(logitech), info: None, ident: id, status: None, name: String::new(), connected: true };
+
+        let m705 = device_rows(&facts(ident("Logitech Marathon Mouse/Performance Plus M705")));
+        assert!(!m705.experimental);
+        assert!(m705.rows.contains(&(T::DevSupport, tr(T::BadgeFull).into())));
+
+        assert!(device_rows(&facts(ident("G502 HERO"))).experimental);
+        // Not yet identified: still experimental.
+        assert!(device_rows(&facts(None)).experimental);
     }
 
     #[test]

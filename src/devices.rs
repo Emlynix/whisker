@@ -18,7 +18,9 @@
 //!
 //! - brand: `id`, `name` or `label` (`oem`), `in_names` (`true`: the
 //!   brand is part of the model names), `family`, `auto` (vendor id of
-//!   "Other <brand> mouse (auto-detect)"; none = no such entry).
+//!   "Other <brand> mouse (auto-detect)"; none = no such entry),
+//!   `verified` (model words checked on hardware through that entry,
+//!   e.g. `"M705"`: such a mouse gets full support).
 //! - mouse: `brand`, `model`, `vid`, `support` (`full`, `experimental`,
 //!   `partial`, `stats-only`) are required; `pids` (each with an optional
 //!   `receiver` / `cable`; none = only by vendor id), `family` (default:
@@ -193,6 +195,8 @@ pub struct Brand {
     pub label: Option<T>,
     /// The brand is part of the model names ("Dream Machines DM5 Blink").
     pub in_names: bool,
+    /// Models verified through the auto-detect entry ("M705").
+    pub verified: Vec<&'static str>,
     pub models: Vec<Model>,
 }
 
@@ -264,7 +268,7 @@ fn build() -> Vec<Brand> {
 /// Records -> brands; each brand with `auto` ends in its Auto entry.
 fn from_data(d: data::Data<'static>) -> Vec<Brand> {
     let data::Data { brands: recs, mice } = d;
-    let mut brands: Vec<Brand> = recs.iter().map(|r| Brand { id: r.id, name: r.name, label: r.label, in_names: r.in_names, models: Vec::new() }).collect();
+    let mut brands: Vec<Brand> = recs.iter().map(|r| Brand { id: r.id, name: r.name, label: r.label, in_names: r.in_names, verified: r.verified.clone(), models: Vec::new() }).collect();
 
     for m in mice {
         let Some(i) = recs.iter().position(|r| r.id == m.brand) else {
@@ -338,7 +342,7 @@ fn other_brand() -> Brand {
         rates: Vec::new(),
         buttons: None,
     };
-    Brand { id: "other", name: "", label: Some(T::OtherBrand), in_names: false, models: vec![other] }
+    Brand { id: "other", name: "", label: Some(T::OtherBrand), in_names: false, verified: Vec::new(), models: vec![other] }
 }
 
 /// Distinct families of the catalogue entries with this vendor id, in
@@ -380,6 +384,18 @@ pub fn default_model() -> &'static Model {
 
 pub fn brand_of(m: &Model) -> &'static Brand {
     brands().iter().find(|b| b.id == m.brand).unwrap_or(&brands()[0])
+}
+
+/// Support of the opened mouse: an auto-detect entry is experimental
+/// unless the name it reports holds a model the brand lists as verified
+/// ("Logitech Marathon Mouse/Performance Plus M705" -> M705).
+pub fn support_of(m: &Model, reported: &str) -> Support {
+    if m.entry != Entry::Auto {
+        return m.support;
+    }
+    let words: Vec<&str> = reported.split(|c: char| !c.is_ascii_alphanumeric()).collect();
+    let verified = brand_of(m).verified.iter().any(|v| words.iter().any(|w| w.eq_ignore_ascii_case(v)));
+    if verified { Support::Full } else { m.support }
 }
 
 /// A stored model id, old ids too; `None` for "other mouse" and unknown ids.
@@ -530,6 +546,16 @@ mod tests {
         assert_eq!(by_id("eternico/aet-ms480b").unwrap().support, Support::Partial);
         assert_eq!(by_id("eternico/aet-mvs490b").unwrap().support, Support::StatsOnly);
         assert_eq!(brands()[0].best(), Support::Full);
+    }
+
+    #[test]
+    fn verified_models_of_auto_entries() {
+        let logitech = by_id("logitech/auto").unwrap();
+        assert_eq!(support_of(logitech, "Logitech Marathon Mouse/Performance Plus M705"), Support::Full);
+        assert_eq!(support_of(logitech, "G502 HERO"), Support::Experimental);
+        // Whole words only: "M7050" is another mouse.
+        assert_eq!(support_of(logitech, "Wireless Mouse M7050"), Support::Experimental);
+        assert_eq!(support_of(logitech, ""), Support::Experimental);
     }
 
     #[test]

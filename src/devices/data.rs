@@ -35,6 +35,8 @@ pub(super) struct BrandRec<'a> {
     pub(super) family: Family,
     /// Vendor id of "Other <brand> mouse (auto-detect)", if any.
     pub(super) auto: Option<u16>,
+    /// Model words verified on hardware through the auto entry.
+    pub(super) verified: Vec<&'a str>,
 }
 
 /// One `[[mouse]]` block.
@@ -204,6 +206,7 @@ fn strip_comment(s: &str) -> &str {
 
 fn brand<'a>(block: &Block<'a>) -> Result<BrandRec<'a>, ParseError> {
     let (mut id, mut name, mut label, mut in_names, mut family, mut auto) = (None, None, None, false, None, None);
+    let mut verified = Vec::new();
     for f in &block.fields {
         let at = |msg: String| fail(f.line, format!("{}: {msg}", f.key));
         let v = f.value;
@@ -214,6 +217,7 @@ fn brand<'a>(block: &Block<'a>) -> Result<BrandRec<'a>, ParseError> {
             "in_names" => in_names = lookup(&BOOLS, v).map_err(at)?,
             "family" => family = Some(lookup(&FAMILIES, v).map_err(at)?),
             "auto" => auto = Some(int(v).map_err(at)?),
+            "verified" => verified = list(v, string).map_err(at)?,
             key => return Err(fail(f.line, format!("unknown brand key {key}"))),
         }
     }
@@ -224,7 +228,7 @@ fn brand<'a>(block: &Block<'a>) -> Result<BrandRec<'a>, ParseError> {
     if name.is_none() && label.is_none() {
         return Err(missing("name or label"));
     }
-    Ok(BrandRec { id, name: name.unwrap_or(""), label, in_names, family, auto })
+    Ok(BrandRec { id, name: name.unwrap_or(""), label, in_names, family, auto, verified })
 }
 
 fn mouse<'a>(block: &Block<'a>) -> Result<MouseRec<'a>, ParseError> {
