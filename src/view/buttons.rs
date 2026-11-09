@@ -352,7 +352,7 @@ pub(super) fn macros_page(f: &mut Frame, v: &View) {
     } else {
         tr(T::MacroEmpty).into()
     };
-    let color = if events.is_empty() { th().faint } else { th().text };
+    let color = if events.is_empty() { th().subtle } else { th().text };
     f.g.text(&text, Rect::new(inner.x, inner.y, inner.w, inner.h - 34.0), Size::Body, Weight::Normal, Align::Wrap, color);
 
     // Macros are plain data on disk and in the mouse: warn before passwords end up there.

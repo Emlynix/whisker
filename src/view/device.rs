@@ -65,7 +65,7 @@ pub(super) fn device_page(f: &mut Frame, v: &View) {
     for (i, (caption, value)) in d.rows.iter().enumerate() {
         let y = card.y + 8.0 + i as f32 * ROW;
         f.caption_in(tr(*caption), card.x + PAD, y + 6.0, 190.0);
-        let (text, color) = if value.is_empty() { (tr(T::NotReported).to_string(), th().faint) } else { (value.clone(), th().text) };
+        let (text, color) = if value.is_empty() { (tr(T::NotReported).to_string(), th().subtle) } else { (value.clone(), th().text) };
         let r = Rect::new(card.x + 230.0, y, card.w - 250.0, ROW);
         let size = Size::Body;
         f.g.text(&text, r, size, Weight::Normal, Align::Left, color);
@@ -97,7 +97,7 @@ fn diagnostics(f: &mut Frame, d: &DeviceView, y: f32) {
     let card = Rect::new(X0, y, CW, 56.0);
     f.card(card);
     f.caption(tr(T::DevStatus), card.x + PAD, card.y + 8.0);
-    let (text, color) = if d.status.is_empty() { (tr(T::NotReported), th().faint) } else { (d.status.as_str(), th().text) };
+    let (text, color) = if d.status.is_empty() { (tr(T::NotReported), th().subtle) } else { (d.status.as_str(), th().text) };
     let r = Rect::new(card.x + PAD, card.y + 26.0, card.w - 2.0 * PAD - BTN_W - 12.0, 22.0);
     f.g.text(text, r, Size::Caption, Weight::Normal, Align::Left, color);
     let btn = Rect::new(card.x + card.w - PAD - BTN_W + 8.0, card.y + 10.0, BTN_W - 8.0, 36.0);

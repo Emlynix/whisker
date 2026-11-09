@@ -495,7 +495,7 @@ impl Frame<'_> {
         let top = Rect::new(r.x, r.y + pad, r.w, r.h / 2.0);
         let bottom = Rect::new(r.x, r.y + r.h / 2.0 + pad / 2.0, r.w, r.h / 2.0 - pad - 2.0);
         self.g.text(title, top, title_size, Weight::Semibold, Align::Center, color);
-        self.g.text(sub, bottom, sub_size, Weight::Normal, Align::Center, th().faint);
+        self.g.text(sub, bottom, sub_size, Weight::Normal, Align::Center, th().subtle);
     }
 }
 
@@ -599,7 +599,7 @@ fn header_status(f: &mut Frame, v: &View) {
     let offline = v.page.configures() && !v.connected;
     let (text, dot, alpha) = match v.sync {
         _ if offline => (tr(T::OfflineBanner), th().warn, 255),
-        Sync::Waiting => (tr(T::SyncWaiting), th().faint, 255),
+        Sync::Waiting => (tr(T::SyncWaiting), th().subtle, 255),
         Sync::Saved(a) => (tr(T::SyncSaved), th().good, a),
         Sync::Hidden => return,
     };
@@ -687,7 +687,7 @@ fn icon(g: &Gfx, page: Page, x: f32, y: f32, c: Color) {
                 let ((x0, y0), (x1, _)) = (p(3.0, b), p(21.0, b));
                 g.line(x0, y0, x1, y0, w, c);
                 let (kx, ky) = p(knob, b);
-                g.circle(kx, ky, 3.0 * s + 1.0, th().side);
+                g.circle(kx, ky, 3.0 * s + 1.0, th().bg);
                 g.ring(kx, ky, 3.0 * s, w, c);
             }
         }
@@ -726,7 +726,8 @@ fn mouse_logo(g: &Gfx, x: f32, y: f32) {
 // ---- sidebar -------------------------------------------------------------
 
 fn sidebar(f: &mut Frame, v: &View) {
-    f.g.fill(Rect::new(0.0, 0.0, SIDE_W, HEIGHT), 0.0, th().side);
+    // Same background as the title bar and page, split by a 1 px line.
+    f.g.fill(Rect::new(SIDE_W - 1.0, 0.0, 1.0, HEIGHT), 0.0, th().border);
 
     const BOTTOM: f32 = HEIGHT - 14.0;
     const ITEM_H: f32 = NAV_STEP - 4.0;
@@ -742,7 +743,7 @@ fn sidebar(f: &mut Frame, v: &View) {
     let status = (v.caps.battery || v.has_battery).then(|| Rect::new(sub.x, sub.y + 18.0, sub.w, 16.0));
     let area_h = status.map_or(sub.h, |r| r.y + r.h - sub.y);
     let hot = f.button(Act::Nav(Page::Mouse), Rect::new(sub.x, sub.y - 2.0, sub.w, area_h + 4.0));
-    let sub_c = if hot { th().accent } else { th().faint };
+    let sub_c = if hot { th().accent } else { th().subtle };
     f.g.text(&v.device_name, sub, Size::Caption, Weight::Normal, Align::Left, sub_c);
     if let Some(r) = status {
         status_line(f, v, r);
@@ -965,8 +966,8 @@ fn dpi_single(f: &mut Frame, v: &View) {
     f.hits.push(Hit { act: Act::BasicDpi, rect: area, kind: Kind::Slider { x0, x1, steps: vals.len() } });
 
     let ends = Rect::new(x0, cy + 10.0, x1 - x0, 18.0);
-    f.g.text(&vals[0].to_string(), ends, Size::Caption, Weight::Normal, Align::Left, th().faint);
-    f.g.text(&vals[vals.len() - 1].to_string(), ends, Size::Caption, Weight::Normal, Align::Right, th().faint);
+    f.g.text(&vals[0].to_string(), ends, Size::Caption, Weight::Normal, Align::Left, th().subtle);
+    f.g.text(&vals[vals.len() - 1].to_string(), ends, Size::Caption, Weight::Normal, Align::Right, th().subtle);
 }
 
 fn dpi(f: &mut Frame, v: &View) {
@@ -1205,7 +1206,7 @@ fn stats(f: &mut Frame, v: &View) {
     let plot = Rect::new(card.x + 16.0, card.y + 40.0, card.w - 64.0, card.h - 72.0);
     if v.chart.len() < 2 {
         let msg = tr(T::ChartEmpty);
-        f.g.text(msg, plot, Size::Body, Weight::Normal, Align::Center, th().faint);
+        f.g.text(msg, plot, Size::Body, Weight::Normal, Align::Center, th().subtle);
         return;
     }
 
@@ -1213,7 +1214,7 @@ fn stats(f: &mut Frame, v: &View) {
         let y = plot.y + plot.h * (1.0 - pct / 100.0);
         f.g.line(plot.x, y, plot.x + plot.w, y, 1.0, th().border);
         let r = Rect::new(plot.x + plot.w + 6.0, y - 8.0, 40.0, 16.0);
-        f.g.text(label, r, Size::Caption, Weight::Normal, Align::Left, th().faint);
+        f.g.text(label, r, Size::Caption, Weight::Normal, Align::Left, th().subtle);
     }
 
     // Time axis: a tick and a label per day (hours for "today").
@@ -1223,7 +1224,7 @@ fn stats(f: &mut Frame, v: &View) {
         f.g.line(x, plot.y + plot.h, x, plot.y + plot.h + 4.0, 1.0, th().border);
         let lx = (x - LABEL_W / 2.0).clamp(plot.x - 8.0, plot.x + plot.w + 8.0 - LABEL_W);
         let r = Rect::new(lx, plot.y + plot.h + 6.0, LABEL_W, 16.0);
-        f.g.text(label, r, Size::Caption, Weight::Normal, Align::Center, th().faint);
+        f.g.text(label, r, Size::Caption, Weight::Normal, Align::Center, th().subtle);
     }
 
     let pts: Vec<(f32, f32)> = v.chart.iter().map(|&(t, pct)| (plot.x + t * plot.w, plot.y + plot.h * (1.0 - pct / 100.0))).collect();
@@ -1263,7 +1264,7 @@ fn settings(f: &mut Frame, v: &View) {
     let r = Rect::new(card.x + 18.0, card.y + 14.0, card.w - 36.0, 34.0);
     f.g.text(tr(T::AboutTray), r, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
     let r = Rect::new(card.x + 18.0, card.y + 58.0, card.w - 36.0, 18.0);
-    f.g.text(&fill(tr(T::DataDir), &[&v.data_dir]), r, Size::Caption, Weight::Normal, Align::Left, th().faint);
+    f.g.text(&fill(tr(T::DataDir), &[&v.data_dir]), r, Size::Caption, Weight::Normal, Align::Left, th().subtle);
 }
 
 fn setup_dialog(f: &mut Frame, v: &View) {
