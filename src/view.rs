@@ -237,6 +237,25 @@ pub enum Sync {
     Saved(u8),
 }
 
+/// Keyboard focus: a hit of the frame by position, since the same act
+/// can sit in several places (logo and About item, mouse name and tab).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Focus {
+    pub index: usize,
+    pub act: Act,
+}
+
+impl Focus {
+    /// Position of the focused hit among `acts`; `None` if it is gone.
+    /// The same position if it still holds the act, else its first place.
+    pub fn locate(self, acts: &[Act]) -> Option<usize> {
+        if acts.get(self.index) == Some(&self.act) {
+            return Some(self.index);
+        }
+        acts.iter().position(|a| *a == self.act)
+    }
+}
+
 /// Bottom message, e.g. "All buttons reset · Undo".
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Toast {
@@ -341,8 +360,8 @@ pub struct View {
     pub basic: BasicView,
     /// The mouse reports a battery level.
     pub has_battery: bool,
-    /// Keyboard focus ring (Tab), on the hit with this act.
-    pub focus: Option<Act>,
+    /// Keyboard focus ring (Tab).
+    pub focus: Option<Focus>,
     pub toast: Option<Toast>,
     pub sync: Sync,
     pub dialog: Option<Dialog>,
@@ -572,8 +591,9 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
 }
 
 /// Keyboard focus: a ring around the focused hit of this frame.
-fn focus_ring(f: &Frame, focus: Option<Act>) {
-    let Some(h) = focus.and_then(|a| f.hits.iter().find(|h| h.act == a)) else {
+fn focus_ring(f: &Frame, focus: Option<Focus>) {
+    let acts: Vec<Act> = f.hits.iter().map(|h| h.act).collect();
+    let Some(h) = focus.and_then(|x| x.locate(&acts)).map(|i| f.hits[i]) else {
         return;
     };
     let r = Rect::new(h.rect.x - 3.0, h.rect.y - 3.0, h.rect.w + 6.0, h.rect.h + 6.0);

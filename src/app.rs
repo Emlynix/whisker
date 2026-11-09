@@ -28,7 +28,7 @@ use crate::theme::{self, THEMES};
 use crate::store::{self, AppConfig};
 use crate::tray::{Level, TrayAction};
 use crate::view::{
-    self, Act, Badge, BasicView, Charge, DelayMode, Detect, DetectRow, DeviceView, Dialog, Hit, Page, Picker, StageView, Sync,
+    self, Act, Badge, BasicView, Charge, DelayMode, Detect, DetectRow, DeviceView, Dialog, Focus, Hit, Page, Picker, StageView, Sync,
     Toast, View, Web,
 };
 use std::cell::RefCell;
@@ -496,9 +496,9 @@ enum Key {
     Ignore,
 }
 
-fn key_action(vk: u16, m: Mods, focus: Option<Act>, acts: &[Act], caps: &Caps, cover: Cover) -> Key {
+fn key_action(vk: u16, m: Mods, focus: Option<Focus>, acts: &[Act], caps: &Caps, cover: Cover) -> Key {
     // A focus left over from another page or dialog is no focus.
-    let focus = focus.filter(|a| acts.contains(a));
+    let focus = focus.and_then(|x| x.locate(acts)).map(|i| acts[i]);
     match vk {
         VK_ESCAPE => Key::Close,
         VK_TAB => Key::Focus(if m.shift { Step::Prev } else { Step::Next }),
@@ -567,22 +567,18 @@ fn page_shortcut(vk: u16, m: Mods, caps: &Caps) -> Option<Page> {
 
 /// Next or previous clickable element, wrapping; the first Tab starts at
 /// the beginning (Shift+Tab at the end).
-fn next_focus(acts: &[Act], cur: Option<Act>, step: Step) -> Option<Act> {
+fn next_focus(acts: &[Act], cur: Option<Focus>, step: Step) -> Option<Focus> {
     let n = acts.len();
     if n == 0 {
         return None;
     }
-    let Some(i) = cur.and_then(|a| acts.iter().position(|x| *x == a)) else {
-        return Some(match step {
-            Step::Next => acts[0],
-            Step::Prev => acts[n - 1],
-        });
+    let j = match (cur.and_then(|f| f.locate(acts)), step) {
+        (None, Step::Next) => 0,
+        (None, Step::Prev) => n - 1,
+        (Some(i), Step::Next) => (i + 1) % n,
+        (Some(i), Step::Prev) => (i + n - 1) % n,
     };
-    let j = match step {
-        Step::Next => (i + 1) % n,
-        Step::Prev => (i + n - 1) % n,
-    };
-    Some(acts[j])
+    Some(Focus { index: j, act: acts[j] })
 }
 
 /// Opacity of "Saved to mouse" `e` after the confirmation; `None` once gone.
@@ -602,9 +598,7 @@ fn hook_draw(g: &mut Gfx, hot: Option<Act>) -> Vec<Hit> {
         // Tab order: each act once, in drawing order.
         c.acts.clear();
         for h in &hits {
-            if !c.acts.contains(&h.act) {
-                c.acts.push(h.act);
-            }
+            c.acts.push(h.act);
         }
         hits
     })
@@ -1498,7 +1492,7 @@ impl Controller {
             Step::Next => (i + 1).min(n.saturating_sub(1)),
             Step::Prev => i.saturating_sub(1),
         };
-        match self.view.focus.filter(|a| self.acts.contains(a)) {
+        match self.view.focus.and_then(|x| x.locate(&self.acts)).map(|i| self.acts[i]) {
             Some(Act::Slider(i)) => {
                 let Some(s) = self.view.stages.get(i) else {
                     return false;
@@ -1908,11 +1902,35 @@ mod tests {
     #[test]
     fn tab_focus_wraps() {
         let acts = [Act::Nav(Page::Overview), Act::About, Act::Undo];
-        assert_eq!(next_focus(&acts, None, Step::Next), Some(Act::Nav(Page::Overview)));
-        assert_eq!(next_focus(&acts, None, Step::Prev), Some(Act::Undo));
-        assert_eq!(next_focus(&acts, Some(Act::Undo), Step::Next), Some(Act::Nav(Page::Overview)));
-        assert_eq!(next_focus(&acts, Some(Act::Nav(Page::Overview)), Step::Prev), Some(Act::Undo));
+        let at = |i: usize| Some(Focus { index: i, act: acts[i] });
+        assert_eq!(next_focus(&acts, None, Step::Next), at(0));
+        assert_eq!(next_focus(&acts, None, Step::Prev), at(2));
+        assert_eq!(next_focus(&acts, at(2), Step::Next), at(0));
+        assert_eq!(next_focus(&acts, at(0), Step::Prev), at(2));
         assert_eq!(next_focus(&[], None, Step::Next), None);
+    }
+
+    #[test]
+    fn tab_visits_every_hit_once_despite_repeated_acts() {
+        // Settings › General in drawing order: About (logo) and Mouse (name)
+        // repeat further down as the About item and the Mouse tab.
+        let mut acts = vec![Act::About, Act::Nav(Page::Mouse)];
+        acts.extend(view::nav_pages(&devices::MODELS[0].caps).into_iter().map(Act::Nav));
+        acts.extend([Act::About, Act::Nav(Page::General)]);
+        acts.extend([Act::Nav(Page::General), Act::Nav(Page::Appearance), Act::Nav(Page::Mouse), Act::Install, Act::Autostart]);
+
+        let mut seen = Vec::new();
+        let mut f = None;
+        for _ in 0..acts.len() {
+            f = next_focus(&acts, f, Step::Next);
+            seen.push(f.unwrap().index);
+        }
+        assert_eq!(seen, (0..acts.len()).collect::<Vec<_>>());
+        assert!(seen.iter().any(|&i| acts[i] == Act::Autostart));
+
+        // Shift+Tab walks back over the same positions.
+        let back = next_focus(&acts, f, Step::Prev).unwrap();
+        assert_eq!(back.index, acts.len() - 2);
     }
 
     #[test]
@@ -1963,7 +1981,7 @@ mod tests {
         // Tab to "Reset all buttons", Ctrl+1, Enter: must not reset.
         let ctrl = Mods { ctrl: true, ..Mods::default() };
         let caps = devices::MODELS[0].caps;
-        let focus = Some(Act::ResetButtons);
+        let focus = Some(Focus { index: 1, act: Act::ResetButtons });
         let buttons_acts = [Act::Nav(Page::Overview), Act::ResetButtons];
         assert_eq!(key_action(VK_1, ctrl, focus, &buttons_acts, &caps, Cover::Free), Key::Page(Page::Overview));
 
