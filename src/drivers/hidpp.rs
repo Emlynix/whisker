@@ -34,6 +34,11 @@ const DEVICE_SLOTS: [u8; 7] = [DIRECT, 1, 2, 3, 4, 5, 6];
 const ROOT: u8 = 0x00;
 const F_FW: u16 = 0x0003;
 const F_NAME: u16 = 0x0005;
+/// x0003 getFwInfo: entity type in the low nibble; 0 = main application.
+const FW_TYPE_MASK: u8 = 0x0F;
+const FW_MAIN: u8 = 0;
+/// Entities to ask when getDeviceInfo does not answer.
+const FW_ENTITIES: u8 = 1;
 const F_BATTERY_LEVEL: u16 = 0x1000;
 const F_BATTERY_VOLTAGE: u16 = 0x1001;
 const F_BATTERY_UNIFIED: u16 = 0x1004;
@@ -170,11 +175,9 @@ impl Hidpp {
             id.name = String::from_utf8_lossy(&name).trim().to_string();
         }
         if let Some(f) = self.feature(F_FW) {
-            // Entity 0 is normally the main application firmware.
-            if let Some(p) = self.call(f, 1, &[0]).filter(|p| p.len() >= 8) {
-                let prefix = String::from_utf8_lossy(&p[1..4]).trim().to_string();
-                id.firmware = format!("{prefix} {:02X}.{:02X} build {:02X}{:02X}", p[4], p[5], p[6], p[7]);
-            }
+            // Entity 0 may be the bootloader (M705: "BOT"): find the application.
+            let count = self.call(f, 0, &[]).and_then(|p| p.first().copied()).unwrap_or(FW_ENTITIES);
+            id.firmware = (0..count).find_map(|e| self.call(f, 1, &[e]).and_then(|p| main_firmware(&p))).unwrap_or_default();
         }
         id
     }
@@ -241,9 +244,29 @@ impl Hidpp {
     }
 }
 
+/// "RQM 17.01 build 0019" from a getFwInfo reply of the main
+/// application; `None` for a bootloader or hardware entity.
+fn main_firmware(p: &[u8]) -> Option<String> {
+    if p.len() < 8 || p[0] & FW_TYPE_MASK != FW_MAIN {
+        return None;
+    }
+    let prefix = String::from_utf8_lossy(&p[1..4]).trim().to_string();
+    Some(format!("{prefix} {:02X}.{:02X} build {:02X}{:02X}", p[4], p[5], p[6], p[7]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn firmware_is_the_main_application() {
+        // getFwInfo replies of an M705: bootloader first, then the application.
+        let boot = [1, b'B', b'O', b'T', 0x59, 0x00, 0x00, 0x10];
+        let app = [0, b'R', b'Q', b'M', 0x17, 0x01, 0x00, 0x19];
+        assert_eq!(main_firmware(&boot), None);
+        assert_eq!(main_firmware(&app).as_deref(), Some("RQM 17.01 build 0019"));
+        assert_eq!(main_firmware(&app[..4]), None);
+    }
 
     #[test]
     fn request_layout() {

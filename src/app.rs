@@ -335,6 +335,7 @@ fn initial_view(cfg: &AppConfig, ask_setup: bool) -> View {
         steps: protocol::dpi_steps(),
         polling: rate_index(cfg.polling),
         measured: None,
+        last_rate: None,
         today_clicks: "0".into(),
         today_distance: "0 m".into(),
         tiles: Vec::new(),
@@ -454,6 +455,7 @@ fn forget_mouse(v: &mut View, caps: Caps) {
     v.connected = false;
     v.access = Access::Granted;
     v.battery = 0;
+    v.last_rate = None;
     v.battery_approx = false;
     v.charge = Charge::Discharging;
     v.has_battery = caps.battery;
@@ -874,6 +876,8 @@ fn device_rows(f: &MouseFacts) -> DeviceView {
     let info = f.info.as_ref();
     let mut rows: Vec<(T, String)> = Vec::new();
     let mut status = String::new();
+    // The mouse's own firmware, for the Overview line.
+    let mut firmware = String::new();
 
     let name = if model.is_none() { other_name(info) } else { f.name.clone() };
     rows.push((T::DevModel, name));
@@ -898,7 +902,19 @@ fn device_rows(f: &MouseFacts) -> DeviceView {
         rows.push((T::DevUsbId, format!("{:04X}:{:04X}", i.vid, i.pid)));
         rows.push((T::DevManufacturer, i.manufacturer.clone()));
         rows.push((T::DevProduct, i.product.clone()));
-        let fw = ident.map(|d| d.firmware.clone()).filter(|f| !f.is_empty()).unwrap_or_else(|| devices::bcd_version(i.version));
+        let own = ident.map(|d| d.firmware.clone()).filter(|f| !f.is_empty());
+        // Behind a receiver, bcdDevice is the receiver's version, not the mouse's.
+        let receiver = model.and_then(|m| m.link_of(i.pid)) == Some(Link::Receiver);
+        let usb_fw = devices::bcd_version(i.version);
+        let mouses = own.is_some() || !receiver;
+        let fw = match own {
+            Some(fw) => fw,
+            None if receiver => fill(tr(T::ReceiverFw), &[&usb_fw]),
+            None => usb_fw,
+        };
+        if mouses {
+            firmware = fw.clone();
+        }
         rows.push((T::DevFirmware, fw));
         let serial = ident.map(|d| d.serial.clone()).filter(|s| !s.is_empty()).unwrap_or_else(|| i.serial.clone());
         rows.push((T::DevSerial, serial));
@@ -919,7 +935,6 @@ fn device_rows(f: &MouseFacts) -> DeviceView {
     let driven = model.is_some_and(|m| m.family != Family::NoDriver) || info.is_some_and(|i| i.bt_address.is_some());
     let offline = driven && !f.connected && info.is_some();
     let experimental = support == Some(Support::Experimental);
-    let firmware = rows.iter().find(|(k, _)| *k == T::DevFirmware).map(|(_, v)| v.clone()).unwrap_or_default();
     DeviceView { rows, firmware, status, offline, experimental }
 }
 
@@ -2660,6 +2675,8 @@ impl Controller {
         self.view.today_clicks = group(today.clicks());
         self.view.today_distance = distance(today.distance_m);
         self.view.measured = self.stats.measured_hz();
+        // Keep the last value: the card must not blink when the mouse rests.
+        self.view.last_rate = self.view.measured.or(self.view.last_rate);
         self.sync_check();
 
         let t = self.stats.totals(self.period);
@@ -3203,6 +3220,30 @@ mod tests {
         assert!(device_rows(&facts(ident("G502 HERO"))).experimental);
         // Not yet identified: still experimental.
         assert!(device_rows(&facts(None)).experimental);
+    }
+
+    #[test]
+    fn receiver_firmware_is_not_the_mouses() {
+        const UNIFYING: u16 = 0xC52B;
+        let logitech = devices::by_id("logitech/auto").unwrap();
+        let info = DeviceInfo { vid: logitech.vid, pid: UNIFYING, version: 0x1203, ..DeviceInfo::default() };
+        let facts = |fw: &str| MouseFacts {
+            model: Some(logitech),
+            info: Some(info.clone()),
+            ident: Some(Ident { firmware: fw.into(), ..Ident::default() }),
+            status: None,
+            name: String::new(),
+            connected: true,
+        };
+
+        // Only the receiver's bcdDevice known: labelled, not on Overview.
+        let d = device_rows(&facts(""));
+        assert_eq!(d.firmware, "");
+        assert!(d.rows.contains(&(T::DevFirmware, fill(tr(T::ReceiverFw), &["12.03"]))));
+
+        // The mouse reported its own.
+        let d = device_rows(&facts("RQM 17.01 build 0019"));
+        assert_eq!(d.firmware, "RQM 17.01 build 0019");
     }
 
     #[test]

@@ -375,6 +375,8 @@ pub struct View {
     pub polling: usize,
     /// Report rate measured from mouse input, while the mouse moves.
     pub measured: Option<u32>,
+    /// Last rate measured, kept while the mouse rests (Overview card).
+    pub last_rate: Option<u32>,
     pub today_clicks: String,
     pub today_distance: String,
     pub tiles: Vec<(&'static str, String)>,
@@ -1162,7 +1164,7 @@ fn overview(f: &mut Frame, v: &View) {
         stat_card(f, Rect::new(x, y, w, 110.0), tr(T::PollingRate), &hz, &note);
     } else {
         // The mouse doesn't report its rate: show what Raw Input measures.
-        stat_card(f, Rect::new(x, y, w, 110.0), tr(T::Measured), &measured(v), tr(T::PollingRate));
+        rate_card(f, Rect::new(x, y, w, 110.0), v.last_rate);
     }
     let today = fill(tr(T::ClicksMoved), &[&v.today_distance]);
     stat_card(f, Rect::new(x + w + GAP, y, w, 110.0), tr(T::Today), &v.today_clicks, &today);
@@ -1187,6 +1189,37 @@ fn measured(v: &View) -> String {
     v.measured.map_or(UNKNOWN.into(), |hz| format!("{hz} Hz"))
 }
 
+/// Measured rate card: (value, note); no value until the mouse moved.
+fn rate_value(last: Option<u32>) -> (String, &'static str) {
+    match last {
+        Some(hz) => (format!("{hz} Hz"), tr(T::MeasuredMoving)),
+        None => (String::new(), tr(T::MoveMouse)),
+    }
+}
+
+/// "POLLING RATE  125 Hz  Measured while moving", or a muted "Move the
+/// mouse" before the first measurement (no skeleton: nothing is loading).
+fn rate_card(f: &mut Frame, r: Rect, last: Option<u32>) {
+    let (value, note) = rate_value(last);
+    if !value.is_empty() {
+        stat_card(f, r, tr(T::PollingRate), &value, note);
+        return;
+    }
+    f.card(r);
+    f.caption_in(tr(T::PollingRate), r.x + 16.0, r.y + 16.0, r.w - 32.0);
+    let hint = Rect::new(r.x + 16.0, r.y + 34.0, r.w - 32.0, 36.0);
+    f.g.text(note, hint, Size::Large, Weight::Normal, Align::Left, th().muted);
+}
+
+/// "Name · FW 1.77", or the name alone when both don't fit `width`.
+fn device_text(name: &str, fw: &str, width: f32) -> String {
+    let full = format!("{name} · FW {fw}");
+    if fw.is_empty() || text_w(&full, Size::Body) > width {
+        return name.to_string();
+    }
+    full
+}
+
 /// Compact mouse line, e.g. "White Shark Lionel · FW 1.77      Details ›";
 /// opens Settings › Mouse.
 fn device_line(f: &mut Frame, v: &View, y: f32) {
@@ -1195,12 +1228,11 @@ fn device_line(f: &mut Frame, v: &View, y: f32) {
     let hot = f.button(Act::Nav(Page::Mouse), r);
     f.surface(r, if hot { th().hover } else { th().card });
 
-    let fw = &v.device.firmware;
-    let text = if fw.is_empty() { v.device_name.clone() } else { format!("{} · FW {fw}", v.device_name) };
     let details = tr(T::Details);
     let link_c = if hot { th().accent_hover } else { th().accent };
     let link_w = text_w(details, Size::Body) + 20.0;
     let left = Rect::new(r.x + 18.0, r.y, r.w - 52.0 - link_w, H);
+    let text = device_text(&v.device_name, &v.device.firmware, left.w);
     f.g.text(&text, left, Size::Body, Weight::Normal, Align::Left, th().muted);
     let right = Rect::new(r.x + r.w - 34.0 - link_w, r.y, link_w, H);
     f.g.text(details, right, Size::Body, Weight::Semibold, Align::Right, link_c);
@@ -1227,7 +1259,7 @@ fn overview_basic(f: &mut Frame, v: &View) {
     let y = card.y + card.h + GAP;
     let today = fill(tr(T::ClicksMoved), &[&v.today_distance]);
     stat_card(f, Rect::new(X0, y, w, 110.0), tr(T::Today), &v.today_clicks, &today);
-    stat_card(f, Rect::new(X0 + w + GAP, y, w, 110.0), tr(T::Measured), &measured(v), tr(T::PollingRate));
+    rate_card(f, Rect::new(X0 + w + GAP, y, w, 110.0), v.last_rate);
     device_line(f, v, y + 110.0 + GAP);
 }
 
@@ -1734,5 +1766,21 @@ mod tests {
         // One unbreakable word: left to the "…" trimming.
         let long = "Superlongmodelnamewithoutspaces";
         assert_eq!(name_lines(long, W, Size::Caption), (long.into(), None));
+    }
+
+    #[test]
+    fn device_line_drops_firmware_that_does_not_fit() {
+        const W: f32 = 400.0;
+        const M705: &str = "Logitech Marathon Mouse/Performance Plus M705";
+        assert_eq!(device_text("White Shark Lionel", "1.77", W), "White Shark Lionel · FW 1.77");
+        assert_eq!(device_text(M705, "RQM 17.01 build 0019", W), M705);
+        assert_eq!(device_text(M705, "", W), M705);
+    }
+
+    #[test]
+    fn rate_card_keeps_the_last_measurement() {
+        // Before any motion: a hint, not a loading skeleton.
+        assert_eq!(rate_value(None), (String::new(), tr(T::MoveMouse)));
+        assert_eq!(rate_value(Some(125)), ("125 Hz".into(), tr(T::MeasuredMoving)));
     }
 }

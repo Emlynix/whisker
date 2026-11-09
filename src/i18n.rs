@@ -31,7 +31,6 @@ pub enum T {
     ClicksMoved,
     QuickDpi,
     ColActive,
-    Measured,
     PollingHelp,
     PeriodToday,
     PeriodWeek,
@@ -292,9 +291,15 @@ pub enum T {
     CopyCommand,
     /// Detect dialog: from the detected mice to the lists.
     NotListed,
+    /// Settings › Mouse: firmware known only from the receiver.
+    ReceiverFw,
+    /// Overview: no report rate measured yet.
+    MoveMouse,
+    /// Overview: the last report rate measured, kept when the mouse rests.
+    MeasuredMoving,
 }
 
-const COUNT: usize = T::NotListed as usize + 1;
+const COUNT: usize = T::MeasuredMoving as usize + 1;
 type Table = [&'static str; COUNT];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -496,7 +501,6 @@ const EN: Table = [
     "clicks · {} moved",
     "QUICK DPI SWITCH",
     "ACTIVE",
-    "MEASURED",
     "Move the mouse smoothly in circles to measure the real report rate. A higher rate means lower latency but slightly higher battery drain.",
     "Today",
     "7 days",
@@ -752,6 +756,9 @@ const EN: Table = [
     "Run the command in a terminal.",
     "Copy command",
     "My mouse isn't listed",
+    "{} (receiver)",
+    "Move the mouse",
+    "Measured while moving",
 ];
 
 const SK: Table = [
@@ -779,7 +786,6 @@ const SK: Table = [
     "klikov · {} pohybu",
     "RÝCHLE PREPNUTIE DPI",
     "AKTÍVNY",
-    "NAMERANÉ",
     "Pohnite myšou plynulo do kruhu, aplikácia zmeria skutočnú frekvenciu hlásení. Vyššia frekvencia znamená nižšie oneskorenie, ale o niečo vyššiu spotrebu batérie.",
     "Dnes",
     "7 dní",
@@ -1035,6 +1041,9 @@ const SK: Table = [
     "Príkaz spustite v termináli.",
     "Kopírovať príkaz",
     "Moja myš tu nie je",
+    "{} (prijímač)",
+    "Pohnite myšou",
+    "Namerané pri pohybe",
 ];
 
 const CS: Table = [
@@ -1062,7 +1071,6 @@ const CS: Table = [
     "kliknutí · {} pohybu",
     "RYCHLÉ PŘEPNUTÍ DPI",
     "AKTIVNÍ",
-    "NAMĚŘENO",
     "Pohybujte myší plynule v kruzích, aplikace změří skutečnou frekvenci hlášení. Vyšší frekvence znamená nižší zpoždění, ale o něco vyšší spotřebu baterie.",
     "Dnes",
     "7 dní",
@@ -1318,6 +1326,9 @@ const CS: Table = [
     "Příkaz spusťte v terminálu.",
     "Kopírovat příkaz",
     "Moje myš tu není",
+    "{} (přijímač)",
+    "Pohněte myší",
+    "Naměřeno při pohybu",
 ];
 
 const PL: Table = [
@@ -1345,7 +1356,6 @@ const PL: Table = [
     "kliknięć · {} ruchu",
     "SZYBKA ZMIANA DPI",
     "AKTYWNY",
-    "ZMIERZONO",
     "Należy poruszać myszą płynnie po okręgu, aby zmierzyć rzeczywistą częstotliwość raportowania. Wyższa częstotliwość to mniejsze opóźnienie, ale nieco większe zużycie baterii.",
     "Dziś",
     "7 dni",
@@ -1601,6 +1611,9 @@ const PL: Table = [
     "Polecenie należy uruchomić w terminalu.",
     "Kopiuj polecenie",
     "Mojej myszy nie ma na liście",
+    "{} (odbiornik)",
+    "Proszę poruszyć myszą",
+    "Zmierzono podczas ruchu",
 ];
 
 const DE: Table = [
@@ -1628,7 +1641,6 @@ const DE: Table = [
     "Klicks · {} bewegt",
     "DPI-SCHNELLWAHL",
     "AKTIV",
-    "GEMESSEN",
     "Bewegen Sie die Maus gleichmäßig im Kreis, um die echte Abfragerate zu messen. Eine höhere Rate bedeutet geringere Latenz, aber etwas höheren Akkuverbrauch.",
     "Heute",
     "7 Tage",
@@ -1884,6 +1896,9 @@ const DE: Table = [
     "Führen Sie den Befehl im Terminal aus.",
     "Befehl kopieren",
     "Meine Maus ist nicht dabei",
+    "{} (Empfänger)",
+    "Bewegen Sie die Maus",
+    "Gemessen bei Bewegung",
 ];
 
 const FR: Table = [
@@ -1911,7 +1926,6 @@ const FR: Table = [
     "clics · {} parcourus",
     "CHANGEMENT RAPIDE DE DPI",
     "ACTIF",
-    "MESURÉ",
     "Déplacez la souris en cercles réguliers pour mesurer la fréquence réelle. Une fréquence plus élevée réduit la latence mais consomme un peu plus de batterie.",
     "Aujourd'hui",
     "7 jours",
@@ -2167,6 +2181,9 @@ const FR: Table = [
     "Exécutez la commande dans un terminal.",
     "Copier la commande",
     "Ma souris n'est pas dans la liste",
+    "{} (récepteur)",
+    "Bougez la souris",
+    "Mesuré en mouvement",
 ];
 
 const ES: Table = [
@@ -2194,7 +2211,6 @@ const ES: Table = [
     "clics · {} recorridos",
     "CAMBIO RÁPIDO DE DPI",
     "ACTIVO",
-    "MEDIDO",
     "Mueva el ratón en círculos de forma fluida para medir la tasa real. Una tasa más alta implica menor latencia, pero un consumo de batería algo mayor.",
     "Hoy",
     "7 días",
@@ -2450,6 +2466,9 @@ const ES: Table = [
     "Ejecute el comando en una terminal.",
     "Copiar comando",
     "Mi ratón no aparece",
+    "{} (receptor)",
+    "Mueva el ratón",
+    "Medido en movimiento",
 ];
 
 const PT: Table = [
@@ -2477,7 +2496,6 @@ const PT: Table = [
     "cliques · {} percorridos",
     "MUDANÇA RÁPIDA DE DPI",
     "ATIVO",
-    "MEDIDO",
     "Mova o rato suavemente em círculos para medir a taxa real. Uma taxa mais alta significa menor latência, mas um consumo de bateria ligeiramente maior.",
     "Hoje",
     "7 dias",
@@ -2733,6 +2751,9 @@ const PT: Table = [
     "Execute o comando num terminal.",
     "Copiar comando",
     "O meu rato não está na lista",
+    "{} (recetor)",
+    "Mova o rato",
+    "Medido em movimento",
 ];
 
 const IT: Table = [
@@ -2760,7 +2781,6 @@ const IT: Table = [
     "clic · {} percorsi",
     "CAMBIO RAPIDO DPI",
     "ATTIVO",
-    "MISURATO",
     "Muovere il mouse in cerchi fluidi per misurare la frequenza reale. Una frequenza più alta significa latenza minore ma un consumo di batteria leggermente maggiore.",
     "Oggi",
     "7 giorni",
@@ -3016,6 +3036,9 @@ const IT: Table = [
     "Eseguire il comando in un terminale.",
     "Copia comando",
     "Il mio mouse non è nell'elenco",
+    "{} (ricevitore)",
+    "Muova il mouse",
+    "Misurato in movimento",
 ];
 
 const JA: Table = [
@@ -3043,7 +3066,6 @@ const JA: Table = [
     "クリック · 移動 {}",
     "DPI クイック切り替え",
     "使用中",
-    "実測値",
     "マウスを滑らかに円を描くように動かすと、実際のレポートレートを測定します。レートが高いほど遅延は小さくなりますが、バッテリー消費がやや増えます。",
     "今日",
     "7 日間",
@@ -3299,6 +3321,9 @@ const JA: Table = [
     "コマンドをターミナルで実行してください。",
     "コマンドをコピー",
     "マウスが一覧にありません",
+    "{}（レシーバー）",
+    "マウスを動かしてください",
+    "動かしている間に測定",
 ];
 
 const KO: Table = [
@@ -3326,7 +3351,6 @@ const KO: Table = [
     "클릭 · {} 이동",
     "빠른 DPI 전환",
     "활성",
-    "측정값",
     "마우스를 원을 그리며 부드럽게 움직이면 실제 보고율을 측정합니다. 보고율이 높을수록 지연은 줄지만 배터리 소모가 약간 늘어납니다.",
     "오늘",
     "7일",
@@ -3582,6 +3606,9 @@ const KO: Table = [
     "터미널에서 명령을 실행하십시오.",
     "명령 복사",
     "내 마우스가 목록에 없습니다",
+    "{} (수신기)",
+    "마우스를 움직여 주십시오",
+    "움직이는 동안 측정",
 ];
 
 const ZH_HANS: Table = [
@@ -3609,7 +3636,6 @@ const ZH_HANS: Table = [
     "次点击 · 移动 {}",
     "DPI 快速切换",
     "当前",
-    "实测",
     "平稳地画圈移动鼠标，以测量实际回报率。回报率越高延迟越低，但耗电略多。",
     "今天",
     "7 天",
@@ -3865,6 +3891,9 @@ const ZH_HANS: Table = [
     "请您在终端中运行该命令。",
     "复制命令",
     "我的鼠标不在列表中",
+    "{}（接收器）",
+    "请移动鼠标",
+    "移动时测得",
 ];
 
 const ZH_HANT: Table = [
@@ -3892,7 +3921,6 @@ const ZH_HANT: Table = [
     "次點擊 · 移動 {}",
     "DPI 快速切換",
     "目前",
-    "實測",
     "平穩地畫圈移動滑鼠，以測量實際回報率。回報率越高延遲越低，但耗電略多。",
     "今天",
     "7 天",
@@ -4148,6 +4176,9 @@ const ZH_HANT: Table = [
     "請您在終端機中執行該命令。",
     "複製命令",
     "我的滑鼠不在清單中",
+    "{}（接收器）",
+    "請移動滑鼠",
+    "移動時測得",
 ];
 
 #[cfg(test)]
