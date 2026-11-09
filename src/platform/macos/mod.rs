@@ -16,9 +16,12 @@ pub mod input;
 pub mod install;
 mod iokit;
 mod keymap;
+pub mod net;
 pub mod single;
 mod sys;
 mod tray;
 pub mod window;
 
 pub use sys::{config_dir, dark_mode, open_url, os_version, today, user_locale};
+
+pub const UPDATE_KIND: crate::platform::UpdateKind = crate::platform::UpdateKind::ReleasePage;

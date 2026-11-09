@@ -22,6 +22,7 @@ mod stats;
 mod store;
 mod theme;
 mod tray;
+mod update;
 mod view;
 
 use platform::{Autostart, Claim, Instance, autostart, install, single};
@@ -38,11 +39,13 @@ fn main() {
         return;
     }
 
-    // Fresh install: the installer process is still exiting.
-    let claim = if has(platform::INSTALLED_ARG) { Claim::WaitForExit } else { Claim::Now };
+    // Fresh install or update: the previous process is still exiting.
+    let handover = has(platform::INSTALLED_ARG) || has(platform::UPDATED_ARG);
+    let claim = if handover { Claim::WaitForExit } else { Claim::Now };
     if let Instance::AlreadyRunning = single::claim(claim) {
         return;
     }
+    update::cleanup();
 
     if has(platform::AUTOSTART_ON_ARG) {
         autostart::set(Autostart::On);

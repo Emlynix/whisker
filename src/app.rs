@@ -10,6 +10,7 @@
 //! `window::post(.. with_ctrl(..))`.
 
 mod report;
+mod updater;
 mod verify;
 
 use crate::devices::{self, CAPS_NONE, Caps, DpiUi, Entry, Family, Link, Match, Model, Support};
@@ -32,8 +33,9 @@ use crate::store::{self, AppConfig};
 use crate::tray::{Level, TrayAction};
 use crate::view::{
     self, Act, Answer, Ask, Badge, Banner, BasicView, BrandRow, Charge, CheckView, DelayMode, Detect, DetectRow, DeviceView, Dialog,
-    Focus, Found, Hit, Page, Pane, PickRow, Picker, ReportStep, ReportView, StageView, Sync, Toast, View, Web,
+    Focus, Found, Hit, Page, Pane, PickRow, Picker, ReportStep, ReportView, StageView, Sync, Toast, UpdateView, View, Web,
 };
+use updater::{Trigger, Updates};
 use verify::{Check, Knobs, Start, Verify};
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
@@ -44,6 +46,7 @@ const TIMER_TOAST: usize = 3;
 const TIMER_FADE: usize = 4;
 const TIMER_PULSE: usize = 5;
 const TIMER_SCAN: usize = 6;
+const TIMER_UPDATE: usize = 7;
 /// How often connected mice are listed to notice a new one.
 const SCAN_MS: u32 = 4000;
 /// Longest wait at exit for the mouse to take back changed settings.
@@ -148,6 +151,7 @@ struct Controller {
     wizard: Option<Wizard>,
     /// Values the guided checks must see back on the mouse.
     restore: Option<Restore>,
+    updates: Updates,
 }
 
 /// DPI and rate to put back after the checks, re-sent while a reading
@@ -278,6 +282,7 @@ pub fn run(mode: StartMode) {
         offer: None,
         wizard: None,
         restore: None,
+        updates: Updates::default(),
     };
     ctrl.stats.set_vendor(stats_vendor(ctrl.cfg.device.as_deref()));
     CTRL.with(|c| *c.borrow_mut() = Some(ctrl));
@@ -295,6 +300,8 @@ pub fn run(mode: StartMode) {
     platform::single::listen(|| post(|c| c.show()), || window::post(window::quit));
     window::set_timer(TIMER_SAVE, SAVE_MS);
     window::set_timer(TIMER_SCAN, SCAN_MS);
+    window::set_timer(TIMER_UPDATE, updater::POLL_MS);
+    with_ctrl(|c| c.auto_check());
 
     if mode == StartMode::Visible || first_run {
         with_ctrl(|c| c.show());
@@ -373,6 +380,7 @@ fn initial_view(cfg: &AppConfig, ask_setup: bool) -> View {
         pulse: u8::MAX,
         banner: None,
         report: None,
+        update: UpdateView::new(cfg.update_check, updater::install_kind()),
     }
 }
 
@@ -1082,6 +1090,7 @@ fn hook_timer(id: usize) {
         TIMER_FADE => c.fade_sync(),
         TIMER_PULSE => c.pulse(),
         TIMER_SCAN => c.scan(),
+        TIMER_UPDATE => c.auto_check(),
         _ => {}
     });
 }
@@ -1305,6 +1314,15 @@ impl Controller {
             Act::ReportAnswer(a) => self.answer_check(a),
             Act::ReportCancelChecks => self.cancel_checks(),
             Act::ReportClose => self.close_report(),
+            Act::UpdateShow => self.show_update(),
+            Act::UpdateCheck => self.start_check(Trigger::Manual),
+            Act::UpdateAuto => self.toggle_update_auto(),
+            Act::UpdateInstall => self.install_update(),
+            Act::UpdateLater => self.view.dialog = None,
+            Act::UpdateSkip => self.skip_update(),
+            Act::UpdatePage => {
+                platform::open_url(SITE_URL);
+            }
         }
     }
 

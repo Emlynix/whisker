@@ -321,7 +321,7 @@ pub(super) fn macros_page(f: &mut Frame, v: &View) {
         f.choice(Act::MacroSel(i), r, &fill(tr(T::ActMacro), &[&(i + 1).to_string()]), &steps, v.macro_sel == i);
     }
 
-    let card = Rect::new(X0 + LIST_W + GAP, BODY, CW - LIST_W - GAP, PAGE_H - BODY - 24.0);
+    let card = Rect::new(X0 + LIST_W + GAP, BODY, CW - LIST_W - GAP, PAGE_H - BODY - 4.0);
     f.card(card);
     let x = card.x + PAD;
     let w = card.w - 2.0 * PAD;

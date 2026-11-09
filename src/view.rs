@@ -27,9 +27,11 @@ mod art;
 mod buttons;
 mod device;
 mod report;
+mod update;
 pub use buttons::{DelayMode, Picker, Tab, button_name};
 pub use device::{Badge, Banner, BrandRow, Detect, DetectRow, DeviceView, Found, LIST_ROWS, Pane, detect_pane_at};
 pub use report::{Answer, Ask, CheckView, PickRow, REPORT_ROWS, ReportView, Step as ReportStep, report_at};
+pub use update::{Install, Offer, Probe, Step as UpdateStep, UpdateView, note_lines};
 use crate::devices::{Caps, DpiUi};
 use crate::store::{DEBOUNCE_CHOICES, SLEEP_CHOICES};
 use crate::theme::{self, THEMES, Theme};
@@ -39,10 +41,11 @@ fn th() -> &'static Theme {
 }
 
 pub const WIDTH: f32 = 820.0;
-pub const HEIGHT: f32 = PAGE_H + STATUS_H;
-/// Bottom of pages and sidebar; the status bar sits below.
-const PAGE_H: f32 = 560.0;
-const STATUS_H: f32 = 28.0;
+pub const HEIGHT: f32 = 560.0;
+/// Status row in the bottom margin of the page area, under the cards.
+const STATUS_H: f32 = 26.0;
+/// Bottom of page content; the status row sits below.
+const PAGE_H: f32 = HEIGHT - STATUS_H;
 
 const SIDE_W: f32 = 210.0;
 const X0: f32 = 234.0;
@@ -245,6 +248,18 @@ pub enum Act {
     ReportCancelChecks,
     /// Closes the wizard (checks cancelled and restored first).
     ReportClose,
+    /// Opens the update dialog (status bar notice, About).
+    UpdateShow,
+    /// About: asks the release channel now.
+    UpdateCheck,
+    /// Settings: daily check on / off.
+    UpdateAuto,
+    /// Downloads, verifies and installs the offer, then restarts.
+    UpdateInstall,
+    UpdateLater,
+    UpdateSkip,
+    /// Opens the release page in the browser.
+    UpdatePage,
 }
 
 /// Pages of the project site the About dialog links to.
@@ -260,6 +275,7 @@ pub enum Web {
 pub enum Dialog {
     About,
     AssignMacro,
+    Update,
 }
 
 /// Header chip: settings on their way to the mouse.
@@ -411,6 +427,7 @@ pub struct View {
     pub banner: Option<Banner>,
     /// "Help add your mouse" wizard.
     pub report: Option<ReportView>,
+    pub update: UpdateView,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -739,11 +756,15 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
     match v.dialog {
         Some(Dialog::About) => {
             f.hits.clear();
-            about_dialog(&mut f);
+            about_dialog(&mut f, v);
         }
         Some(Dialog::AssignMacro) => {
             f.hits.clear();
             buttons::assign_dialog(&mut f, v);
+        }
+        Some(Dialog::Update) => {
+            f.hits.clear();
+            update::update_dialog(&mut f, &v.update);
         }
         None => {}
     }
@@ -804,7 +825,7 @@ fn header_status(f: &mut Frame, v: &View) {
 fn toast(f: &mut Frame, t: &Toast) {
     const W: f32 = 420.0;
     const H: f32 = 44.0;
-    let r = Rect::new(X0 + (CW - W) / 2.0, PAGE_H - H - 16.0, W, H);
+    let r = Rect::new(X0 + (CW - W) / 2.0, PAGE_H - H - 4.0, W, H);
     f.g.fill(r, RADIUS, th().card_hi);
     f.g.stroke(r, RADIUS, 1.0, th().border);
 
@@ -922,9 +943,9 @@ fn mouse_logo(g: &Gfx, x: f32, y: f32) {
 
 fn sidebar(f: &mut Frame, v: &View) {
     // Same background as the title bar and page, split by a 1 px line.
-    f.g.fill(Rect::new(SIDE_W - 1.0, 0.0, 1.0, PAGE_H), 0.0, th().border);
+    f.g.fill(Rect::new(SIDE_W - 1.0, 0.0, 1.0, HEIGHT), 0.0, th().border);
 
-    const BOTTOM: f32 = PAGE_H - 14.0;
+    const BOTTOM: f32 = HEIGHT - 14.0;
     const ITEM_H: f32 = NAV_STEP - 4.0;
 
     // Logo and name open About; the mouse name opens its details.
@@ -972,19 +993,17 @@ fn sidebar(f: &mut Frame, v: &View) {
 
 }
 
-/// "● Connected · 55 %" (⚡ while charging): green, warn colour when the
-/// battery runs low, muted "● Disconnected" offline.
-/// Status bar under the whole window: connection and battery on the right
-/// (a click opens Settings › Mouse).
+/// Status row under the cards: a new version on the left, connection and
+/// battery on the right (a click opens Settings › Mouse).
 fn status_bar(f: &mut Frame, v: &View) {
-    const PAD: f32 = 16.0;
-    f.g.fill(Rect::new(0.0, PAGE_H, WIDTH, 1.0), 0.0, th().border);
+    update::status_notice(f, &v.update);
     if !(v.caps.battery || v.has_battery) {
         return;
     }
     let (text, _) = status_text(v);
     let w = text_w(&text, Size::Caption) + 14.0;
-    let r = Rect::new(WIDTH - PAD - w, PAGE_H + (STATUS_H - 16.0) / 2.0, w, 16.0);
+    // Right edge flush with the cards.
+    let r = Rect::new(X0 + CW - w, PAGE_H + (STATUS_H - 16.0) / 2.0, w, 16.0);
     let area = Rect::new(r.x - 8.0, PAGE_H + 3.0, r.w + 16.0, STATUS_H - 6.0);
     if f.button(Act::Nav(Page::Mouse), area) {
         f.g.fill(area, R_INNER, th().hover);
@@ -992,6 +1011,8 @@ fn status_bar(f: &mut Frame, v: &View) {
     status_line(f, v, r);
 }
 
+/// "● Connected · 55 %" (⚡ while charging): green, warn colour when the
+/// battery runs low, muted "● Disconnected" offline.
 fn status_text(v: &View) -> (String, Color) {
     const LOW_PCT: u8 = 20;
     if !v.connected {
@@ -1474,7 +1495,7 @@ fn stats(f: &mut Frame, v: &View) {
         f.g.text(value, Rect::new(r.x + 14.0, r.y + 32.0, r.w - 28.0, 34.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
     }
 
-    let card = Rect::new(X0, TOP + 48.0 + 2.0 * 90.0, CW, PAGE_H - (TOP + 48.0 + 180.0) - 24.0);
+    let card = Rect::new(X0, TOP + 48.0 + 2.0 * 90.0, CW, PAGE_H - (TOP + 48.0 + 180.0) - 4.0);
     f.card(card);
     // The chart follows the selected period.
     let title = [T::ChartToday, T::ChartTitle, T::ChartAll][v.period.min(PERIODS.len() - 1)];
@@ -1540,6 +1561,9 @@ fn settings(f: &mut Frame, v: &View) {
     let act = v.installed.then_some(Act::Autostart);
     f.toggle(act, card.x + card.w - 58.0, card.y + 27.0, v.autostart);
 
+    let card = Rect::new(X0, card.y + card.h + GAP, CW, 88.0);
+    update::settings_card(f, &v.update, card);
+
     // Tray behaviour and where data lives (About has its own dialog).
     let card = Rect::new(X0, card.y + card.h + GAP, CW, 88.0);
     f.card(card);
@@ -1571,10 +1595,11 @@ fn setup_dialog(f: &mut Frame, v: &View) {
     f.push_button(Act::SetupInstall, Rect::new(d.x + d.w - 24.0 - 128.0, by, 128.0, 36.0), tr(T::Install), true);
 }
 
-/// About: logo, name and version, copyright, license, project links.
-fn about_dialog(f: &mut Frame) {
+/// About: logo, name and version, copyright, license, project links,
+/// update check.
+fn about_dialog(f: &mut Frame, v: &View) {
     const W: f32 = 480.0;
-    const H: f32 = 268.0;
+    const H: f32 = 316.0;
     f.g.fill(Rect::new(0.0, 0.0, WIDTH, HEIGHT), 0.0, th().scrim);
     let d = Rect::new((WIDTH - W) / 2.0, (HEIGHT - H) / 2.0, W, H);
     f.g.fill(d, RADIUS, th().card_hi);
@@ -1604,6 +1629,7 @@ fn about_dialog(f: &mut Frame) {
     if hot {
         f.g.fill(Rect::new(link.x, link.y + link.h - 1.0, link.w - 4.0, 1.0), 0.0, c);
     }
+    update::about_row(f, &v.update, inner.x, y + 74.0, inner.w);
 
     let by = d.y + d.h - 24.0 - 36.0;
     let report = tr(T::ReportMouse);

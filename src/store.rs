@@ -61,6 +61,14 @@ pub struct AppConfig {
     pub lang: Option<Lang>,
     /// Mice answered "Not now" in the new-mouse banner, as `mouse_key`.
     pub ignored_mice: Vec<String>,
+    /// Look for a new version once a day.
+    pub update_check: bool,
+    /// Unix time of the last completed update check.
+    pub update_checked: u64,
+    /// Version the user chose to skip, e.g. `"0.9.1"`.
+    pub update_skip: Option<String>,
+    /// Version already announced by a notification.
+    pub update_notified: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -83,6 +91,10 @@ impl Default for AppConfig {
             theme: theme::Choice::System,
             lang: None,
             ignored_mice: Vec::new(),
+            update_check: true,
+            update_checked: 0,
+            update_skip: None,
+            update_notified: None,
         }
     }
 }
@@ -228,6 +240,10 @@ fn parse_config(text: &str, mut c: AppConfig) -> AppConfig {
             ("setup_asked", _) => c.setup_asked = v == "1",
             ("theme", _) => c.theme = theme::Choice::from_id(v),
             ("lang", _) => c.lang = Lang::from_code(v),
+            ("update_check", _) => c.update_check = v != "0",
+            ("update_checked", Some(_)) => c.update_checked = v.parse().unwrap_or(0),
+            ("update_skip", _) => c.update_skip = Some(v.to_string()).filter(|v| !v.is_empty()),
+            ("update_notified", _) => c.update_notified = Some(v.to_string()).filter(|v| !v.is_empty()),
             ("ignored_mice", _) => c.ignored_mice = v.split(',').map(str::trim).filter(|k| !k.is_empty()).map(String::from).collect(),
             _ => {}
         }
@@ -260,6 +276,10 @@ fn format_config(c: &AppConfig) -> String {
         format!("theme={}", c.theme.id()),
         format!("lang={}", c.lang.map(|l| l.code()).unwrap_or("system")),
         format!("ignored_mice={}", c.ignored_mice.join(",")),
+        format!("update_check={}", c.update_check as u8),
+        format!("update_checked={}", c.update_checked),
+        format!("update_skip={}", c.update_skip.as_deref().unwrap_or("")),
+        format!("update_notified={}", c.update_notified.as_deref().unwrap_or("")),
     ];
     let mut text = lines.join("\n") + "\n";
     for (i, m) in c.macros.iter().enumerate().filter(|(_, m)| !m.is_empty()) {
@@ -486,6 +506,20 @@ mod tests {
         c.ignored_mice = vec!["046D:C547".into(), "05AC:024F:AB12".into()];
         let back = parse_config(&format_config(&c), AppConfig::default());
         assert_eq!(back.ignored_mice, c.ignored_mice);
+    }
+
+    #[test]
+    fn update_settings_roundtrip() {
+        let mut c = AppConfig::default();
+        assert!(c.update_check);
+        c.update_check = false;
+        c.update_checked = 1_790_000_000;
+        c.update_skip = Some("0.9.1".into());
+        let back = parse_config(&format_config(&c), AppConfig::default());
+        assert!(!back.update_check);
+        assert_eq!(back.update_checked, c.update_checked);
+        assert_eq!(back.update_skip, c.update_skip);
+        assert_eq!(back.update_notified, None);
     }
 
     #[test]

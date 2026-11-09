@@ -90,6 +90,16 @@
 //! `single` — one running instance: `claim(Claim) -> Instance` (a second
 //! launch makes the first show its window), `request_quit()`,
 //! `wait_closed(limit)`, `listen(on_show, on_quit)`.
+//!
+//! `net` — `get(&Fetch) -> Result<Reply, NetError>`: one HTTPS GET to port
+//! 443 (blocking), certificate checked by the OS, no redirects followed, no
+//! cookies or credentials sent; body cut off past `limit` (`TooLarge`),
+//! whole request bounded by `timeout`. Windows: WinHTTP. macOS:
+//! `/usr/bin/curl` with fixed arguments.
+//!
+//! `UPDATE_KIND: UpdateKind` — how a downloaded update is installed:
+//! Windows swaps the exe in place, macOS opens the release page (a signed
+//! bundle can't be replaced file by file yet).
 
 use crate::gfx::Color;
 
@@ -100,6 +110,8 @@ pub const UNINSTALL_ARG: &str = "--uninstall";
 pub const INSTALLED_ARG: &str = "--installed";
 pub const AUTOSTART_ON_ARG: &str = "--autostart-on";
 pub const AUTOSTART_OFF_ARG: &str = "--autostart-off";
+/// Passed to the updated exe so it waits for the old process to exit.
+pub const UPDATED_ARG: &str = "--updated";
 
 /// Only web links may be opened: `file:`, `ms-settings:` or bare paths
 /// would let a string launch local programs.
@@ -152,6 +164,43 @@ pub enum Origin {
     External,
     /// Clicked inside the running app, which quits right after.
     InApp,
+}
+
+/// One HTTPS GET for `net::get`.
+pub struct Fetch<'a> {
+    pub host: &'a str,
+    /// Path and query, starts with `/`.
+    pub path: &'a str,
+    /// User-Agent header.
+    pub agent: &'a str,
+    /// Most body bytes accepted.
+    pub limit: usize,
+    pub timeout: std::time::Duration,
+}
+
+pub struct Reply {
+    pub status: u16,
+    /// `Location` header of a redirect.
+    pub location: Option<String>,
+    pub body: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetError {
+    /// No connection, TLS error, timeout.
+    Failed,
+    /// Body larger than `Fetch::limit`.
+    TooLarge,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum UpdateKind {
+    /// Download, verify, replace the exe, restart.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    InPlace,
+    /// Open the release page in the browser.
+    #[cfg_attr(windows, allow(dead_code))]
+    ReleasePage,
 }
 
 #[cfg(windows)]
