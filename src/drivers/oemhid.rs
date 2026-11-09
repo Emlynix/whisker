@@ -16,8 +16,8 @@
 //! CID/MID. Writes happen only on model + transport pairs that OpenMouse
 //! verified on hardware; everything else is read-only.
 
-use super::{Ability, DpiRange, Ident, Reading};
-use crate::hid_link::raw::{Channel, interfaces};
+use super::{Ability, DpiRange, Ident, Pick, Reading};
+use crate::hid_link::raw::Channel;
 use std::time::Duration;
 
 /// ATK's own vendor id and CompX's shared ODM id (VXE, VGN, Lamzu).
@@ -241,9 +241,9 @@ pub struct OemHid {
 
 impl OemHid {
     /// Opens the FF02:0002 collection carrying report 8. Sends nothing.
-    pub fn open() -> Option<(OemHid, crate::hid_link::DeviceInfo)> {
+    pub fn open(pick: &Pick) -> Option<(OemHid, crate::hid_link::DeviceInfo)> {
         for vid in VIDS {
-            let found = interfaces(vid).into_iter().find_map(|i| {
+            let found = pick.interfaces(vid).into_iter().find_map(|i| {
                 let p = port(i.info.vid, i.info.pid)?;
                 let config = i.usage_page == CONFIG_PAGE && i.usage == CONFIG_USAGE && i.output_len == FRAME_LEN;
                 config.then_some((i, p))
@@ -448,6 +448,28 @@ mod tests {
         // Lamzu receiver reads 250 Hz.
         let l = parse(&hex("08 08 00 00 00 02 04 51 00 00 00 00 00 00 00 00 ee"), &[CMD_READ]).unwrap();
         assert_eq!(pair(l[0], l[1]), Some(0x04));
+    }
+
+    /// Every model and port is in data/mice.toml under this family.
+    /// CID/MID models have no product id there; ATK ones use ATK's vid.
+    #[test]
+    fn catalogue_agrees() {
+        use crate::devices::{Entry, Family, listed_as, models};
+        let vid_of = |name: &str| if name.starts_with("ATK") { VID_ATK } else { VID_COMPX };
+        for (_, s) in MODELS {
+            let c = listed_as(vid_of(s.name), None, s.name).unwrap_or_else(|| panic!("{} not listed", s.name));
+            assert_eq!(c.family, Family::OemHid, "{}", s.name);
+        }
+
+        for p in &PORTS {
+            let Some(s) = p.spec else {
+                // Shared receiver: the vendor's auto entry.
+                assert!(models().any(|m| m.entry == Entry::Auto && m.vid == p.vid && m.family == Family::OemHid), "{:04X}", p.pid);
+                continue;
+            };
+            let c = listed_as(p.vid, Some(p.pid), s.name).unwrap_or_else(|| panic!("{} {:04X} not listed", s.name, p.pid));
+            assert_eq!(c.family, Family::OemHid, "{}", s.name);
+        }
     }
 
     #[test]

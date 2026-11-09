@@ -16,18 +16,24 @@
 //!    210 px          content x = 234 .. 796
 //! ```
 
-use crate::gfx::{Align, Color, Gfx, Rect, Weight};
+use crate::gfx::{Align, Color, Gfx, Rect, Size, Weight};
 use crate::i18n::{Lang, T, fill, tr};
 use crate::protocol::{
     Action, BRIGHTNESS_MAX, BUTTON_COUNT, DPI_COLOR_SLOTS, Direction, Effect, Lighting, Lod, MacroEvent, MacroMode, Power,
     SPEED_MAX,
 };
 
+mod art;
 mod buttons;
 mod device;
+mod report;
+mod update;
 pub use buttons::{DelayMode, Picker, Tab, button_name};
-pub use device::{Badge, Detect, DetectRow, DeviceView};
+pub use device::{Badge, Banner, BrandRow, Detect, DetectRow, DetectStep, DeviceView, Found, LIST_ROWS, Pane, detect_pane_at};
+pub use report::{Answer, Ask, CheckView, PickRow, REPORT_ROWS, ReportView, Step as ReportStep, report_at};
+pub use update::{Install, Offer, Probe, Step as UpdateStep, UpdateView, note_lines, notes_cut};
 use crate::devices::{Caps, DpiUi};
+use crate::platform::Access;
 use crate::store::{DEBOUNCE_CHOICES, SLEEP_CHOICES};
 use crate::theme::{self, THEMES, Theme};
 
@@ -37,12 +43,21 @@ fn th() -> &'static Theme {
 
 pub const WIDTH: f32 = 820.0;
 pub const HEIGHT: f32 = 560.0;
+/// Status row in the bottom margin of the page area, under the cards.
+const STATUS_H: f32 = 26.0;
+/// Bottom of page content; the status row sits below.
+const PAGE_H: f32 = HEIGHT - STATUS_H;
 
 const SIDE_W: f32 = 210.0;
 const X0: f32 = 234.0;
 const CW: f32 = 562.0;
 const TOP: f32 = 70.0;
-const GAP: f32 = 14.0;
+/// Spacing on a 4 px grid (8 / 12 / 16 / 24).
+const GAP: f32 = 16.0;
+/// Corner radii: inner parts, controls and tiles, cards and dialogs;
+/// toggles and chips are pills (half their height).
+const R_INNER: f32 = 4.0;
+const R_CTRL: f32 = 8.0;
 const RADIUS: f32 = 12.0;
 
 const LOW: u8 = 20;
@@ -193,13 +208,18 @@ pub enum Act {
     /// Slider of a driver-based mouse's single DPI value.
     BasicDpi,
     BasicRate(u32),
+    /// Model row of the detect dialog (index into its models).
     DetectSel(usize),
-    DetectManual,
+    DetectBrand(usize),
+    /// A detected mouse chip.
+    DetectFound(usize),
     DetectUse,
     /// Closes the dialog; the current mouse stays.
     DetectCancel,
-    /// From the model list back to the detected mice.
+    /// From the lists back to the detected mice.
     DetectBack,
+    /// From the detected mice to the brand and model lists.
+    DetectList,
     /// Reverts the last destructive action (toast button, Ctrl+Z).
     Undo,
     About,
@@ -208,17 +228,50 @@ pub enum Act {
     OpenWeb(Web),
     Diagnostics,
     CopyDiagnostics,
+    /// Copies the command installing the udev rule (Linux).
+    CopyCommand,
     /// Opens the "assign macro to button" dialog.
     AssignMacro,
     /// Assigns the selected macro to this button.
     AssignTo(usize),
+    /// New-mouse banner: use the new mouse.
+    BannerSwitch,
+    /// New-mouse banner: never ask for this mouse again.
+    BannerDismiss,
+    /// Opens "Help add your mouse".
+    ReportOpen,
+    /// A connected mouse in the report's pick list.
+    ReportSel(usize),
+    /// Probes the picked mouse (read-only) and shows the report.
+    ReportRead,
+    ReportCopy,
+    ReportIssue,
+    /// Starts the guided checks of an experimental driver.
+    ReportCheck,
+    ReportAnswer(Answer),
+    /// Ends the checks; every changed setting is put back.
+    ReportCancelChecks,
+    /// Closes the wizard (checks cancelled and restored first).
+    ReportClose,
+    /// Opens the update dialog (status bar notice, About).
+    UpdateShow,
+    /// About: asks the release channel now.
+    UpdateCheck,
+    /// Settings: daily check on / off.
+    UpdateAuto,
+    /// Downloads, verifies and installs the offer, then restarts.
+    UpdateInstall,
+    UpdateLater,
+    UpdateSkip,
+    /// Opens the release page in the browser.
+    UpdatePage,
 }
 
 /// Pages of the project site the About dialog links to.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Web {
+    Site,
     Repo,
-    NewIssue,
 }
 
 /// Small modal dialogs (the bigger ones have their own state).
@@ -226,6 +279,7 @@ pub enum Web {
 pub enum Dialog {
     About,
     AssignMacro,
+    Update,
 }
 
 /// Header chip: settings on their way to the mouse.
@@ -310,6 +364,8 @@ pub struct View {
     pub connected: bool,
     pub link: String,
     pub battery: u8,
+    /// Coarse battery level: shown with "≈", no mid-level warning.
+    pub battery_approx: bool,
     pub charge: Charge,
     pub battery_note: String,
     pub stages: Vec<StageView>,
@@ -318,6 +374,8 @@ pub struct View {
     pub polling: usize,
     /// Report rate measured from mouse input, while the mouse moves.
     pub measured: Option<u32>,
+    /// Last rate measured, kept while the mouse rests (Overview card).
+    pub last_rate: Option<u32>,
     pub today_clicks: String,
     pub today_distance: String,
     pub tiles: Vec<(&'static str, String)>,
@@ -325,6 +383,8 @@ pub struct View {
     pub chart: Vec<(f32, f32)>,
     /// X axis labels at 0..1, e.g. (0.5, "6.11.").
     pub chart_ticks: Vec<(f32, String)>,
+    /// First day of a history shorter than the period, e.g. "8.11.".
+    pub chart_since: Option<String>,
     pub autostart: bool,
     pub installed: bool,
     pub install_dir: String,
@@ -369,6 +429,13 @@ pub struct View {
     pub diagnostics: bool,
     /// Opacity of the pulsing recording dot.
     pub pulse: u8,
+    /// "New mouse connected" offer over the title row.
+    pub banner: Option<Banner>,
+    /// The chosen mouse's devices refuse this user (Linux, no udev rule).
+    pub access: Access,
+    /// "Help add your mouse" wizard.
+    pub report: Option<ReportView>,
+    pub update: UpdateView,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -396,18 +463,29 @@ impl Frame<'_> {
     }
 
     fn card(&self, r: Rect) {
-        self.g.fill(r, RADIUS, th().card);
-        self.g.stroke(r, RADIUS, 1.0, th().border);
+        self.surface(r, th().card);
+    }
+
+    /// Card-like area: a 1 px border in dark themes; in light ones a cheap
+    /// shadow, since a border there is barely visible (1.3:1).
+    fn surface(&self, r: Rect, c: Color) {
+        if th().dark {
+            self.g.fill(r, RADIUS, c);
+            self.g.stroke(r, RADIUS, 1.0, th().border);
+            return;
+        }
+        const SHADOW: Color = Color(0x000000, 0x0f);
+        self.g.fill(Rect::new(r.x, r.y + 1.0, r.w, r.h), RADIUS, SHADOW);
+        self.g.fill(r, RADIUS, c);
     }
 
     fn caption(&mut self, s: &str, x: f32, y: f32) {
         self.caption_in(s, x, y, 300.0);
     }
 
-    /// Caption shrunk to fit `w` (long translations).
+    /// Upper-case section caption; a long translation ends in "…" at `w`.
     fn caption_in(&mut self, s: &str, x: f32, y: f32, w: f32) {
-        let size = fit_size(s, w, 11.5);
-        self.g.text(s, Rect::new(x, y, w, 16.0), size, Weight::Semibold, Align::Left, th().muted);
+        self.g.text(s, Rect::new(x, y, w, 16.0), Size::Label, Weight::Semibold, Align::Left, th().muted);
     }
 
     fn bar(&self, r: Rect, pct: u8, c: Color) {
@@ -429,35 +507,54 @@ impl Frame<'_> {
             self.g.fill(r, 11.0, c);
             self.g.circle(x + 29.0, y + 11.0, 7.0, th().on_accent);
         } else {
+            // Disabled: fainter outline and knob.
+            let (edge, knob) = if dim { (th().border, th().faint) } else { (th().faint, th().muted) };
             self.g.fill(r, 11.0, if hot { th().hover } else { th().card });
-            self.g.stroke(r, 11.0, 1.5, th().faint);
-            self.g.circle(x + 11.0, y + 11.0, 6.0, th().muted);
+            self.g.stroke(r, 11.0, 1.5, edge);
+            self.g.circle(x + 11.0, y + 11.0, 6.0, knob);
         }
     }
 
     fn push_button(&mut self, act: Act, r: Rect, label: &str, primary: bool) {
         let hot = self.button(act, r);
-        // Long translations shrink rather than spill out of the button.
-        let size = fit_size(label, r.w - 16.0, 14.0);
+        let label_r = Rect::new(r.x + 8.0, r.y, r.w - 16.0, r.h);
         if primary {
-            self.g.fill(r, 8.0, if hot { th().accent_hover } else { th().accent });
-            self.g.text(label, r, size, Weight::Semibold, Align::Center, th().on_accent);
+            self.g.fill(r, R_CTRL, if hot { th().accent_hover } else { th().accent });
+            self.g.text(label, label_r, Size::Body, Weight::Semibold, Align::Center, th().on_accent);
             return;
         }
-        self.g.fill(r, 8.0, if hot { th().hover } else { th().card });
-        self.g.stroke(r, 8.0, 1.0, th().border);
-        self.g.text(label, r, size, Weight::Semibold, Align::Center, th().text);
+        self.g.fill(r, R_CTRL, if hot { th().hover } else { th().card });
+        self.g.stroke(r, R_CTRL, 1.0, th().border);
+        self.g.text(label, label_r, Size::Body, Weight::Semibold, Align::Center, th().text);
+    }
+
+    /// Secondary button with a glyph before or after the label, e.g. "‹ Back".
+    fn glyph_button(&mut self, act: Act, r: Rect, label: &str, g: Glyph, place: Place) {
+        const GLYPH_W: f32 = 16.0;
+        let hot = self.button(act, r);
+        self.g.fill(r, R_CTRL, if hot { th().hover } else { th().card });
+        self.g.stroke(r, R_CTRL, 1.0, th().border);
+
+        // Label and glyph centered as one group.
+        let label_w = text_w(label, Size::Body).min(r.w - GLYPH_W - 24.0);
+        let x = r.x + (r.w - label_w - GLYPH_W - 4.0) / 2.0;
+        let (gx, lx) = match place {
+            Place::Lead => (x + GLYPH_W / 2.0, x + GLYPH_W + 4.0),
+            Place::Trail => (x + label_w + 4.0 + GLYPH_W / 2.0, x),
+        };
+        glyph(self.g, g, gx, r.y + r.h / 2.0, th().text);
+        let label_r = Rect::new(lx, r.y, label_w + 8.0, r.h);
+        self.g.text(label, label_r, Size::Body, Weight::Semibold, Align::Left, th().text);
     }
 
     /// Button that can't be pressed now, e.g. "Clear" on an empty macro.
     fn dead_button(&mut self, r: Rect, label: &str) {
-        self.g.stroke(r, 8.0, 1.0, th().border);
-        self.g.text(label, r, 14.0, Weight::Semibold, Align::Center, th().faint);
+        self.g.stroke(r, R_CTRL, 1.0, th().border);
+        self.g.text(label, Rect::new(r.x + 8.0, r.y, r.w - 16.0, r.h), Size::Body, Weight::Semibold, Align::Center, th().faint);
     }
 
     /// Underlined text tabs, e.g. "Buttons | Macros"; a tab is a page.
     fn tabs(&mut self, items: &[(Page, T)], current: Page) {
-        const SIZE: f32 = 14.0;
         const PAD: f32 = 12.0;
         let y = TOP;
         self.g.fill(Rect::new(X0, y + TAB_H - 1.0, CW, 1.0), 0.0, th().border);
@@ -465,12 +562,12 @@ impl Frame<'_> {
         let mut x = X0;
         for &(page, key) in items {
             let label = tr(key);
-            let r = Rect::new(x, y, text_w(label, SIZE) + 2.0 * PAD, TAB_H);
+            let r = Rect::new(x, y, text_w(label, Size::Body) + 2.0 * PAD, TAB_H);
             let hot = self.button(Act::Nav(page), r);
             let sel = page == current;
             let color = if sel || hot { th().text } else { th().muted };
             let weight = if sel { Weight::Semibold } else { Weight::Normal };
-            self.g.text(label, Rect::new(r.x, r.y, r.w, r.h - 4.0), SIZE, weight, Align::Center, color);
+            self.g.text(label, Rect::new(r.x, r.y, r.w, r.h - 4.0), Size::Body, weight, Align::Center, color);
             if sel {
                 self.g.fill(Rect::new(r.x + 4.0, r.y + r.h - 3.0, r.w - 8.0, 3.0), 1.5, th().accent);
             }
@@ -478,55 +575,147 @@ impl Frame<'_> {
         }
     }
 
-    /// Selectable tile with a title and optional subtitle.
+    /// Selectable chip or tile with a title and optional subtitle. Selected:
+    /// 2 px accent border, soft fill, and a check badge on tiles.
     fn choice(&mut self, act: Act, r: Rect, title: &str, sub: &str, selected: bool) {
         let hot = self.button(act, r);
+        let shape = Shape::of(r);
+        let radius = shape.radius(r);
         let bg = if selected { th().accent_soft } else if hot { th().hover } else { th().card };
-        self.g.fill(r, 10.0, th().card);
-        self.g.fill(r, 10.0, bg);
+        self.g.fill(r, radius, th().card);
+        self.g.fill(r, radius, bg);
         let (bw, bc) = if selected { (2.0, th().accent) } else { (1.0, th().border) };
-        self.g.stroke(r, 10.0, bw, bc);
+        self.g.stroke(r, radius, bw, bc);
+        if selected && shape == Shape::Tile {
+            check_badge(self.g, r);
+        }
 
         let color = if selected { th().text } else { th().muted };
+        let (x, w) = (r.x + 6.0, r.w - 12.0);
         if sub.is_empty() {
-            self.g.text(title, r, fit_size(title, r.w - 14.0, 15.0), Weight::Semibold, Align::Center, color);
+            self.g.text(title, Rect::new(x, r.y, w, r.h), Size::Body, Weight::Semibold, Align::Center, color);
             return;
         }
-        // Compact tiles (< 56 px) get smaller type so the two lines don't touch.
-        let (title_size, sub_size, pad) = if r.h < 56.0 { (14.0, 11.0, 4.0) } else { (17.0, 12.0, 8.0) };
-        let top = Rect::new(r.x, r.y + pad, r.w, r.h / 2.0);
-        let bottom = Rect::new(r.x, r.y + r.h / 2.0 + pad / 2.0, r.w, r.h / 2.0 - pad - 2.0);
+        // Compact tiles (< 56 px) keep body type so the two lines don't touch.
+        let (title_size, pad) = if r.h < 56.0 { (Size::Body, 3.0) } else { (Size::Large, 6.0) };
+        let top = Rect::new(x, r.y + pad, w, r.h / 2.0 - pad + 2.0);
+        let bottom = Rect::new(x, r.y + r.h / 2.0 + 2.0, w, r.h / 2.0 - pad - 2.0);
         self.g.text(title, top, title_size, Weight::Semibold, Align::Center, color);
-        self.g.text(sub, bottom, sub_size, Weight::Normal, Align::Center, th().faint);
+        self.g.text(sub, bottom, Size::Caption, Weight::Normal, Align::Center, th().subtle);
     }
 }
 
-/// Shrinks a font size so a one-line label fits `width` (rough estimate:
-/// a Latin glyph is ~0.56 em, CJK ~1 em).
-fn fit_size(text: &str, width: f32, size: f32) -> f32 {
-    const MIN: f32 = 10.0;
-    let ems = ems(text);
-    if ems * size <= width {
-        return size;
-    }
-    (width / ems).max(MIN)
+/// Look of a `choice`: short ones are pill chips, taller ones tiles.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    Chip,
+    Tile,
 }
 
-/// Rough text width in em (see `fit_size`).
+impl Shape {
+    const TILE_MIN_H: f32 = 44.0;
+
+    fn of(r: Rect) -> Shape {
+        if r.h >= Self::TILE_MIN_H { Shape::Tile } else { Shape::Chip }
+    }
+
+    fn radius(self, r: Rect) -> f32 {
+        match self {
+            Shape::Chip => r.h / 2.0,
+            Shape::Tile => R_CTRL,
+        }
+    }
+}
+
+/// Where a glyph sits next to a label.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Place {
+    Lead,
+    Trail,
+}
+
+/// Line glyphs on a 16 px box, 1.5 px stroke.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Glyph {
+    Check,
+    ChevronRight,
+    ChevronLeft,
+    ChevronDown,
+    ArrowRight,
+    ArrowLeft,
+}
+
+/// Draws `g` centered at `cx`, `cy`.
+fn glyph(gfx: &Gfx, g: Glyph, cx: f32, cy: f32, c: Color) {
+    const W: f32 = 1.5;
+    // The left arrow is the right one mirrored.
+    let mirror = if g == Glyph::ArrowLeft { -1.0 } else { 1.0 };
+    let pts: [(f32, f32); 3] = match g {
+        Glyph::Check => [(-3.5, 0.0), (-1.0, 2.5), (3.5, -2.5)],
+        Glyph::ChevronRight => [(-2.0, -4.5), (2.5, 0.0), (-2.0, 4.5)],
+        Glyph::ChevronLeft => [(2.0, -4.5), (-2.5, 0.0), (2.0, 4.5)],
+        Glyph::ChevronDown => [(-4.5, -2.0), (0.0, 2.5), (4.5, -2.0)],
+        Glyph::ArrowRight | Glyph::ArrowLeft => {
+            // Shaft here, the head below.
+            gfx.line(cx - 6.0, cy, cx + 6.0, cy, W, c);
+            [(2.0, -4.0), (6.0, 0.0), (2.0, 4.0)]
+        }
+    };
+    gfx.polyline(&pts.map(|(x, y)| (cx + x * mirror, cy + y)), W, c);
+}
+
+/// "Selected" mark: a 16 px accent disc with a check, centered just inside
+/// a tile's top-right corner so it stays clear of centered text.
+fn check_badge(g: &Gfx, r: Rect) {
+    const R: f32 = 8.0;
+    const INSET: f32 = 6.0;
+    let (cx, cy) = (r.x + r.w - INSET, r.y + INSET);
+    g.circle(cx, cy, R, th().accent);
+    glyph(g, Glyph::Check, cx, cy, th().on_accent);
+}
+
+/// Placeholder bar while a value from the mouse is still on its way.
+fn skeleton(g: &Gfx, r: Rect) {
+    g.fill(r, R_INNER, th().border);
+}
+
+/// Mouse name for the sidebar in up to two lines: breaks after a space or
+/// "/" so "Logitech Marathon Mouse/Performance Plus M705" stays inside the
+/// panel; the second line is trimmed with "…" when still too long.
+fn name_lines(name: &str, width: f32, size: Size) -> (String, Option<String>) {
+    if text_w(name, size) <= width {
+        return (name.to_string(), None);
+    }
+
+    // Last break (after a space or "/") whose first line still fits.
+    let breaks = name.char_indices().filter(|&(_, c)| c == ' ' || c == '/').map(|(i, c)| i + c.len_utf8());
+    let Some(at) = breaks.rev().find(|&i| text_w(name[..i].trim_end(), size) <= width) else {
+        return (name.to_string(), None);
+    };
+    (name[..at].trim_end().to_string(), Some(name[at..].trim_start().to_string()))
+}
+
+/// Rough text width in em: a Latin glyph is ~0.56 em, CJK ~1 em.
 fn ems(text: &str) -> f32 {
     text.chars().map(|c| if (c as u32) < 0x2E80 { 0.56 } else { 1.0 }).sum()
 }
 
 /// Rough width of a one-line text in DIPs.
-fn text_w(text: &str, size: f32) -> f32 {
-    ems(text) * size
+fn text_w(text: &str, size: Size) -> f32 {
+    ems(text) * size.px()
+}
+
+/// "56 %", or "≈ 50 %" for a coarse level.
+pub fn battery_text(v: &View) -> String {
+    let approx = if v.battery_approx { "≈ " } else { "" };
+    format!("{approx}{} %", v.battery)
 }
 
 pub fn battery_color(v: &View) -> Color {
     match v.battery {
         _ if v.charge == Charge::Charging => th().accent,
         b if b <= LOW => th().bad,
-        b if b <= MID => th().warn,
+        b if b <= MID && !v.battery_approx => th().warn,
         _ => th().good,
     }
 }
@@ -536,9 +725,19 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
     f.g.clear(th().bg);
 
     sidebar(&mut f, v);
+    status_bar(&mut f, v);
     let title = Rect::new(X0, 18.0, CW, 36.0);
-    f.g.text(tr(v.page.title()), title, 24.0, Weight::Bold, Align::Left, th().text);
+    f.g.text(tr(v.page.title()), title, Size::Title, Weight::Semibold, Align::Left, th().text);
     header_status(&mut f, v);
+    // Over the title row: never covers controls of the page.
+    if let Some(b) = &v.banner {
+        device::banner(&mut f, b);
+    }
+    // No permission: say so where the mouse is expected.
+    let hint_page = matches!(v.page, Page::Overview | Page::Mouse);
+    if v.banner.is_none() && hint_page && v.access == Access::Denied {
+        device::access_banner(&mut f);
+    }
 
     match v.page {
         Page::Overview => overview(&mut f, v),
@@ -572,11 +771,15 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
     match v.dialog {
         Some(Dialog::About) => {
             f.hits.clear();
-            about_dialog(&mut f);
+            about_dialog(&mut f, v);
         }
         Some(Dialog::AssignMacro) => {
             f.hits.clear();
             buttons::assign_dialog(&mut f, v);
+        }
+        Some(Dialog::Update) => {
+            f.hits.clear();
+            update::update_dialog(&mut f, &v.update);
         }
         None => {}
     }
@@ -586,6 +789,11 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
     } else if let Some(d) = &v.detect {
         f.hits.clear();
         device::detect_dialog(&mut f, d);
+    }
+    // Opened from the detect dialog too: on top of it.
+    if let Some(r) = v.report.as_ref().filter(|_| !v.ask_setup) {
+        f.hits.clear();
+        report::report_dialog(&mut f, r);
     }
 
     focus_ring(&f, v.focus);
@@ -598,59 +806,66 @@ fn focus_ring(f: &Frame, focus: Option<Focus>) {
     let Some(h) = focus.and_then(|x| x.locate(&acts)).map(|i| f.hits[i]) else {
         return;
     };
-    let r = Rect::new(h.rect.x - 3.0, h.rect.y - 3.0, h.rect.w + 6.0, h.rect.h + 6.0);
-    // Text color, so it differs from the accent border of a selected tile.
-    f.g.stroke(r, 10.0, 2.0, th().text);
+    // 2 px accent ring, 2 px away from the element (outside a selected
+    // tile's own accent border).
+    const OFFSET: f32 = 2.0;
+    const WIDTH: f32 = 2.0;
+    let d = OFFSET + WIDTH;
+    let r = Rect::new(h.rect.x - d, h.rect.y - d, h.rect.w + 2.0 * d, h.rect.h + 2.0 * d);
+    f.g.stroke(r, R_CTRL + d, WIDTH, th().accent);
 }
 
 /// Right side of the title row: offline note on pages that configure the
 /// mouse, otherwise whether the last change reached it.
 fn header_status(f: &mut Frame, v: &View) {
     const H: f32 = 28.0;
-    const SIZE: f32 = 12.5;
     const MAX_W: f32 = 380.0;
     let offline = v.page.configures() && !v.connected;
     let (text, dot, alpha) = match v.sync {
         _ if offline => (tr(T::OfflineBanner), th().warn, 255),
-        Sync::Waiting => (tr(T::SyncWaiting), th().faint, 255),
+        Sync::Waiting => (tr(T::SyncWaiting), th().subtle, 255),
         Sync::Saved(a) => (tr(T::SyncSaved), th().good, a),
         Sync::Hidden => return,
     };
-    let w = (text_w(text, SIZE) + 52.0).min(MAX_W);
+    let w = (text_w(text, Size::Caption) + 52.0).min(MAX_W);
     let r = Rect::new(X0 + CW - w, 22.0, w, H);
     f.g.fill(r, H / 2.0, Color(th().card.0, alpha));
     f.g.stroke(r, H / 2.0, 1.0, Color(th().border.0, alpha));
     f.g.circle(r.x + 15.0, r.y + H / 2.0, 4.0, Color(dot.0, alpha));
     let label = Rect::new(r.x + 26.0, r.y, r.w - 34.0, H);
-    f.g.text(text, label, fit_size(text, label.w, SIZE), Weight::Normal, Align::Left, Color(th().muted.0, alpha));
+    f.g.text(text, label, Size::Caption, Weight::Normal, Align::Left, Color(th().muted.0, alpha));
 }
 
 /// Bottom message with an optional "Undo".
 fn toast(f: &mut Frame, t: &Toast) {
     const W: f32 = 420.0;
     const H: f32 = 44.0;
-    let r = Rect::new(X0 + (CW - W) / 2.0, HEIGHT - H - 16.0, W, H);
-    f.g.fill(r, 10.0, th().card_hi);
-    f.g.stroke(r, 10.0, 1.0, th().faint);
+    let r = Rect::new(X0 + (CW - W) / 2.0, PAGE_H - H - 4.0, W, H);
+    f.g.fill(r, RADIUS, th().card_hi);
+    f.g.stroke(r, RADIUS, 1.0, th().border);
 
-    let undo_w = if t.undo { text_w(tr(T::UndoBtn), 14.0) + 32.0 } else { 0.0 };
+    let undo_w = if t.undo { text_w(tr(T::UndoBtn), Size::Body) + 32.0 } else { 0.0 };
     let label = Rect::new(r.x + 18.0, r.y, r.w - 36.0 - undo_w, r.h);
-    f.g.text(&t.text, label, fit_size(&t.text, label.w, 13.5), Weight::Normal, Align::Left, th().text);
+    f.g.text(&t.text, label, Size::Body, Weight::Normal, Align::Left, th().text);
     if !t.undo {
         return;
     }
     let b = Rect::new(r.x + r.w - undo_w - 8.0, r.y + 6.0, undo_w, r.h - 12.0);
     let hot = f.button(Act::Undo, b);
-    f.g.fill(b, 8.0, if hot { th().hover } else { th().card_hi });
-    f.g.text(tr(T::UndoBtn), b, 14.0, Weight::Semibold, Align::Center, th().accent);
+    f.g.fill(b, R_CTRL, if hot { th().hover } else { th().card_hi });
+    f.g.text(tr(T::UndoBtn), b, Size::Body, Weight::Semibold, Align::Center, th().accent);
 }
 
-// ---- icons (24 x 24 grid scaled into `s` px at x, y) -----------------------
+// ---- icons (24-unit drawings on a 20 px grid at x, y) ------------------------
+
+const ICON_PX: f32 = 20.0;
+const ICON_SCALE: f32 = ICON_PX / 24.0;
+const ICON_STROKE: f32 = 1.5;
 
 fn icon(g: &Gfx, page: Page, x: f32, y: f32, c: Color) {
-    let s = 18.0 / 24.0;
+    let s = ICON_SCALE;
     let p = |a: f32, b: f32| (x + a * s, y + b * s);
-    let w = 1.8;
+    let w = ICON_STROKE;
 
     match page {
         Page::Overview => {
@@ -692,28 +907,31 @@ fn icon(g: &Gfx, page: Page, x: f32, y: f32, c: Color) {
         Page::Stats => {
             for (a, top) in [(5.0, 11.0), (12.0, 5.0), (19.0, 14.0)] {
                 let ((x0, y0), (_, y1)) = (p(a, top), p(a, 20.0));
-                g.line(x0, y0, x0, y1, w + 0.4, c);
+                g.line(x0, y0, x0, y1, w + 0.5, c);
             }
         }
         _ => {
+            // Two sliders: a track broken around its knob.
+            const KNOB: f32 = 3.0;
             for (b, knob) in [(7.0, 16.0), (17.0, 8.0)] {
                 let ((x0, y0), (x1, _)) = (p(3.0, b), p(21.0, b));
-                g.line(x0, y0, x1, y0, w, c);
                 let (kx, ky) = p(knob, b);
-                g.circle(kx, ky, 3.0 * s + 1.0, th().side);
-                g.ring(kx, ky, 3.0 * s, w, c);
+                let gap = (KNOB + 1.5) * s;
+                g.line(x0, y0, kx - gap, y0, w, c);
+                g.line(kx + gap, y0, x1, y0, w, c);
+                g.ring(kx, ky, KNOB * s, w, c);
             }
         }
     }
 }
 
-/// Circled "i" (About), on the same 18 px grid as `icon`.
+/// Circled "i" (About), on the same 20 px grid as `icon`.
 fn info_icon(g: &Gfx, x: f32, y: f32, c: Color) {
-    const S: f32 = 18.0 / 24.0;
+    const S: f32 = ICON_SCALE;
     let (cx, cy) = (x + 12.0 * S, y + 12.0 * S);
-    g.ring(cx, cy, 9.0 * S, 1.8, c);
+    g.ring(cx, cy, 9.0 * S, ICON_STROKE, c);
     g.circle(cx, cy - 4.0 * S, 1.3, c);
-    g.line(cx, cy - 1.0 * S, cx, cy + 5.0 * S, 1.8, c);
+    g.line(cx, cy - 1.0 * S, cx, cy + 5.0 * S, ICON_STROKE, c);
 }
 
 /// The app's mouse with whiskers, matching the exe icon.
@@ -739,26 +957,41 @@ fn mouse_logo(g: &Gfx, x: f32, y: f32) {
 // ---- sidebar -------------------------------------------------------------
 
 fn sidebar(f: &mut Frame, v: &View) {
-    f.g.fill(Rect::new(0.0, 0.0, SIDE_W, HEIGHT), 0.0, th().side);
+    // Same background as the title bar and page, split by a 1 px line.
+    f.g.fill(Rect::new(SIDE_W - 1.0, 0.0, 1.0, HEIGHT), 0.0, th().border);
 
     const BOTTOM: f32 = HEIGHT - 14.0;
     const ITEM_H: f32 = NAV_STEP - 4.0;
 
     // Logo and name open About; the mouse name opens its details.
-    let brand = Rect::new(14.0, 12.0, SIDE_W - 28.0, 28.0);
+    // Kept above the mouse name, so its focus ring leaves that line free.
+    // Logo and name share one centre line, the name as tall as the logo.
+    const LOGO_X: f32 = 24.0;
+    const LOGO_Y: f32 = 18.0;
+    const LOGO_H: f32 = 27.0;
+    let brand = Rect::new(14.0, LOGO_Y - 6.0, SIDE_W - 28.0, LOGO_H + 12.0);
     let hot = f.button(Act::About, brand);
-    mouse_logo(f.g, 24.0, 20.0);
+    mouse_logo(f.g, LOGO_X, LOGO_Y);
     let name_c = if hot { th().accent } else { th().text };
-    f.g.text(crate::APP_NAME, Rect::new(62.0, 16.0, 140.0, 24.0), 18.0, Weight::Bold, Align::Left, name_c);
-    // Mouse name and its status line open Settings › Mouse.
-    let sub = Rect::new(62.0, 38.0, SIDE_W - 76.0, 16.0);
-    let status = (v.caps.battery || v.has_battery).then(|| Rect::new(sub.x, sub.y + 18.0, sub.w, 16.0));
-    let area_h = status.map_or(sub.h, |r| r.y + r.h - sub.y);
-    let hot = f.button(Act::Nav(Page::Mouse), Rect::new(sub.x, sub.y - 2.0, sub.w, area_h + 4.0));
-    let sub_c = if hot { th().accent } else { th().faint };
-    f.g.text(&v.device_name, sub, fit_size(&v.device_name, sub.w, 11.0), Weight::Normal, Align::Left, sub_c);
-    if let Some(r) = status {
-        status_line(f, v, r);
+    let title = Rect::new(LOGO_X + 32.0, LOGO_Y + LOGO_H / 2.0 - 18.0, 140.0, 36.0);
+    f.g.text(crate::APP_NAME, title, Size::Title, Weight::Bold, Align::Left, name_c);
+
+    // Mouse name under the logo, flush with the nav icons; a click opens
+    // the "which mouse" dialog. Long names take two lines.
+    const LINE_H: f32 = 16.0;
+    let name_w = SIDE_W - LOGO_X - 20.0;
+    let (first, second) = name_lines(&v.device_name, name_w, Size::Caption);
+    let lines = if second.is_some() { 2.0 } else { 1.0 };
+    let sub = Rect::new(LOGO_X, LOGO_Y + LOGO_H + 14.0, name_w, LINE_H * lines);
+    let pick = Rect::new(sub.x - 6.0, sub.y - 4.0, sub.w + 12.0, sub.h + 8.0);
+    let hot = f.button(Act::ChangeMouse, pick);
+    if hot {
+        f.g.fill(pick, R_INNER, th().hover);
+    }
+    let name_c = if hot { th().text } else { th().subtle };
+    f.g.text(&first, Rect::new(sub.x, sub.y, name_w, LINE_H), Size::Caption, Weight::Normal, Align::Left, name_c);
+    if let Some(rest) = &second {
+        f.g.text(rest, Rect::new(sub.x, sub.y + LINE_H, name_w, LINE_H), Size::Caption, Weight::Normal, Align::Left, name_c);
     }
 
     for (k, page) in nav_pages(&v.caps).into_iter().enumerate() {
@@ -775,23 +1008,42 @@ fn sidebar(f: &mut Frame, v: &View) {
 
 }
 
-/// "● Connected · 55 %" (⚡ while charging): green, warn colour when the
-/// battery runs low, muted "● Disconnected" offline.
-fn status_line(f: &mut Frame, v: &View, r: Rect) {
-    const SIZE: f32 = 11.5;
+/// Status row under the cards: a new version on the left, connection and
+/// battery on the right (a click opens Settings › Mouse).
+fn status_bar(f: &mut Frame, v: &View) {
+    update::status_notice(f, &v.update);
+    if !(v.caps.battery || v.has_battery) {
+        return;
+    }
+    // Text right-aligned, dot after it at the cards' edge: no width
+    // estimate decides where the text ends (fonts differ per OS).
+    const DOT_R: f32 = 3.5;
+    let (text, c) = status_text(v);
+    let right = X0 + CW;
+    let y = PAGE_H + STATUS_H / 2.0;
+    let area_w = text_w(&text, Size::Caption) + 28.0;
+    let area = Rect::new(right - area_w + 6.0, PAGE_H + 3.0, area_w, STATUS_H - 6.0);
+    if f.button(Act::Nav(Page::Mouse), area) {
+        f.g.fill(area, R_INNER, th().hover);
+    }
+    f.g.circle(right - DOT_R, y, DOT_R, c);
+    let label = Rect::new(X0 + CW / 2.0, y - 8.0, CW / 2.0 - 2.0 * DOT_R - 6.0, 16.0);
+    f.g.text(&text, label, Size::Caption, Weight::Normal, Align::Right, c);
+}
+
+/// "Connected · 55 % ●" (⚡ while charging): green, warn colour when the
+/// battery runs low, muted "Disconnected ●" offline.
+fn status_text(v: &View) -> (String, Color) {
     const LOW_PCT: u8 = 20;
-    let (text, c) = if !v.connected {
+    if !v.connected {
         (tr(T::Disconnected).to_string(), th().muted)
     } else if !v.has_battery {
         (tr(T::LinkConnected).to_string(), th().good)
     } else {
         let charging = if v.charge == Charge::Charging { " ⚡" } else { "" };
         let c = if v.battery < LOW_PCT { th().warn } else { th().good };
-        (format!("{} · {} %{charging}", tr(T::LinkConnected), v.battery), c)
-    };
-    f.g.circle(r.x + 3.5, r.y + r.h / 2.0, 3.5, c);
-    let label = Rect::new(r.x + 12.0, r.y, r.w - 12.0, r.h);
-    f.g.text(&text, label, fit_size(&text, label.w, SIZE), Weight::Normal, Align::Left, c);
+        (format!("{} · {}{charging}", tr(T::LinkConnected), battery_text(v)), c)
+    }
 }
 
 /// Sidebar entry: a page, or About (opens its dialog).
@@ -810,28 +1062,37 @@ fn nav_item(f: &mut Frame, item: Nav, r: Rect, mark: Mark) {
     let sel = mark == Mark::Current;
     let hot = f.button(act, r);
     if sel || hot {
-        f.g.fill(r, 8.0, if sel { th().accent_soft } else { th().hover });
+        f.g.fill(r, R_CTRL, if sel { th().accent_soft } else { th().hover });
     }
     if sel {
         f.g.fill(Rect::new(r.x, r.y + 7.0, 3.0, r.h - 14.0), 1.5, th().accent);
     }
     let c = if sel { th().accent } else { th().muted };
     match item {
-        Nav::Page(p) => icon(f.g, p, r.x + 12.0, r.y + 9.0, c),
-        Nav::About => info_icon(f.g, r.x + 12.0, r.y + 9.0, c),
+        Nav::Page(p) => icon(f.g, p, r.x + 10.0, r.y + 8.0, c),
+        Nav::About => info_icon(f.g, r.x + 10.0, r.y + 8.0, c),
     }
     let text_r = Rect::new(r.x + 42.0, r.y, r.w - 42.0, r.h);
     let weight = if sel { Weight::Semibold } else { Weight::Normal };
-    f.g.text(label, text_r, 14.0, weight, Align::Left, if sel { th().text } else { th().muted });
+    f.g.text(label, text_r, Size::Body, weight, Align::Left, if sel { th().text } else { th().muted });
 }
 
 // ---- pages ---------------------------------------------------------------
 
+/// Value not known yet (no answer from the mouse, no measurement).
+const UNKNOWN: &str = "—";
+
+/// Caption, big value, note; an `UNKNOWN` value shows a skeleton bar.
 fn stat_card(f: &mut Frame, r: Rect, label: &str, value: &str, note: &str) {
     f.card(r);
     f.caption_in(label, r.x + 16.0, r.y + 16.0, r.w - 32.0);
-    f.g.text(value, Rect::new(r.x + 16.0, r.y + 34.0, r.w - 32.0, 36.0), 26.0, Weight::Bold, Align::Left, th().text);
-    f.g.text(note, Rect::new(r.x + 16.0, r.y + 74.0, r.w - 32.0, 32.0), 12.0, Weight::Normal, Align::Wrap, th().muted);
+    let value_r = Rect::new(r.x + 16.0, r.y + 34.0, r.w - 32.0, 36.0);
+    if value == UNKNOWN {
+        skeleton(f.g, Rect::new(value_r.x, value_r.y + 8.0, 88.0, 22.0));
+    } else {
+        f.g.text(value, value_r, Size::Title, Weight::Bold, Align::Left, th().text);
+    }
+    f.g.text(note, Rect::new(r.x + 16.0, r.y + 74.0, r.w - 32.0, 32.0), Size::Caption, Weight::Normal, Align::Wrap, th().muted);
 }
 
 fn overview(f: &mut Frame, v: &View) {
@@ -841,13 +1102,22 @@ fn overview(f: &mut Frame, v: &View) {
     }
     let tint = battery_color(v);
 
+    // Hero: battery level, bar and note, the mouse drawing on the right.
+    const ART_W: f32 = 52.0;
+    const ART_H: f32 = 78.0;
+    const SIDE_PAD: f32 = 20.0;
     let card = Rect::new(X0, TOP, CW, 118.0);
     f.card(card);
-    f.caption(tr(T::Battery), card.x + 20.0, card.y + 22.0);
+    f.caption(tr(T::Battery), card.x + SIDE_PAD, card.y + 22.0);
     let shown = v.connected && v.has_battery;
-    let big = if shown { format!("{} %", v.battery) } else { "—".into() };
-    let big_c = if shown { tint } else { th().faint };
-    f.g.text(&big, Rect::new(card.x + 20.0, card.y + 40.0, 170.0, 56.0), 44.0, Weight::Bold, Align::Left, big_c);
+    if shown {
+        let big = Rect::new(card.x + SIDE_PAD, card.y + 40.0, 170.0, 56.0);
+        f.g.text(&battery_text(v), big, Size::Hero, Weight::Bold, Align::Left, tint);
+    } else {
+        skeleton(f.g, Rect::new(card.x + SIDE_PAD, card.y + 52.0, 120.0, 34.0));
+    }
+    let art = Rect::new(card.x + card.w - SIDE_PAD - ART_W, card.y + (card.h - ART_H) / 2.0, ART_W, ART_H);
+    art::mouse(f, art, art::Marks::None);
 
     let note = match v.charge {
         _ if !shown => v.link.as_str(),
@@ -855,10 +1125,14 @@ fn overview(f: &mut Frame, v: &View) {
         Charge::Full => tr(T::FullyCharged),
         Charge::Discharging => v.battery_note.as_str(),
     };
-    f.bar(Rect::new(card.x + 200.0, card.y + 46.0, card.w - 220.0, 10.0), if shown { v.battery } else { 0 }, tint);
-    f.g.text(note, Rect::new(card.x + 200.0, card.y + 64.0, card.w - 220.0, 22.0), 13.0, Weight::Normal, Align::Left, th().muted);
+    let bar_w = card.w - 200.0 - 2.0 * SIDE_PAD - ART_W;
+    f.bar(Rect::new(card.x + 200.0, card.y + 46.0, bar_w, 10.0), if shown { v.battery } else { 0 }, tint);
+    f.g.text(note, Rect::new(card.x + 200.0, card.y + 64.0, bar_w, 40.0), Size::Body, Weight::Normal, Align::Wrap, th().muted);
 
-    let w = (CW - 2.0 * GAP) / 3.0;
+    // No DPI card for a mouse that neither sets nor reports DPI (M705).
+    let dpi_card = v.caps.dpi != DpiUi::None || v.basic.dpi.is_some() || v.basic.stage.is_some();
+    let cards = if dpi_card { 3.0 } else { 2.0 };
+    let w = (CW - (cards - 1.0) * GAP) / cards;
     let y = TOP + 118.0 + GAP;
     let stages = v.caps.dpi == DpiUi::Stages;
     let (dpi, note) = match v.stages.get(v.active) {
@@ -870,27 +1144,31 @@ fn overview(f: &mut Frame, v: &View) {
             match (v.basic.dpi, v.basic.stage, v.basic.stages) {
                 (Some(d), ..) => (d.to_string(), stage_note),
                 (None, Some(s), Some(n)) => (format!("{s} / {n}"), stage_note),
-                _ => ("—".into(), String::new()),
+                _ => (UNKNOWN.into(), String::new()),
             }
         }
         Some(s) => (s.dpi.to_string(), fill(tr(T::StageOf), &[&(v.active + 1).to_string(), &v.stages.iter().filter(|s| s.enabled).count().to_string()])),
-        None => ("—".into(), String::new()),
+        None => (UNKNOWN.into(), String::new()),
     };
-    stat_card(f, Rect::new(X0, y, w, 110.0), tr(T::ActiveDpi), &dpi, &note);
+    let mut x = X0;
+    if dpi_card {
+        stat_card(f, Rect::new(x, y, w, 110.0), tr(T::ActiveDpi), &dpi, &note);
+        x += w + GAP;
+    }
     let hz = match stages {
         true => format!("{} Hz", RATES[v.polling]),
-        false => v.basic.rate.map_or("—".into(), |r| format!("{r} Hz")),
+        false => v.basic.rate.map_or(UNKNOWN.into(), |r| format!("{r} Hz")),
     };
     if v.caps.polling {
         // Only a real measurement is worth a line.
         let note = v.measured.map(|hz| fill(tr(T::MeasuredValue), &[&format!("{hz} Hz")])).unwrap_or_default();
-        stat_card(f, Rect::new(X0 + w + GAP, y, w, 110.0), tr(T::PollingRate), &hz, &note);
+        stat_card(f, Rect::new(x, y, w, 110.0), tr(T::PollingRate), &hz, &note);
     } else {
         // The mouse doesn't report its rate: show what Raw Input measures.
-        stat_card(f, Rect::new(X0 + w + GAP, y, w, 110.0), tr(T::Measured), &measured(v), tr(T::PollingRate));
+        rate_card(f, Rect::new(x, y, w, 110.0), v.last_rate);
     }
     let today = fill(tr(T::ClicksMoved), &[&v.today_distance]);
-    stat_card(f, Rect::new(X0 + 2.0 * (w + GAP), y, w, 110.0), tr(T::Today), &v.today_clicks, &today);
+    stat_card(f, Rect::new(x + w + GAP, y, w, 110.0), tr(T::Today), &v.today_clicks, &today);
 
     // Quick DPI switch: one chip per enabled stage.
     let mut y = y + 110.0 + GAP;
@@ -909,7 +1187,38 @@ fn overview(f: &mut Frame, v: &View) {
 }
 
 fn measured(v: &View) -> String {
-    v.measured.map_or("—".into(), |hz| format!("{hz} Hz"))
+    v.measured.map_or(UNKNOWN.into(), |hz| format!("{hz} Hz"))
+}
+
+/// Measured rate card: (value, note); no value until the mouse moved.
+fn rate_value(last: Option<u32>) -> (String, &'static str) {
+    match last {
+        Some(hz) => (format!("{hz} Hz"), tr(T::MeasuredMoving)),
+        None => (String::new(), tr(T::MoveMouse)),
+    }
+}
+
+/// "POLLING RATE  125 Hz  Measured while moving", or a muted "Move the
+/// mouse" before the first measurement (no skeleton: nothing is loading).
+fn rate_card(f: &mut Frame, r: Rect, last: Option<u32>) {
+    let (value, note) = rate_value(last);
+    if !value.is_empty() {
+        stat_card(f, r, tr(T::PollingRate), &value, note);
+        return;
+    }
+    f.card(r);
+    f.caption_in(tr(T::PollingRate), r.x + 16.0, r.y + 16.0, r.w - 32.0);
+    let hint = Rect::new(r.x + 16.0, r.y + 34.0, r.w - 32.0, 36.0);
+    f.g.text(note, hint, Size::Large, Weight::Normal, Align::Left, th().muted);
+}
+
+/// "Name · FW 1.77", or the name alone when both don't fit `width`.
+fn device_text(name: &str, fw: &str, width: f32) -> String {
+    let full = format!("{name} · FW {fw}");
+    if fw.is_empty() || text_w(&full, Size::Body) > width {
+        return name.to_string();
+    }
+    full
 }
 
 /// Compact mouse line, e.g. "White Shark Lionel · FW 1.77      Details ›";
@@ -918,17 +1227,17 @@ fn device_line(f: &mut Frame, v: &View, y: f32) {
     const H: f32 = 40.0;
     let r = Rect::new(X0, y, CW, H);
     let hot = f.button(Act::Nav(Page::Mouse), r);
-    f.g.fill(r, RADIUS, if hot { th().hover } else { th().card });
-    f.g.stroke(r, RADIUS, 1.0, th().border);
+    f.surface(r, if hot { th().hover } else { th().card });
 
-    let fw = &v.device.firmware;
-    let text = if fw.is_empty() { v.device_name.clone() } else { format!("{} · FW {fw}", v.device_name) };
-    let details = format!("{} ›", tr(T::Details));
-    let link_w = text_w(&details, 13.0) + 20.0;
-    let left = Rect::new(r.x + 18.0, r.y, r.w - 36.0 - link_w, H);
-    f.g.text(&text, left, fit_size(&text, left.w, 13.0), Weight::Normal, Align::Left, th().muted);
-    let right = Rect::new(r.x + r.w - 18.0 - link_w, r.y, link_w, H);
-    f.g.text(&details, right, 13.0, Weight::Semibold, Align::Right, if hot { th().accent_hover } else { th().accent });
+    let details = tr(T::Details);
+    let link_c = if hot { th().accent_hover } else { th().accent };
+    let link_w = text_w(details, Size::Body) + 20.0;
+    let left = Rect::new(r.x + 18.0, r.y, r.w - 52.0 - link_w, H);
+    let text = device_text(&v.device_name, &v.device.firmware, left.w);
+    f.g.text(&text, left, Size::Body, Weight::Normal, Align::Left, th().muted);
+    let right = Rect::new(r.x + r.w - 34.0 - link_w, r.y, link_w, H);
+    f.g.text(details, right, Size::Body, Weight::Semibold, Align::Right, link_c);
+    glyph(f.g, Glyph::ChevronRight, r.x + r.w - 24.0, r.y + H / 2.0, link_c);
 }
 
 /// Overview for a mouse without a driver: model and today's statistics.
@@ -936,14 +1245,14 @@ fn overview_basic(f: &mut Frame, v: &View) {
     let card = Rect::new(X0, TOP, CW, 96.0);
     f.card(card);
     f.caption(tr(T::DevModel), card.x + 20.0, card.y + 20.0);
-    f.g.text(&v.device_name, Rect::new(card.x + 20.0, card.y + 40.0, card.w - 240.0, 36.0), 24.0, Weight::Bold, Align::Left, th().text);
+    f.g.text(&v.device_name, Rect::new(card.x + 20.0, card.y + 40.0, card.w - 240.0, 36.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
 
     // Bluetooth battery, when Windows reports one.
     if v.connected && v.has_battery {
         let tint = battery_color(v);
         f.caption(tr(T::Battery), card.x + card.w - 200.0, card.y + 20.0);
         let pct = Rect::new(card.x + card.w - 200.0, card.y + 36.0, 180.0, 30.0);
-        f.g.text(&format!("{} %", v.battery), pct, 22.0, Weight::Bold, Align::Left, tint);
+        f.g.text(&battery_text(v), pct, Size::Subtitle, Weight::Bold, Align::Left, tint);
         f.bar(Rect::new(card.x + card.w - 200.0, card.y + 70.0, 180.0, 8.0), v.battery, tint);
     }
 
@@ -951,7 +1260,7 @@ fn overview_basic(f: &mut Frame, v: &View) {
     let y = card.y + card.h + GAP;
     let today = fill(tr(T::ClicksMoved), &[&v.today_distance]);
     stat_card(f, Rect::new(X0, y, w, 110.0), tr(T::Today), &v.today_clicks, &today);
-    stat_card(f, Rect::new(X0 + w + GAP, y, w, 110.0), tr(T::Measured), &measured(v), tr(T::PollingRate));
+    rate_card(f, Rect::new(X0 + w + GAP, y, w, 110.0), v.last_rate);
     device_line(f, v, y + 110.0 + GAP);
 }
 
@@ -960,8 +1269,10 @@ fn dpi_single(f: &mut Frame, v: &View) {
     let card = Rect::new(X0, TOP, CW, 140.0);
     f.card(card);
     f.caption(tr(T::ActiveDpi), card.x + 20.0, card.y + 18.0);
-    let value = v.basic.dpi.map_or("—".into(), |d| format!("{d} DPI"));
-    f.g.text(&value, Rect::new(card.x + 20.0, card.y + 36.0, card.w - 40.0, 44.0), 32.0, Weight::Bold, Align::Left, th().text);
+    match v.basic.dpi {
+        Some(d) => f.g.text(&format!("{d} DPI"), Rect::new(card.x + 20.0, card.y + 36.0, card.w - 40.0, 44.0), Size::Title, Weight::Bold, Align::Left, th().text),
+        None => skeleton(f.g, Rect::new(card.x + 20.0, card.y + 44.0, 140.0, 28.0)),
+    }
 
     let vals = &v.basic.values;
     if vals.len() < 2 {
@@ -978,8 +1289,8 @@ fn dpi_single(f: &mut Frame, v: &View) {
     f.hits.push(Hit { act: Act::BasicDpi, rect: area, kind: Kind::Slider { x0, x1, steps: vals.len() } });
 
     let ends = Rect::new(x0, cy + 10.0, x1 - x0, 18.0);
-    f.g.text(&vals[0].to_string(), ends, 11.0, Weight::Normal, Align::Left, th().faint);
-    f.g.text(&vals[vals.len() - 1].to_string(), ends, 11.0, Weight::Normal, Align::Right, th().faint);
+    f.g.text(&vals[0].to_string(), ends, Size::Caption, Weight::Normal, Align::Left, th().subtle);
+    f.g.text(&vals[vals.len() - 1].to_string(), ends, Size::Caption, Weight::Normal, Align::Right, th().subtle);
 }
 
 fn dpi(f: &mut Frame, v: &View) {
@@ -990,9 +1301,9 @@ fn dpi(f: &mut Frame, v: &View) {
     const ROW: f32 = 52.0;
     const HEAD: f32 = 34.0;
     // Column x offsets: active radio, cycle switch, color dot, slider.
-    const COL_CYCLE: f32 = 72.0;
-    const COL_COLOR: f32 = 132.0;
-    const COL_DPI: f32 = 184.0;
+    const COL_CYCLE: f32 = 84.0;
+    const COL_COLOR: f32 = 144.0;
+    const COL_DPI: f32 = 204.0;
     let card = Rect::new(X0, TOP, CW, HEAD + ROW * v.stages.len() as f32 + 8.0);
     f.card(card);
 
@@ -1007,7 +1318,7 @@ fn dpi(f: &mut Frame, v: &View) {
         let y = card.y + HEAD + i as f32 * ROW;
         let active = i == v.active;
         if active {
-            f.g.fill(Rect::new(card.x + 8.0, y, card.w - 16.0, ROW), 8.0, th().card_hi);
+            f.g.fill(Rect::new(card.x + 8.0, y, card.w - 16.0, ROW), R_CTRL, th().card_hi);
         }
         let cy = y + ROW / 2.0;
 
@@ -1022,7 +1333,7 @@ fn dpi(f: &mut Frame, v: &View) {
         }
 
         let num_c = if s.enabled { th().text } else { th().faint };
-        f.g.text(&(i + 1).to_string(), Rect::new(card.x + 50.0, y, 16.0, ROW), 14.0, Weight::Semibold, Align::Left, num_c);
+        f.g.text(&(i + 1).to_string(), Rect::new(card.x + 50.0, y, 16.0, ROW), Size::Body, Weight::Semibold, Align::Left, num_c);
 
         // The active stage can't be switched off (note under the card).
         let toggle_act = (!active).then_some(Act::Toggle(i));
@@ -1052,12 +1363,12 @@ fn dpi(f: &mut Frame, v: &View) {
         }
 
         let label = Rect::new(card.x + card.w - 108.0, y, 92.0, ROW);
-        f.g.text(&format!("{} DPI", s.dpi), label, 15.0, Weight::Semibold, Align::Right, num_c);
+        f.g.text(&format!("{} DPI", s.dpi), label, Size::Large, Weight::Semibold, Align::Right, num_c);
     }
 
     // Why the active stage's switch is greyed out.
     let r = Rect::new(X0, card.y + card.h + 12.0, CW, 36.0);
-    f.g.text(tr(T::ActiveLocked), r, 12.0, Weight::Normal, Align::Wrap, th().muted);
+    f.g.text(tr(T::ActiveLocked), r, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
 }
 
 fn performance(f: &mut Frame, v: &View) {
@@ -1084,9 +1395,9 @@ fn performance(f: &mut Frame, v: &View) {
     // Measured rate: one line, then how to measure it.
     let y = TILE_Y + TILE_H + 10.0;
     let line = fill(tr(T::MeasuredValue), &[&measured(v)]);
-    f.g.text(&line, Rect::new(X0, y, CW, 20.0), 13.5, Weight::Semibold, Align::Left, th().text);
+    f.g.text(&line, Rect::new(X0, y, CW, 20.0), Size::Body, Weight::Semibold, Align::Left, th().text);
     let hint = Rect::new(X0, y + 22.0, CW, 32.0);
-    f.g.text(tr(T::PollingHelp), hint, 12.0, Weight::Normal, Align::Wrap, th().muted);
+    f.g.text(tr(T::PollingHelp), hint, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
 
     if !v.caps.extras {
         return;
@@ -1097,7 +1408,7 @@ fn performance(f: &mut Frame, v: &View) {
     f.card(card);
     f.caption(tr(T::Debounce), card.x + 20.0, card.y + 16.0);
     let help = Rect::new(card.x + 20.0, card.y + 34.0, card.w - 40.0, 32.0);
-    f.g.text(tr(T::DebounceHelp), help, 12.0, Weight::Normal, Align::Wrap, th().muted);
+    f.g.text(tr(T::DebounceHelp), help, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
     for (i, ms) in DEBOUNCE_CHOICES.iter().enumerate() {
         let r = Rect::new(card.x + 20.0 + i as f32 * 86.0, card.y + 68.0, 78.0, 32.0);
         f.choice(Act::Debounce(i), r, &format!("{ms} ms"), "", v.debounce == *ms);
@@ -1130,6 +1441,18 @@ fn swatch(f: &mut Frame, act: Act, cx: f32, cy: f32, color: u32, selected: bool)
     f.g.ring(cx, cy, 11.0, 1.0, th().border);
 }
 
+/// Pill chip with an arrow glyph before its label, e.g. "→ Forward".
+fn direction_chip(f: &mut Frame, act: Act, r: Rect, arrow: Glyph, label: &str, selected: bool) {
+    const GLYPH_W: f32 = 16.0;
+    f.choice(act, r, "", "", selected);
+    let c = if selected { th().text } else { th().muted };
+    let label_w = text_w(label, Size::Body).min(r.w - GLYPH_W - 24.0);
+    let x = r.x + (r.w - label_w - GLYPH_W - 6.0) / 2.0;
+    glyph(f.g, arrow, x + GLYPH_W / 2.0, r.y + r.h / 2.0, c);
+    let label_r = Rect::new(x + GLYPH_W + 6.0, r.y, label_w + 8.0, r.h);
+    f.g.text(label, label_r, Size::Body, Weight::Semibold, Align::Left, c);
+}
+
 fn lighting(f: &mut Frame, v: &View) {
     const PAD: f32 = 20.0;
     let l = &v.lighting;
@@ -1148,24 +1471,30 @@ fn lighting(f: &mut Frame, v: &View) {
     // Brightness, speed, direction.
     let card = Rect::new(X0, card.y + card.h + GAP, CW, 84.0);
     f.card(card);
-    let chip = |i: usize, x: f32| Rect::new(x + i as f32 * 42.0, card.y + 38.0, 36.0, 32.0);
+    const CHIP: f32 = 32.0;
+    const CHIP_STEP: f32 = CHIP + 6.0;
+    let chip = |i: usize, x: f32| Rect::new(x + i as f32 * CHIP_STEP, card.y + 38.0, CHIP, CHIP);
     let x = card.x + PAD;
-    f.caption_in(tr(T::Brightness), x, card.y + 14.0, 180.0);
+    f.caption_in(tr(T::Brightness), x, card.y + 14.0, 4.0 * CHIP_STEP);
     for b in 1..=BRIGHTNESS_MAX {
         f.choice(Act::Brightness(b), chip(b as usize - 1, x), &b.to_string(), "", l.brightness == b);
     }
-    let x = card.x + PAD + 196.0;
+    let x = card.x + PAD + 164.0;
     if l.effect.has_speed() {
-        f.caption_in(tr(T::Speed), x, card.y + 14.0, 150.0);
+        f.caption_in(tr(T::Speed), x, card.y + 14.0, 3.0 * CHIP_STEP + 8.0);
         for sp in 1..=SPEED_MAX {
             f.choice(Act::Speed(sp), chip(sp as usize - 1, x), &sp.to_string(), "", l.speed == sp);
         }
     }
-    let x = card.x + PAD + 360.0;
+    let x = card.x + PAD + 288.0;
     if l.effect == Effect::Streaming {
-        f.caption_in(tr(T::DirectionCaption), x, card.y + 14.0, 160.0);
-        for (k, (d, arrow)) in [(Direction::Forward, "→"), (Direction::Reverse, "←")].into_iter().enumerate() {
-            f.choice(Act::Direction(d), chip(k, x), arrow, "", l.direction == d);
+        let w = card.x + card.w - PAD - x;
+        f.caption_in(tr(T::DirectionCaption), x, card.y + 14.0, w);
+        let dirs = [(Direction::Forward, Glyph::ArrowRight, T::DirForward), (Direction::Reverse, Glyph::ArrowLeft, T::DirReverse)];
+        let chip_w = (w - 8.0) / 2.0;
+        for (k, (d, arrow, name)) in dirs.into_iter().enumerate() {
+            let r = Rect::new(x + k as f32 * (chip_w + 8.0), card.y + 38.0, chip_w, CHIP);
+            direction_chip(f, Act::Direction(d), r, arrow, tr(name), l.direction == d);
         }
     }
 
@@ -1188,10 +1517,10 @@ fn lighting(f: &mut Frame, v: &View) {
     let card = Rect::new(X0, y, CW, 56.0);
     f.card(card);
     let label = Rect::new(card.x + PAD, card.y, card.w - 100.0, card.h);
-    f.g.text(tr(T::DarkMoving), label, 14.0, Weight::Semibold, Align::Left, th().text);
+    f.g.text(tr(T::DarkMoving), label, Size::Body, Weight::Semibold, Align::Left, th().text);
     f.toggle(Some(Act::DarkMoving), card.x + card.w - 58.0, card.y + 17.0, v.power.dark_while_moving);
     let note = Rect::new(X0, card.y + card.h + 10.0, CW, 34.0);
-    f.g.text(tr(T::LightingNote), note, 12.0, Weight::Normal, Align::Wrap, th().muted);
+    f.g.text(tr(T::LightingNote), note, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
 }
 
 fn stats(f: &mut Frame, v: &View) {
@@ -1206,19 +1535,24 @@ fn stats(f: &mut Frame, v: &View) {
         let r = Rect::new(X0 + col * (w + GAP), TOP + 48.0 + row * (78.0 + 12.0), w, 78.0);
         f.card(r);
         f.caption(label, r.x + 14.0, r.y + 14.0);
-        f.g.text(value, Rect::new(r.x + 14.0, r.y + 32.0, r.w - 28.0, 34.0), 22.0, Weight::Bold, Align::Left, th().text);
+        f.g.text(value, Rect::new(r.x + 14.0, r.y + 32.0, r.w - 28.0, 34.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
     }
 
-    let card = Rect::new(X0, TOP + 48.0 + 2.0 * 90.0, CW, HEIGHT - (TOP + 48.0 + 180.0) - 24.0);
+    let card = Rect::new(X0, TOP + 48.0 + 2.0 * 90.0, CW, PAGE_H - (TOP + 48.0 + 180.0) - 4.0);
     f.card(card);
     // The chart follows the selected period.
     let title = [T::ChartToday, T::ChartTitle, T::ChartAll][v.period.min(PERIODS.len() - 1)];
     f.caption(tr(title), card.x + 16.0, card.y + 14.0);
+    // History shorter than the period: the axis starts at the first sample.
+    if let Some(day) = &v.chart_since {
+        let r = Rect::new(card.x + card.w / 2.0, card.y + 12.0, card.w / 2.0 - 16.0, 20.0);
+        f.g.text(&fill(tr(T::ChartSince), &[day]), r, Size::Caption, Weight::Normal, Align::Right, th().subtle);
+    }
 
     let plot = Rect::new(card.x + 16.0, card.y + 40.0, card.w - 64.0, card.h - 72.0);
     if v.chart.len() < 2 {
         let msg = tr(T::ChartEmpty);
-        f.g.text(msg, plot, 13.0, Weight::Normal, Align::Center, th().faint);
+        f.g.text(msg, plot, Size::Body, Weight::Normal, Align::Center, th().subtle);
         return;
     }
 
@@ -1226,7 +1560,7 @@ fn stats(f: &mut Frame, v: &View) {
         let y = plot.y + plot.h * (1.0 - pct / 100.0);
         f.g.line(plot.x, y, plot.x + plot.w, y, 1.0, th().border);
         let r = Rect::new(plot.x + plot.w + 6.0, y - 8.0, 40.0, 16.0);
-        f.g.text(label, r, 10.5, Weight::Normal, Align::Left, th().faint);
+        f.g.text(label, r, Size::Caption, Weight::Normal, Align::Left, th().subtle);
     }
 
     // Time axis: a tick and a label per day (hours for "today").
@@ -1236,7 +1570,7 @@ fn stats(f: &mut Frame, v: &View) {
         f.g.line(x, plot.y + plot.h, x, plot.y + plot.h + 4.0, 1.0, th().border);
         let lx = (x - LABEL_W / 2.0).clamp(plot.x - 8.0, plot.x + plot.w + 8.0 - LABEL_W);
         let r = Rect::new(lx, plot.y + plot.h + 6.0, LABEL_W, 16.0);
-        f.g.text(label, r, 10.5, Weight::Normal, Align::Center, th().faint);
+        f.g.text(label, r, Size::Caption, Weight::Normal, Align::Center, th().subtle);
     }
 
     let pts: Vec<(f32, f32)> = v.chart.iter().map(|&(t, pct)| (plot.x + t * plot.w, plot.y + plot.h * (1.0 - pct / 100.0))).collect();
@@ -1247,11 +1581,11 @@ fn settings(f: &mut Frame, v: &View) {
     let card = Rect::new(X0, BODY, CW, 104.0);
     f.card(card);
     let title = if v.installed { tr(T::Installed) } else { tr(T::NotInstalled) };
-    f.g.text(title, Rect::new(card.x + 18.0, card.y + 16.0, 380.0, 22.0), 15.0, Weight::Semibold, Align::Left, th().text);
+    f.g.text(title, Rect::new(card.x + 18.0, card.y + 16.0, 380.0, 22.0), Size::Large, Weight::Semibold, Align::Left, th().text);
     let desc = if v.installed { v.install_dir.clone() } else { fill(tr(T::InstallDesc), &[&v.install_dir]) };
-    f.g.text(&desc, Rect::new(card.x + 18.0, card.y + 42.0, 390.0, 34.0), 12.0, Weight::Normal, Align::Wrap, th().muted);
+    f.g.text(&desc, Rect::new(card.x + 18.0, card.y + 42.0, 390.0, 34.0), Size::Caption, Weight::Normal, Align::Wrap, th().muted);
     if !v.error.is_empty() {
-        f.g.text(&v.error, Rect::new(card.x + 18.0, card.y + 78.0, 390.0, 20.0), 12.0, Weight::Normal, Align::Left, th().bad);
+        f.g.text(&v.error, Rect::new(card.x + 18.0, card.y + 78.0, 390.0, 20.0), Size::Caption, Weight::Normal, Align::Left, th().bad);
     }
     let btn = Rect::new(card.x + card.w - 150.0, card.y + 34.0, 132.0, 36.0);
     if v.installed {
@@ -1260,23 +1594,33 @@ fn settings(f: &mut Frame, v: &View) {
         f.push_button(Act::Install, btn, tr(T::Install), true);
     }
 
-    let card = Rect::new(X0, card.y + card.h + GAP, CW, 76.0);
+    // Autostart only points at the installed copy: disabled, and why.
+    const LATER_H: f32 = 14.0;
+    let later = if v.installed { 0.0 } else { LATER_H };
+    let card = Rect::new(X0, card.y + card.h + GAP, CW, 76.0 + later);
     f.card(card);
     let title = Rect::new(card.x + 18.0, card.y + 16.0, 400.0, 22.0);
-    f.g.text(tr(T::Autostart), title, 15.0, Weight::Semibold, Align::Left, th().text);
+    f.g.text(tr(T::Autostart), title, Size::Large, Weight::Semibold, Align::Left, th().text);
     let desc = Rect::new(card.x + 18.0, card.y + 40.0, 420.0, 20.0);
-    f.g.text(tr(T::AutostartDesc), desc, 12.0, Weight::Normal, Align::Left, th().muted);
-    // Autostart only points at the installed copy.
+    f.g.text(tr(T::AutostartDesc), desc, Size::Caption, Weight::Normal, Align::Left, th().muted);
+    if !v.installed {
+        let r = Rect::new(desc.x, desc.y + 18.0, desc.w, 18.0);
+        f.g.text(tr(T::AutostartLater), r, Size::Caption, Weight::Normal, Align::Left, th().subtle);
+    }
     let act = v.installed.then_some(Act::Autostart);
-    f.toggle(act, card.x + card.w - 58.0, card.y + 27.0, v.autostart);
+    f.toggle(act, card.x + card.w - 58.0, card.y + (card.h - 22.0) / 2.0, v.autostart);
 
-    // Tray behaviour and where data lives (About has its own dialog).
     let card = Rect::new(X0, card.y + card.h + GAP, CW, 88.0);
+    update::settings_card(f, &v.update, card);
+
+    // Tray behaviour and where data lives (About has its own dialog); the
+    // folder sits right below room for two lines of tray text.
+    let card = Rect::new(X0, card.y + card.h + GAP, CW, 76.0);
     f.card(card);
     let r = Rect::new(card.x + 18.0, card.y + 14.0, card.w - 36.0, 34.0);
-    f.g.text(tr(T::AboutTray), r, 12.0, Weight::Normal, Align::Wrap, th().muted);
-    let r = Rect::new(card.x + 18.0, card.y + 58.0, card.w - 36.0, 18.0);
-    f.g.text(&fill(tr(T::DataDir), &[&v.data_dir]), r, 12.0, Weight::Normal, Align::Left, th().faint);
+    f.g.text(tr(T::AboutTray), r, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
+    let r = Rect::new(card.x + 18.0, card.y + 50.0, card.w - 36.0, 18.0);
+    f.g.text(&fill(tr(T::DataDir), &[&v.data_dir]), r, Size::Caption, Weight::Normal, Align::Left, th().subtle);
 }
 
 fn setup_dialog(f: &mut Frame, v: &View) {
@@ -1287,50 +1631,72 @@ fn setup_dialog(f: &mut Frame, v: &View) {
     f.g.stroke(d, RADIUS, 1.0, th().border);
 
     let inner = d.inset(24.0);
-    f.g.text(tr(T::SetupTitle), Rect::new(inner.x, inner.y, inner.w, 28.0), 18.0, Weight::Bold, Align::Left, th().text);
+    f.g.text(tr(T::SetupTitle), Rect::new(inner.x, inner.y, inner.w, 28.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
     let text = fill(tr(T::SetupText), &[&v.install_dir]);
-    f.g.text(&text, Rect::new(inner.x, inner.y + 38.0, inner.w, 64.0), 13.0, Weight::Normal, Align::Wrap, th().muted);
+    f.g.text(&text, Rect::new(inner.x, inner.y + 38.0, inner.w, 64.0), Size::Body, Weight::Normal, Align::Wrap, th().muted);
 
     let ty = inner.y + 118.0;
     f.toggle(Some(Act::SetupAutostart), inner.x, ty, v.setup_autostart);
     let label = Rect::new(inner.x + 52.0, ty - 6.0, inner.w - 52.0, 34.0);
-    f.g.text(tr(T::SetupAutostart), label, 13.0, Weight::Normal, Align::Left, th().text);
+    f.g.text(tr(T::SetupAutostart), label, Size::Body, Weight::Normal, Align::Left, th().text);
 
     let by = d.y + d.h - 24.0 - 36.0;
     f.push_button(Act::SetupSkip, Rect::new(d.x + d.w - 24.0 - 128.0 - 10.0 - 120.0, by, 120.0, 36.0), tr(T::JustRun), false);
     f.push_button(Act::SetupInstall, Rect::new(d.x + d.w - 24.0 - 128.0, by, 128.0, 36.0), tr(T::Install), true);
 }
 
-/// About: logo, name and version, copyright, license, project links.
-fn about_dialog(f: &mut Frame) {
+/// About: logo, name and version, copyright, license, project links,
+/// update check.
+fn about_dialog(f: &mut Frame, v: &View) {
     const W: f32 = 480.0;
-    const H: f32 = 244.0;
+    const H: f32 = 376.0;
     f.g.fill(Rect::new(0.0, 0.0, WIDTH, HEIGHT), 0.0, th().scrim);
     let d = Rect::new((WIDTH - W) / 2.0, (HEIGHT - H) / 2.0, W, H);
     f.g.fill(d, RADIUS, th().card_hi);
     f.g.stroke(d, RADIUS, 1.0, th().border);
 
     let inner = d.inset(24.0);
-    f.caption(tr(T::About), inner.x, inner.y);
+    f.caption(&tr(T::About).to_uppercase(), inner.x, inner.y);
     mouse_logo(f.g, inner.x + 4.0, inner.y + 34.0);
     let name = Rect::new(inner.x + 40.0, inner.y + 28.0, inner.w - 40.0, 30.0);
-    f.g.text(crate::APP_NAME, name, 22.0, Weight::Bold, Align::Left, th().text);
-    let ver = Rect::new(name.x + text_w(crate::APP_NAME, 22.0) + 10.0, name.y + 4.0, 120.0, 26.0);
-    f.g.text(VERSION, ver, 15.0, Weight::Normal, Align::Left, th().muted);
+    f.g.text(crate::APP_NAME, name, Size::Subtitle, Weight::Bold, Align::Left, th().text);
+    let ver = Rect::new(name.x + text_w(crate::APP_NAME, Size::Subtitle) + 10.0, name.y + 2.0, 120.0, 26.0);
+    f.g.text(VERSION, ver, Size::Large, Weight::Normal, Align::Left, th().muted);
     let tag = Rect::new(name.x, name.y + 30.0, name.w, 18.0);
-    f.g.text(tr(T::AboutTagline), tag, 12.5, Weight::Normal, Align::Left, th().muted);
+    f.g.text(tr(T::AboutTagline), tag, Size::Caption, Weight::Normal, Align::Left, th().muted);
 
     let y = inner.y + 98.0;
-    f.g.text(COPYRIGHT, Rect::new(inner.x, y, inner.w, 18.0), 12.5, Weight::Normal, Align::Left, th().text);
+    f.g.text(COPYRIGHT, Rect::new(inner.x, y, inner.w, 18.0), Size::Caption, Weight::Normal, Align::Left, th().text);
     let license = fill(tr(T::License), &[LICENSE]);
-    f.g.text(&license, Rect::new(inner.x, y + 20.0, inner.w, 18.0), 12.5, Weight::Normal, Align::Left, th().text);
+    f.g.text(&license, Rect::new(inner.x, y + 20.0, inner.w, 18.0), Size::Caption, Weight::Normal, Align::Left, th().text);
+
+    // Links go to the web; buttons below are actions.
+    const SITE: &str = "www.emlynix.com/whisker";
+    const REPO: &str = "GitHub";
+    let x = text_link(f, Act::OpenWeb(Web::Site), SITE, inner.x, y + 42.0);
+    f.g.text("·", Rect::new(x + 6.0, y + 42.0, 10.0, 18.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
+    text_link(f, Act::OpenWeb(Web::Repo), REPO, x + 18.0, y + 42.0);
+    update::about_row(f, &v.update, inner.x, y + 74.0, inner.w);
+    let privacy = Rect::new(inner.x, y + 136.0, inner.w, 34.0);
+    f.g.text(tr(T::UpdatePrivacy), privacy, Size::Caption, Weight::Normal, Align::Wrap, th().subtle);
 
     let by = d.y + d.h - 24.0 - 36.0;
-    let report = tr(T::ReportMouse);
-    let report_w = text_w(report, 14.0) + 32.0;
-    f.push_button(Act::OpenWeb(Web::Repo), Rect::new(inner.x, by, 100.0, 36.0), "GitHub", false);
-    f.push_button(Act::OpenWeb(Web::NewIssue), Rect::new(inner.x + 110.0, by, report_w, 36.0), report, false);
+    let report = tr(T::HelpAddMouse);
+    let report_w = text_w(report, Size::Body) + 32.0;
+    f.push_button(Act::ReportOpen, Rect::new(inner.x, by, report_w, 36.0), report, false);
     f.push_button(Act::CloseDialog, Rect::new(d.x + d.w - 24.0 - 110.0, by, 110.0, 36.0), tr(T::Close), true);
+}
+
+/// Accent text that opens `act`, underlined on hover; returns its right edge.
+fn text_link(f: &mut Frame, act: Act, label: &str, x: f32, y: f32) -> f32 {
+    let r = Rect::new(x, y, text_w(label, Size::Caption) + 4.0, 18.0);
+    let hot = f.button(act, r);
+    let c = if hot { th().text } else { th().accent };
+    f.g.text(label, r, Size::Caption, Weight::Semibold, Align::Left, c);
+    if hot {
+        f.g.fill(Rect::new(r.x, r.y + r.h - 1.0, r.w - 4.0, 1.0), 0.0, c);
+    }
+    r.x + r.w
 }
 
 // ---- appearance ------------------------------------------------------------
@@ -1338,15 +1704,18 @@ fn about_dialog(f: &mut Frame) {
 /// Picker tile showing a theme's own colors: card, three swatches, name.
 fn theme_tile(f: &mut Frame, act: Act, r: Rect, t: &Theme, name: &str, selected: bool) {
     let hot = f.button(act, r);
-    f.g.fill(r, 10.0, t.bg);
+    f.g.fill(r, R_CTRL, t.bg);
     let (bw, bc) = if selected { (2.0, th().accent) } else if hot { (1.5, th().muted) } else { (1.0, th().border) };
-    f.g.stroke(r, 10.0, bw, bc);
+    f.g.stroke(r, R_CTRL, bw, bc);
+    if selected {
+        check_badge(f.g, r);
+    }
 
     for (k, c) in [t.card, t.accent, t.text].into_iter().enumerate() {
         f.g.circle(r.x + 16.0 + k as f32 * 14.0, r.y + 18.0, 5.5, c);
     }
     let label = Rect::new(r.x + 10.0, r.y + 30.0, r.w - 20.0, 22.0);
-    f.g.text(name, label, 12.5, Weight::Semibold, Align::Left, t.text);
+    f.g.text(name, label, Size::Caption, Weight::Semibold, Align::Left, t.text);
 }
 
 fn appearance(f: &mut Frame, v: &View) {
@@ -1385,5 +1754,41 @@ fn appearance(f: &mut Frame, v: &View) {
     for (i, l) in Lang::ALL.iter().enumerate() {
         let r = cell(i + 1, card.y + 40.0, LANG_H);
         f.choice(Act::Lang(i + 1), r, l.native(), "", v.lang_pick == i + 1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_mouse_name_wraps_in_two_lines() {
+        const W: f32 = 124.0; // sidebar name width
+        let (first, second) = name_lines("Logitech Marathon Mouse/Performance Plus M705", W, Size::Caption);
+        assert_eq!(first, "Logitech Marathon");
+        assert_eq!(second.as_deref(), Some("Mouse/Performance Plus M705"));
+        assert!(text_w(&first, Size::Caption) <= W);
+
+        assert_eq!(name_lines("White Shark Lionel", W, Size::Caption), ("White Shark Lionel".into(), None));
+
+        // One unbreakable word: left to the "…" trimming.
+        let long = "Superlongmodelnamewithoutspaces";
+        assert_eq!(name_lines(long, W, Size::Caption), (long.into(), None));
+    }
+
+    #[test]
+    fn device_line_drops_firmware_that_does_not_fit() {
+        const W: f32 = 400.0;
+        const M705: &str = "Logitech Marathon Mouse/Performance Plus M705";
+        assert_eq!(device_text("White Shark Lionel", "1.77", W), "White Shark Lionel · FW 1.77");
+        assert_eq!(device_text(M705, "RQM 17.01 build 0019", W), M705);
+        assert_eq!(device_text(M705, "", W), M705);
+    }
+
+    #[test]
+    fn rate_card_keeps_the_last_measurement() {
+        // Before any motion: a hint, not a loading skeleton.
+        assert_eq!(rate_value(None), (String::new(), tr(T::MoveMouse)));
+        assert_eq!(rate_value(Some(125)), ("125 Hz".into(), tr(T::MeasuredMoving)));
     }
 }

@@ -28,9 +28,9 @@
 //! Kone AIMO, Kova/Kova+, Kain, Burst, Tyon, Savu, Lua, Pyra.
 
 
-use super::{Ability, DpiRange, Ident, Reading};
+use super::{Ability, DpiRange, Ident, Pick, Reading};
 use crate::hid_link::DeviceInfo;
-use crate::hid_link::raw::{Channel, Interface, interfaces};
+use crate::hid_link::raw::{Channel, Interface};
 use std::time::{Duration, Instant};
 
 pub const VID: u16 = 0x1E7D;
@@ -330,8 +330,8 @@ impl Roccat {
     /// Finds a listed PID and the collection that answers the control and
     /// profile reports and returns a valid settings block. The only write
     /// before that is the settings select (`04 pp 80`).
-    pub fn open() -> Option<(Roccat, DeviceInfo)> {
-        let all = interfaces(VID);
+    pub fn open(pick: &Pick) -> Option<(Roccat, DeviceInfo)> {
+        let all = pick.interfaces(VID);
         for model in MODELS {
             let ours: Vec<&Interface> = all.iter().filter(|i| i.info.pid == model.pid).collect();
             for i in candidates(&ours, model) {
@@ -641,6 +641,17 @@ mod tests {
             assert!(m.len >= last + CHECKSUM_LEN && m.len <= u8::MAX as usize);
             let sc = m.scale;
             assert!(sc.valid(sc.raw(sc.min)) && sc.valid(sc.raw(sc.max)));
+        }
+    }
+
+    /// Every row is in data/mice.toml with the same DPI and rates.
+    #[test]
+    fn catalogue_agrees() {
+        use crate::devices::{Family, listed_as};
+        for m in MODELS {
+            let c = listed_as(VID, Some(m.pid), m.name).unwrap_or_else(|| panic!("{} {:04X} not listed", m.name, m.pid));
+            let dpi = DpiRange::Steps { min: m.scale.min, max: m.scale.max, step: m.scale.step };
+            assert_eq!((c.family, c.dpi.as_ref(), c.rates.as_slice()), (Family::Roccat, Some(&dpi), &RATES[..]), "{}", m.name);
         }
     }
 }

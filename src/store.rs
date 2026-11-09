@@ -49,6 +49,9 @@ pub struct AppConfig {
     /// Chosen mouse model id, `GENERIC_DEVICE` for statistics only, `None`
     /// until the user confirmed one.
     pub device: Option<String>,
+    /// VID:PID of the detected mouse the user picked, so a vendor-wide
+    /// driver opens that one; `None` = any of the model's products.
+    pub device_usb: Option<(u16, u16)>,
     /// Last DPI stage reported by a stage-only mouse (it reports changes only).
     pub last_stage: Option<u8>,
     /// First-run install question was answered.
@@ -56,6 +59,16 @@ pub struct AppConfig {
     pub theme: theme::Choice,
     /// `None` follows the Windows display language.
     pub lang: Option<Lang>,
+    /// Mice answered "Not now" in the new-mouse banner, as `mouse_key`.
+    pub ignored_mice: Vec<String>,
+    /// Look for a new version once a day.
+    pub update_check: bool,
+    /// Unix time of the last completed update check.
+    pub update_checked: u64,
+    /// Version the user chose to skip, e.g. `"0.9.1"`.
+    pub update_skip: Option<String>,
+    /// Version already announced by a notification.
+    pub update_notified: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -72,10 +85,16 @@ impl Default for AppConfig {
             buttons: DEFAULT_ACTIONS,
             macros: vec![Vec::new(); MACRO_COUNT],
             device: None,
+            device_usb: None,
             last_stage: None,
             setup_asked: false,
             theme: theme::Choice::System,
             lang: None,
+            ignored_mice: Vec::new(),
+            update_check: true,
+            update_checked: 0,
+            update_skip: None,
+            update_notified: None,
         }
     }
 }
@@ -105,8 +124,26 @@ pub fn save_text(name: &str, text: &str) {
         return;
     }
     let tmp = dir.join(format!("{name}.tmp"));
-    if std::fs::write(&tmp, text).is_ok() {
+    if write_private(&tmp, text).is_ok() {
         let _ = std::fs::rename(&tmp, dir.join(name));
+    }
+}
+
+/// Config and statistics are the user's alone: 0600 on Unix.
+fn write_private(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        const OWNER_RW: u32 = 0o600;
+        // `mode` applies only to a new file: drop a leftover one first.
+        let _ = std::fs::remove_file(path);
+        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(OWNER_RW).open(path)?;
+        f.write_all(text.as_bytes())
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, text)
     }
 }
 
@@ -151,6 +188,12 @@ fn triple(v: &str) -> Option<[u8; 3]> {
 
 fn triple_hex(t: [u8; 3]) -> String {
     format!("{:02X}{:02X}{:02X}", t[0], t[1], t[2])
+}
+
+/// `"1B1C:1B80"` -> `(0x1B1C, 0x1B80)`.
+fn usb_ids(v: &str) -> Option<(u16, u16)> {
+    let (vid, pid) = v.split_once(':')?;
+    Some((u16::from_str_radix(vid, 16).ok()?, u16::from_str_radix(pid, 16).ok()?))
 }
 
 fn nums(v: &str) -> Vec<u32> {
@@ -208,11 +251,18 @@ fn parse_config(text: &str, mut c: AppConfig) -> AppConfig {
                 };
                 c.macros[i] = v.split(',').filter_map(triple).filter_map(MacroEvent::decode).take(MACRO_MAX_EVENTS).collect();
             }
-            ("device", _) if !v.is_empty() => c.device = Some(v.to_string()),
+            // Ids of the flat catalogue are renamed to brand/model ids.
+            ("device", _) if !v.is_empty() => c.device = Some(crate::devices::migrate_id(v).to_string()),
+            ("device_usb", _) => c.device_usb = usb_ids(v),
             ("stage", Some(x)) if x > 0 => c.last_stage = Some(x as u8),
             ("setup_asked", _) => c.setup_asked = v == "1",
             ("theme", _) => c.theme = theme::Choice::from_id(v),
             ("lang", _) => c.lang = Lang::from_code(v),
+            ("update_check", _) => c.update_check = v != "0",
+            ("update_checked", Some(_)) => c.update_checked = v.parse().unwrap_or(0),
+            ("update_skip", _) => c.update_skip = Some(v.to_string()).filter(|v| !v.is_empty()),
+            ("update_notified", _) => c.update_notified = Some(v.to_string()).filter(|v| !v.is_empty()),
+            ("ignored_mice", _) => c.ignored_mice = v.split(',').map(str::trim).filter(|k| !k.is_empty()).map(String::from).collect(),
             _ => {}
         }
     }
@@ -238,10 +288,16 @@ fn format_config(c: &AppConfig) -> String {
         format!("dark_moving={}", c.power.dark_while_moving as u8),
         format!("buttons={}", c.buttons.iter().map(|a| triple_hex(a.to_stored())).collect::<Vec<_>>().join(",")),
         format!("device={}", c.device.as_deref().unwrap_or("")),
+        format!("device_usb={}", c.device_usb.map(|(v, p)| format!("{v:04X}:{p:04X}")).unwrap_or_default()),
         format!("stage={}", c.last_stage.unwrap_or(0)),
         format!("setup_asked={}", c.setup_asked as u8),
         format!("theme={}", c.theme.id()),
         format!("lang={}", c.lang.map(|l| l.code()).unwrap_or("system")),
+        format!("ignored_mice={}", c.ignored_mice.join(",")),
+        format!("update_check={}", c.update_check as u8),
+        format!("update_checked={}", c.update_checked),
+        format!("update_skip={}", c.update_skip.as_deref().unwrap_or("")),
+        format!("update_notified={}", c.update_notified.as_deref().unwrap_or("")),
     ];
     let mut text = lines.join("\n") + "\n";
     for (i, m) in c.macros.iter().enumerate().filter(|(_, m)| !m.is_empty()) {
@@ -449,6 +505,39 @@ mod tests {
         assert_eq!(back.lighting, c.lighting);
         assert_eq!((back.debounce, back.lod, back.power), (c.debounce, c.lod, c.power));
         assert!(back.setup_asked);
+    }
+
+    #[test]
+    fn old_device_ids_migrate() {
+        let c = parse_config("device=corsair\ndevice_usb=1B1C:1B80\n", AppConfig::default());
+        assert_eq!(c.device.as_deref(), Some("corsair/auto"));
+        assert_eq!(c.device_usb, Some((0x1B1C, 0x1B80)));
+        let c = parse_config("device=whiteshark-lionel\n", AppConfig::default());
+        assert_eq!(c.device.as_deref(), Some("whiteshark/lionel"));
+        let back = parse_config(&format_config(&c), AppConfig::default());
+        assert_eq!((back.device, back.device_usb), (c.device, None));
+    }
+
+    #[test]
+    fn ignored_mice_roundtrip() {
+        let mut c = AppConfig::default();
+        c.ignored_mice = vec!["046D:C547".into(), "05AC:024F:AB12".into()];
+        let back = parse_config(&format_config(&c), AppConfig::default());
+        assert_eq!(back.ignored_mice, c.ignored_mice);
+    }
+
+    #[test]
+    fn update_settings_roundtrip() {
+        let mut c = AppConfig::default();
+        assert!(c.update_check);
+        c.update_check = false;
+        c.update_checked = 1_790_000_000;
+        c.update_skip = Some("0.9.1".into());
+        let back = parse_config(&format_config(&c), AppConfig::default());
+        assert!(!back.update_check);
+        assert_eq!(back.update_checked, c.update_checked);
+        assert_eq!(back.update_skip, c.update_skip);
+        assert_eq!(back.update_notified, None);
     }
 
     #[test]

@@ -8,8 +8,8 @@
 //! ```
 //! Battery meaning is inferred: 09 matched 90 % read over Bluetooth.
 
-use super::{Ability, Ident, Reading};
-use crate::hid_link::raw::{Channel, interfaces};
+use super::{Ability, Ident, Pick, Reading};
+use crate::hid_link::raw::Channel;
 use std::time::Duration;
 
 pub const VID: u16 = 0x1D57;
@@ -53,8 +53,8 @@ pub struct Eternico {
 }
 
 impl Eternico {
-    pub fn open() -> Option<(Eternico, crate::hid_link::DeviceInfo)> {
-        let iface = interfaces(VID).into_iter().find(|i| i.info.pid == PID && i.usage_page == STATUS_PAGE)?;
+    pub fn open(pick: &Pick) -> Option<(Eternico, crate::hid_link::DeviceInfo)> {
+        let iface = pick.interfaces(VID).into_iter().find(|i| i.info.pid == PID && i.usage_page == STATUS_PAGE)?;
         let ch = Channel::open(&iface.path)?;
         Some((Eternico { ch, stage: None }, iface.info))
     }
@@ -106,5 +106,12 @@ mod tests {
         assert_eq!(parse(&[0x03, 0x00, 0x10, 0x03, 0x00]), Some(Report::Stage(3)));
         assert_eq!(parse(&[0x03, 0x10, 0x36, 0xFF, 0x48]), None);
         assert_eq!(parse(&[0x02, 0xE9, 0x00]), None);
+    }
+
+    #[test]
+    fn catalogue_agrees() {
+        use crate::devices::{Family, listed_as};
+        let c = listed_as(VID, Some(PID), "AET-MS480B").expect("receiver not listed");
+        assert_eq!(c.family, Family::Eternico);
     }
 }

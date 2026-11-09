@@ -13,8 +13,8 @@
 //! battery (some models) and firmware (some models). Settings are saved to
 //! flash after each change, as `rivalcfg` does.
 
-use super::{Ability, DpiRange, Ident, Reading};
-use crate::hid_link::raw::{Channel, Interface, interfaces};
+use super::{Ability, DpiRange, Ident, Pick, Reading};
+use crate::hid_link::raw::{Channel, Interface};
 use std::time::Duration;
 
 pub const VID: u16 = 0x1038;
@@ -502,8 +502,8 @@ impl SteelSeries {
     /// Picks the first known model by PID and opens the collection on its
     /// interface that takes output reports (vendor page first). Sends
     /// nothing.
-    pub fn open() -> Option<(SteelSeries, crate::hid_link::DeviceInfo)> {
-        let mut cands: Vec<(Interface, &'static Model)> = interfaces(VID)
+    pub fn open(pick: &Pick) -> Option<(SteelSeries, crate::hid_link::DeviceInfo)> {
+        let mut cands: Vec<(Interface, &'static Model)> = pick.interfaces(VID)
             .into_iter()
             .filter(|i| i.output_len > 1)
             .filter_map(|i| model(i.info.pid).map(|m| (i, m)))
@@ -640,6 +640,19 @@ mod tests {
         all.sort();
         all.dedup();
         assert_eq!(all.len(), n);
+    }
+
+    /// Every row is in data/mice.toml with the same DPI and rates.
+    #[test]
+    fn catalogue_agrees() {
+        use crate::devices::{Family, listed_as};
+        for m in &MODELS {
+            let rates: Vec<u32> = m.rates.iter().map(|(hz, _)| *hz).collect();
+            for &pid in m.pids {
+                let c = listed_as(VID, Some(pid), m.name).unwrap_or_else(|| panic!("{} {pid:04X} not listed", m.name));
+                assert_eq!((c.family, c.dpi.as_ref(), &c.rates), (Family::SteelSeries, Some(&m.dpi.scale().range()), &rates), "{}", m.name);
+            }
+        }
     }
 
     #[test]

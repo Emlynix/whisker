@@ -30,6 +30,8 @@ pub struct Hooks {
     pub draw: fn(&mut Gfx, Option<Act>) -> Vec<Hit>,
     pub act: fn(Act),
     pub drag: fn(Act, usize, Phase),
+    /// Mouse wheel at a point (DIPs): notches, positive = away from the user.
+    pub wheel: fn(f32, f32, i32),
     pub timer: fn(usize),
     pub tray: fn(TrayAction),
     pub hidden: fn(),

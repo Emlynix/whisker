@@ -8,7 +8,7 @@
 //!        |  gfx::Gfx, hid::Channel, window::post, …
 //!   platform  (this module: contract types + cfg switch)
 //!        |
-//!   windows (Win32, D2D)  |  linux (TODO)  |  macos (AppKit, IOKit)
+//!   windows (Win32, D2D)  |  linux (GTK 3, Cairo)  |  macos (AppKit, IOKit)
 //! ```
 //!
 //! # Contract
@@ -35,28 +35,49 @@
 //! - `set_title_colors(TitleColors)`: title bar in the theme's colours.
 //!   Windows 11 sets caption, text and border colours; Windows 10 only
 //!   switches dark/light (`shade`). macOS draws a transparent title bar
-//!   over the window background with the matching appearance. Linux
-//!   (TODO): a client-side or `_GTK_THEME_VARIANT` dark/light hint.
+//!   over the window background with the matching appearance. Linux: the
+//!   GTK header bar styled in the colours, plus the dark/light variant.
 //! - `modifiers() -> shell::Mods`: modifier keys held now.
 //! - `set_clipboard(text) -> bool`: replaces the clipboard with plain text
 //!   (the window owns it on Windows).
 //! - `set_tray(tray::Level, tip)`: battery glyph (`tray::glyph`) and tooltip.
 //!   Tray clicks arrive as `Hooks::tray` (left = open, menu = open/about/quit).
+//! - `notify(title, text)`: system notification from the tray icon; a click
+//!   on it arrives as `TrayAction::Open`. Windows: tray balloon (`NIF_INFO`,
+//!   shown as a toast). macOS: no-op (needs a signed bundle). Linux:
+//!   `org.freedesktop.Notifications`.
 //!
 //! `gfx::Gfx` — drawing in DIPs, given to `Hooks::draw` per frame:
 //! `clear(c)`, `fill(r, radius, c)`, `stroke(r, radius, width, c)` (inside
 //! `r`), `circle(cx, cy, radius, c)`, `ring(cx, cy, radius, width, c)`,
-//! `line(x0, y0, x1, y1, width, c)`, `polyline(pts, width, c)`,
-//! `text(s, r, size, weight, align, c)` (system UI font).
+//! `line(x0, y0, x1, y1, width, c)`, `polyline(pts, width, c)` (round
+//! joins), `fill_path(segs, c)`, `stroke_path(segs, width, c)` (`gfx::Seg`:
+//! move / line / cubic curve / close; round caps and joins),
+//! `text(s, r, size, weight, align, c)`: system UI font at a `gfx::Size` of
+//! the type ramp, in its `Face` (Windows: Segoe UI Variable Text / Display,
+//! Segoe UI where missing; macOS: system font), with the size's letter
+//! spacing; a one-line text wider than `r` ends in "…".
 //!
 //! `hid` — HID collections, descriptors read without sending anything:
 //! - `interfaces(vid) -> Vec<hid_link::Interface>`: collections of a vendor.
 //! - `mice() -> Vec<hid_link::Interface>`: generic desktop / mouse collections.
+//! - `layout(path) -> Option<hid_link::ReportLayout>`: transport, USB
+//!   interface number, report sizes and ids of a collection, for bug
+//!   reports; never opened for I/O. Windows: `HidP_*` caps as `summary`
+//!   lines, no raw descriptor. macOS: registry properties and the raw
+//!   `ReportDescriptor` (ids parsed by `hid_link::report_ids`), shared by
+//!   all collections of the device.
 //! - `Channel` (`Send`): `open(path) -> Option<Channel>`,
 //!   `write(report, timeout) -> bool` (output report, byte 0 = id),
 //!   `read(len, timeout) -> Option<Vec<u8>>` (next input report),
 //!   `read_until(len, timeout, accept) -> Option<T>`,
 //!   `set_feature(report) -> bool`, `get_feature(buf) -> bool` (`buf[0]` = id).
+//! - `access(vid) -> Access`: whether the user may open the vendor's
+//!   devices. Linux: `Denied` when a hidraw node exists but none is
+//!   readable and writable (no udev rule). Windows, macOS: `Granted`.
+//! - `grant_command(dir) -> Option<String>`: Linux writes the bundled
+//!   udev rule into `dir` and returns the shell command installing it;
+//!   `None` elsewhere.
 //!
 //! `bluetooth` — `battery(addr) -> Option<u8>` and `name(addr) ->
 //! Option<String>` of a BLE device by its 12-hex-digit address.
@@ -76,6 +97,17 @@
 //! `single` — one running instance: `claim(Claim) -> Instance` (a second
 //! launch makes the first show its window), `request_quit()`,
 //! `wait_closed(limit)`, `listen(on_show, on_quit)`.
+//!
+//! `net` — `get(&Fetch) -> Result<Reply, NetError>`: one HTTPS GET to port
+//! 443 (blocking), certificate checked by the OS, no redirects followed, no
+//! cookies or credentials sent; body cut off past `limit` (`TooLarge`),
+//! whole request bounded by `timeout`. Windows: WinHTTP. macOS, Linux:
+//! `/usr/bin/curl` with fixed arguments.
+//!
+//! `UPDATE_KIND: UpdateKind` — how a downloaded update is installed:
+//! Windows swaps the exe in place, macOS opens the release page (a signed
+//! bundle can't be replaced file by file yet).
+//! Linux opens the release page too.
 
 use crate::gfx::Color;
 
@@ -86,6 +118,8 @@ pub const UNINSTALL_ARG: &str = "--uninstall";
 pub const INSTALLED_ARG: &str = "--installed";
 pub const AUTOSTART_ON_ARG: &str = "--autostart-on";
 pub const AUTOSTART_OFF_ARG: &str = "--autostart-off";
+/// Passed to the updated exe so it waits for the old process to exit.
+pub const UPDATED_ARG: &str = "--updated";
 
 /// Only web links may be opened: `file:`, `ms-settings:` or bare paths
 /// would let a string launch local programs.
@@ -111,6 +145,15 @@ pub struct TitleColors {
 pub enum Shade {
     Dark,
     Light,
+}
+
+/// `hid::access`: may the user open a vendor's HID devices.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Access {
+    Granted,
+    /// Devices present, opening refused (Linux without the udev rule).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Denied,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -140,6 +183,43 @@ pub enum Origin {
     InApp,
 }
 
+/// One HTTPS GET for `net::get`.
+pub struct Fetch<'a> {
+    pub host: &'a str,
+    /// Path and query, starts with `/`.
+    pub path: &'a str,
+    /// User-Agent header.
+    pub agent: &'a str,
+    /// Most body bytes accepted.
+    pub limit: usize,
+    pub timeout: std::time::Duration,
+}
+
+pub struct Reply {
+    pub status: u16,
+    /// `Location` header of a redirect.
+    pub location: Option<String>,
+    pub body: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetError {
+    /// No connection, TLS error, timeout.
+    Failed,
+    /// Body larger than `Fetch::limit`.
+    TooLarge,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum UpdateKind {
+    /// Download, verify, replace the exe, restart.
+    #[cfg_attr(any(target_os = "macos", target_os = "linux"), allow(dead_code))]
+    InPlace,
+    /// Open the release page in the browser.
+    #[cfg_attr(windows, allow(dead_code))]
+    ReleasePage,
+}
+
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
@@ -147,6 +227,8 @@ pub use self::windows::*;
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "linux")]
+pub use self::linux::*;
 
 #[cfg(target_os = "macos")]
 mod macos;

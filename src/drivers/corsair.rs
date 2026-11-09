@@ -27,9 +27,9 @@
 //! property there; the call then fails cleanly.
 
 
-use super::{Ability, DpiRange, Ident, Reading};
+use super::{Ability, DpiRange, Ident, Pick, Reading};
 use crate::hid_link::DeviceInfo;
-use crate::hid_link::raw::{Channel, Interface, interfaces};
+use crate::hid_link::raw::{Channel, Interface};
 use std::time::{Duration, Instant};
 
 pub const VID: u16 = 0x1B1C;
@@ -246,8 +246,8 @@ impl Corsair {
     /// Opens the vendor collection of a known PID and confirms the
     /// protocol with a read-only PID query before anything else. On a
     /// shared receiver the paired device must report a known mouse PID.
-    pub fn open() -> Option<(Corsair, DeviceInfo)> {
-        let cands: Vec<(Interface, &'static Model)> = interfaces(VID)
+    pub fn open(pick: &Pick) -> Option<(Corsair, DeviceInfo)> {
+        let cands: Vec<(Interface, &'static Model)> = pick.interfaces(VID)
             .into_iter()
             .filter(|i| i.usage_page == VENDOR_PAGE && i.output_len >= MIN_OUT_LEN)
             .filter_map(|i| model(i.info.pid).map(|m| (i, m)))
@@ -396,6 +396,17 @@ mod tests {
         all.sort();
         all.dedup();
         assert_eq!(all.len(), n);
+    }
+
+    /// Every row is in data/mice.toml with the same DPI range.
+    #[test]
+    fn catalogue_agrees() {
+        use crate::devices::{Family, listed_as};
+        for m in &MODELS {
+            let c = listed_as(VID, Some(m.pid), m.name).unwrap_or_else(|| panic!("{} {:04X} not listed", m.name, m.pid));
+            let dpi = (m.link != Link::Shared).then_some(DpiRange::Steps { min: DPI_MIN, max: m.dpi_max, step: DPI_STEP });
+            assert_eq!((c.family, &c.dpi), (Family::Corsair, &dpi), "{}", m.name);
+        }
     }
 
     #[test]

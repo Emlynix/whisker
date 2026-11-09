@@ -17,8 +17,8 @@
 //! devices get a 0 prepended, as Windows does.
 
 use super::iokit::{Service, as_number, services};
-use crate::hid_link::{DeviceInfo, Interface};
-use objc2_core_foundation::{CFArray, CFDictionary, CFIndex, CFRetained, CFRunLoop, CFString, CFType};
+use crate::hid_link::{DeviceInfo, Interface, ReportLayout, Transport, report_ids};
+use objc2_core_foundation::{CFArray, CFData, CFDictionary, CFIndex, CFRetained, CFRunLoop, CFString, CFType};
 use objc2_io_kit::{IOHIDDevice, IOHIDReportType, IOReturn, kIOHIDOptionsTypeNone};
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -120,9 +120,49 @@ pub fn interfaces(vid: u16) -> Vec<Interface> {
     services(HID_CLASS).iter().filter(|s| number(s, "VendorID") == vid).flat_map(describe).collect()
 }
 
-/// Mouse collections (generic desktop / mouse) of every vendor.
+/// Mouse collections (generic desktop / mouse) of every vendor, USB and
+/// Bluetooth only: a built-in SPI trackpad is no mouse to configure.
 pub fn mice() -> Vec<Interface> {
-    services(HID_CLASS).iter().flat_map(describe).filter(|i| (i.usage_page, i.usage) == (USAGE_PAGE_DESKTOP, USAGE_MOUSE)).collect()
+    let mouse = |i: &Interface| (i.usage_page, i.usage) == (USAGE_PAGE_DESKTOP, USAGE_MOUSE);
+    services(HID_CLASS).iter().filter(|s| transport_of(s) != Transport::Other).flat_map(describe).filter(mouse).collect()
+}
+
+/// Report sizes, ids and raw descriptor of a device, from the registry
+/// only. All collections of one device share this layout; `summary` stays
+/// empty (the descriptor carries the details).
+pub fn layout(path: &str) -> Option<ReportLayout> {
+    let s = Service::by_id(entry_id(path)?)?;
+    let size = |key: &str| s.number(key).unwrap_or(0).max(0) as usize;
+    let descriptor = s.property("ReportDescriptor").and_then(|v| v.downcast_ref::<CFData>().map(CFData::to_vec));
+    let transport = transport_of(&s);
+    // Only USB devices have a USB interface above them.
+    let interface = match transport {
+        Transport::Usb => s.inherited("bInterfaceNumber").and_then(|v| as_number(&v)).and_then(|n| u8::try_from(n).ok()),
+        _ => None,
+    };
+
+    Some(ReportLayout {
+        transport,
+        interface,
+        input_len: size("MaxInputReportSize"),
+        output_len: size("MaxOutputReportSize"),
+        feature_len: size("MaxFeatureReportSize"),
+        report_ids: descriptor.as_deref().map(report_ids).unwrap_or_default(),
+        descriptor,
+        summary: Vec::new(),
+    })
+}
+
+/// `Transport` property: "USB", "Bluetooth", "Bluetooth Low Energy", …
+fn transport_of(s: &Service) -> Transport {
+    let t = s.string("Transport").unwrap_or_default();
+    if t.contains("Bluetooth") {
+        return Transport::Bluetooth;
+    }
+    if t.contains("USB") {
+        return Transport::Usb;
+    }
+    Transport::Other
 }
 
 /// Registry entry id from a path made by `describe`.
@@ -288,6 +328,17 @@ impl Channel {
         // SAFETY: IOKit writes at most `len` bytes into `data`.
         unsafe { self.dev.report(IOHIDReportType::Feature, id as CFIndex, ptr, len_ptr) == OK }
     }
+}
+
+
+/// No per-device permission to grant here.
+pub fn access(_vid: u16) -> crate::platform::Access {
+    crate::platform::Access::Granted
+}
+
+/// Nothing to install: devices open without a rule.
+pub fn grant_command(_dir: &std::path::Path) -> Option<String> {
+    None
 }
 
 #[cfg(test)]

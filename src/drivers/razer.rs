@@ -7,8 +7,8 @@
 //! crc = xor of bytes 2..=87; reply status 02 = ok, 01 = busy
 //! ```
 
-use super::{Ability, DpiRange, Ident, Reading};
-use crate::hid_link::raw::{Channel, interfaces};
+use super::{Ability, DpiRange, Ident, Pick, Reading};
+use crate::hid_link::raw::Channel;
 use std::time::Duration;
 
 pub const VID: u16 = 0x1532;
@@ -70,10 +70,10 @@ pub struct Razer {
 impl Razer {
     /// Opens the collection that carries the 90-byte feature report and
     /// finds the transaction id this model answers to.
-    pub fn open() -> Option<(Razer, crate::hid_link::DeviceInfo)> {
+    pub fn open(pick: &Pick) -> Option<(Razer, crate::hid_link::DeviceInfo)> {
         const DESKTOP: u16 = 0x01;
         const MOUSE: u16 = 0x02;
-        let all = interfaces(VID);
+        let all = pick.interfaces(VID);
         // Keyboards share the protocol: prefer a product that is also a mouse.
         let is_mouse = |pid: u16| all.iter().any(|i| i.info.pid == pid && i.usage_page == DESKTOP && i.usage == MOUSE);
         let mut control: Vec<_> = all.iter().filter(|i| i.feature_len == BUF_LEN).collect();
