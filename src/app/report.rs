@@ -150,6 +150,10 @@ fn collections(dev: &HidDevice) -> Vec<String> {
     for (c, l) in &dev.collections {
         out.extend(caps(&usage(c.usage_page, c.usage), l));
     }
+    if dev.collections.iter().all(|(_, l)| l.descriptor.is_none()) {
+        out.push(String::new());
+        out.push("Raw report descriptors: not available on this OS (caps above).".into());
+    }
     out
 }
 
@@ -157,14 +161,12 @@ fn collections(dev: &HidDevice) -> Vec<String> {
 fn caps(usage: &str, l: &ReportLayout) -> Vec<String> {
     let mut out = vec![String::new(), format!("{usage}:")];
     out.extend(l.summary.iter().map(|s| format!("- {s}")));
-    match &l.descriptor {
-        Some(bytes) => {
-            out.push("```text".into());
-            out.extend(bytes.chunks(HEX_LINE).map(|row| row.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" ")));
-            out.push("```".into());
-        }
-        None => out.push("- raw report descriptor: not available on this OS".into()),
-    }
+    let Some(bytes) = &l.descriptor else {
+        return out;
+    };
+    out.push("```text".into());
+    out.extend(bytes.chunks(HEX_LINE).map(|row| row.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" ")));
+    out.push("```".into());
     out
 }
 

@@ -46,6 +46,8 @@ const TIMER_PULSE: usize = 5;
 const TIMER_SCAN: usize = 6;
 /// How often connected mice are listed to notice a new one.
 const SCAN_MS: u32 = 4000;
+/// Longest wait at exit for the mouse to take back changed settings.
+const FLUSH_LIMIT: Duration = Duration::from_secs(2);
 const REFRESH_MS: u32 = 1000;
 const SAVE_MS: u32 = 60_000;
 /// How long a toast (and its Undo) stays.
@@ -264,6 +266,11 @@ pub fn run(mode: StartMode) {
     }
     window::run();
 
+    // Guided checks may have changed a setting: put it back before exit.
+    with_ctrl(|c| {
+        c.close_report();
+        c.mouse.flush(FLUSH_LIMIT);
+    });
     with_ctrl(|c| {
         if !c.removed {
             c.stats.save();
@@ -1008,10 +1015,7 @@ fn hook_tray(a: TrayAction) {
                 c.on_act(Act::About);
             });
         }
-        TrayAction::Quit => {
-            with_ctrl(|c| c.close_report());
-            window::quit();
-        }
+        TrayAction::Quit => window::quit(),
     }
 }
 

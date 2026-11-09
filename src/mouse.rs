@@ -72,6 +72,8 @@ pub enum Command {
     RefreshNow,
     /// Read-only probe of one device by each of these drivers (report wizard).
     Probe(Vec<Target>, Pick),
+    /// Answers once every earlier command is done (before quitting).
+    Flush(Sender<()>),
 }
 
 pub enum Event {
@@ -123,6 +125,14 @@ impl MouseService {
 
     pub fn send(&self, cmd: Command) {
         let _ = self.tx.send(cmd);
+    }
+
+    /// Waits up to `limit` until the commands sent so far are carried out,
+    /// e.g. settings put back just before the app quits.
+    pub fn flush(&self, limit: Duration) {
+        let (tx, rx) = channel();
+        self.send(Command::Flush(tx));
+        let _ = rx.recv_timeout(limit);
     }
 }
 
@@ -426,6 +436,9 @@ fn run(target: Target, pick: Pick, rx: Receiver<Command>, on_event: impl Fn(Even
             Command::Visible(v) => period = if v { POLL_VISIBLE } else { POLL_HIDDEN },
             Command::RefreshNow => {}
             Command::Probe(targets, pick) => on_event(Event::Probe(probe(&targets, &pick))),
+            Command::Flush(done) => {
+                let _ = done.send(());
+            }
         }
     }
 }
