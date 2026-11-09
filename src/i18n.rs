@@ -327,15 +327,30 @@ impl Lang {
     }
 }
 
+#[cfg(not(test))]
 static CURRENT: AtomicUsize = AtomicUsize::new(0);
+
+// Tests run in parallel: each test thread keeps its own language.
+#[cfg(test)]
+thread_local! {
+    static CURRENT: AtomicUsize = const { AtomicUsize::new(0) };
+}
+
+/// Runs `f` on the index of the UI language in `Lang::ALL`.
+fn current<R>(f: impl FnOnce(&AtomicUsize) -> R) -> R {
+    #[cfg(not(test))]
+    return f(&CURRENT);
+    #[cfg(test)]
+    return CURRENT.with(f);
+}
 
 pub fn set_lang(l: Lang) {
     let i = Lang::ALL.iter().position(|&x| x == l).unwrap_or(0);
-    CURRENT.store(i, Ordering::Relaxed);
+    current(|c| c.store(i, Ordering::Relaxed));
 }
 
 pub fn lang() -> Lang {
-    Lang::ALL[CURRENT.load(Ordering::Relaxed)]
+    Lang::ALL[current(|c| c.load(Ordering::Relaxed))]
 }
 
 pub fn tr(k: T) -> &'static str {

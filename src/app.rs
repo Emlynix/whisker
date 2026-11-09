@@ -695,6 +695,76 @@ fn key_action(vk: u16, m: Mods, focus: Option<Focus>, acts: &[Act], caps: &Caps,
     }
 }
 
+/// Inputs of the Mouse tab: catalogue model, USB identity, driver
+/// identity, Lionel status, shown name and link state.
+struct MouseFacts {
+    model: Option<&'static Model>,
+    info: Option<DeviceInfo>,
+    ident: Option<Ident>,
+    status: Option<Status>,
+    name: String,
+    connected: bool,
+}
+
+/// Mouse tab rows from the catalogue, USB identity and status, in the
+/// current language.
+fn device_rows(f: &MouseFacts) -> DeviceView {
+    let model = f.model;
+    let info = f.info.as_ref();
+    let mut rows: Vec<(T, String)> = Vec::new();
+    let mut status = String::new();
+
+    let name = if model.is_none() { other_name(info) } else { f.name.clone() };
+    rows.push((T::DevModel, name));
+    if let Some(m) = model {
+        rows.push((T::DevSupport, support_badge(m.support).0.into()));
+        let link = info.and_then(|i| m.link_of(i.pid)).map(|l| match l {
+            Link::Receiver => tr(T::LinkReceiver).to_string(),
+            Link::Cable => tr(T::LinkCable).to_string(),
+        });
+        rows.push((T::DevConnection, link.unwrap_or_default()));
+    }
+    let ident = f.ident.as_ref().filter(|_| model.is_some_and(|m| m.family.has_driver()));
+    if let Some(addr) = info.and_then(|i| i.bt_address.as_deref()) {
+        // AA:BB:CC:DD:EE:FF
+        let pretty: Vec<&str> = (0..addr.len()).step_by(2).map(|k| &addr[k..k + 2]).collect();
+        rows.push((T::DevConnection, format!("Bluetooth LE · {}", pretty.join(":"))));
+    }
+    if let Some(i) = info {
+        rows.push((T::DevUsbId, format!("{:04X}:{:04X}", i.vid, i.pid)));
+        rows.push((T::DevManufacturer, i.manufacturer.clone()));
+        rows.push((T::DevProduct, i.product.clone()));
+        let fw = ident.map(|d| d.firmware.clone()).filter(|f| !f.is_empty()).unwrap_or_else(|| devices::bcd_version(i.version));
+        rows.push((T::DevFirmware, fw));
+        let serial = ident.map(|d| d.serial.clone()).filter(|s| !s.is_empty()).unwrap_or_else(|| i.serial.clone());
+        rows.push((T::DevSerial, serial));
+    }
+    if let Some(d) = ident {
+        rows.push((T::DevProtocol, d.protocol.clone()));
+    }
+    if let Some(s) = f.status.filter(|_| model.is_some()) {
+        let sensor = devices::sensor_name(s.sensor).map_or_else(|| format!("0x{:02X}", s.sensor), str::to_string);
+        rows.push((T::DevSensor, sensor));
+        rows.push((T::DevProtocol, "Telink · M022".into()));
+        // Payload bytes of the status reply, for bug reports (Diagnostics).
+        let raw: Vec<String> = s.raw[5..24].iter().map(|b| format!("{b:02X}")).collect();
+        status = raw.join(" ");
+    }
+
+    // Only driver-based or Bluetooth mice have a connection state to report.
+    let driven = model.is_some_and(|m| m.family != Family::NoDriver) || info.is_some_and(|i| i.bt_address.is_some());
+    let offline = driven && !f.connected && info.is_some();
+    let experimental = model.is_some_and(|m| m.support == Support::Experimental);
+    let firmware = rows.iter().find(|(k, _)| *k == T::DevFirmware).map(|(_, v)| v.clone()).unwrap_or_default();
+    DeviceView { rows, firmware, status, offline, experimental }
+}
+
+/// Rebuilds the view texts made from translations after a language switch.
+fn relabel(v: &mut View, link: T, facts: &MouseFacts) {
+    v.link = tr(link).into();
+    v.device = device_rows(facts);
+}
+
 /// Text for "Copy for support": version, OS, the Mouse tab's rows and
 /// the raw status. Pasted into public issues, so the serial number is
 /// left out and a Bluetooth address keeps only its last two bytes. The
@@ -1268,20 +1338,25 @@ impl Controller {
 
     /// A driver-based mouse opened: name, DPI range and report rates.
     fn on_ident(&mut self, ident: Ident, ability: Ability) {
-        let model = self.cfg.device.as_deref().and_then(devices::by_id);
-        if let (Some(m), false) = (model, ident.name.is_empty()) {
-            // "Other <brand> mouse": the driver names the model.
-            if m.entry == Entry::Auto {
-                let brand = devices::brand_of(m).title();
-                self.view.device_name = format!("{brand} {}", ident.name.trim_start_matches(brand.as_str()).trim());
-            }
-        }
+        self.name_from(&ident);
         self.view.basic.values = ability.dpi.map(|r| r.values()).unwrap_or_default();
         self.view.basic.rates = ability.rates;
         self.view.basic.stages = ability.stages;
         self.view.has_battery = ability.battery;
         self.ident = Some(ident);
         self.refresh_device();
+    }
+
+    /// "Other <brand> mouse": the driver names the model.
+    fn name_from(&mut self, ident: &Ident) {
+        let Some(m) = self.cfg.device.as_deref().and_then(devices::by_id) else {
+            return;
+        };
+        if m.entry != Entry::Auto || ident.name.is_empty() {
+            return;
+        }
+        let brand = devices::brand_of(m).title();
+        self.view.device_name = format!("{brand} {}", ident.name.trim_start_matches(brand.as_str()).trim());
     }
 
     fn on_mice(&mut self, mice: Vec<DeviceInfo>) {
@@ -1448,62 +1523,20 @@ impl Controller {
         window::invalidate();
     }
 
-    /// Mouse tab rows from the catalogue, USB identity and status, in the
-    /// current language.
-    fn device_view(&self) -> DeviceView {
+    /// What the Mouse tab is built from.
+    fn facts(&self) -> MouseFacts {
         let model = self.cfg.device.as_deref().and_then(devices::by_id);
         // With a driver: the opened interface; otherwise the detected entry.
-        let owned = match model {
+        let info = match model {
             Some(m) if m.family != Family::NoDriver => self.device_info.clone(),
             _ => self.chosen_detected().cloned(),
         };
-        let info = owned.as_ref();
-        let mut rows: Vec<(T, String)> = Vec::new();
-        let mut status = String::new();
+        let name = self.view.device_name.clone();
+        MouseFacts { model, info, ident: self.ident.clone(), status: self.status, name, connected: self.view.connected }
+    }
 
-        let name = if model.is_none() { other_name(info) } else { self.view.device_name.clone() };
-        rows.push((T::DevModel, name));
-        if let Some(m) = model {
-            rows.push((T::DevSupport, support_badge(m.support).0.into()));
-            let link = info.and_then(|i| m.link_of(i.pid)).map(|l| match l {
-                Link::Receiver => tr(T::LinkReceiver).to_string(),
-                Link::Cable => tr(T::LinkCable).to_string(),
-            });
-            rows.push((T::DevConnection, link.unwrap_or_default()));
-        }
-        let ident = self.ident.as_ref().filter(|_| model.is_some_and(|m| m.family.has_driver()));
-        if let Some(addr) = info.and_then(|i| i.bt_address.as_deref()) {
-            // AA:BB:CC:DD:EE:FF
-            let pretty: Vec<&str> = (0..addr.len()).step_by(2).map(|k| &addr[k..k + 2]).collect();
-            rows.push((T::DevConnection, format!("Bluetooth LE · {}", pretty.join(":"))));
-        }
-        if let Some(i) = info {
-            rows.push((T::DevUsbId, format!("{:04X}:{:04X}", i.vid, i.pid)));
-            rows.push((T::DevManufacturer, i.manufacturer.clone()));
-            rows.push((T::DevProduct, i.product.clone()));
-            let fw = ident.map(|d| d.firmware.clone()).filter(|f| !f.is_empty()).unwrap_or_else(|| devices::bcd_version(i.version));
-            rows.push((T::DevFirmware, fw));
-            let serial = ident.map(|d| d.serial.clone()).filter(|s| !s.is_empty()).unwrap_or_else(|| i.serial.clone());
-            rows.push((T::DevSerial, serial));
-        }
-        if let Some(d) = ident {
-            rows.push((T::DevProtocol, d.protocol.clone()));
-        }
-        if let Some(s) = self.status.filter(|_| model.is_some()) {
-            let sensor = devices::sensor_name(s.sensor).map_or_else(|| format!("0x{:02X}", s.sensor), str::to_string);
-            rows.push((T::DevSensor, sensor));
-            rows.push((T::DevProtocol, "Telink · M022".into()));
-            // Payload bytes of the status reply, for bug reports (Diagnostics).
-            let raw: Vec<String> = s.raw[5..24].iter().map(|b| format!("{b:02X}")).collect();
-            status = raw.join(" ");
-        }
-
-        // Only driver-based or Bluetooth mice have a connection state to report.
-        let driven = model.is_some_and(|m| m.family != Family::NoDriver) || info.is_some_and(|i| i.bt_address.is_some());
-        let offline = driven && !self.view.connected && info.is_some();
-        let experimental = model.is_some_and(|m| m.support == Support::Experimental);
-        let firmware = rows.iter().find(|(k, _)| *k == T::DevFirmware).map(|(_, v)| v.clone()).unwrap_or_default();
-        DeviceView { rows, firmware, status, offline, experimental }
+    fn device_view(&self) -> DeviceView {
+        device_rows(&self.facts())
     }
 
     // ---- buttons ----
@@ -1987,7 +2020,14 @@ impl Controller {
         store::save_config(&self.cfg);
 
         // Texts built from translations must be rebuilt.
-        self.view.link = tr(self.link).into();
+        let device = self.cfg.device.as_deref();
+        let other = device.is_some() && device.and_then(devices::by_id).is_none();
+        self.view.device_name = if other { other_name(self.chosen_detected()) } else { device_name(device) };
+        if let Some(i) = self.ident.clone() {
+            self.name_from(&i);
+        }
+        let facts = self.facts();
+        relabel(&mut self.view, self.link, &facts);
         self.update_tray();
         self.refresh_stats();
     }
@@ -2420,6 +2460,21 @@ mod tests {
         assert_eq!(pts[0].0, 0.0);
         assert_eq!(ticks.len(), 4);
         assert_eq!(since, None);
+    }
+
+    #[test]
+    fn language_switch_relabels_mouse_rows() {
+        let lionel = devices::default_model();
+        let facts = MouseFacts { model: Some(lionel), info: None, ident: None, status: None, name: lionel.full_name(), connected: false };
+        let mut v = initial_view(&AppConfig::default(), false);
+        v.device = device_rows(&facts);
+
+        // Settings › Mouse after switching to Slovak at runtime.
+        i18n::with_lang(Lang::Sk, || relabel(&mut v, T::LinkConnected, &facts));
+        let support = v.device.rows.iter().find(|(k, _)| *k == T::DevSupport).map(|(_, s)| s.clone());
+        let slovak = i18n::with_lang(Lang::Sk, || tr(T::BadgeFull).to_string());
+        assert_ne!(slovak, tr(T::BadgeFull));
+        assert_eq!(support, Some(slovak));
     }
 
     #[test]
