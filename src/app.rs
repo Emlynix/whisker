@@ -1407,6 +1407,8 @@ impl Controller {
         if !belongs_to(&ev, &self.target) {
             return;
         }
+        #[cfg(debug_assertions)]
+        let ev = demo_status(ev, self.view.active);
         let (link, level) = match ev {
             Event::Device(info) => {
                 self.device_info = Some(info);
@@ -2693,6 +2695,24 @@ impl Controller {
         self.view.battery_note = battery_note(stats::hours_left(&history));
         window::invalidate();
     }
+}
+
+/// Debug builds: `WHISKER_DEMO=1` turns "no receiver" / "asleep" into a
+/// connected mouse at 78 %, for screenshots without the mouse at hand.
+#[cfg(debug_assertions)]
+fn demo_status(ev: Event, active: usize) -> Event {
+    const DEMO_VAR: &str = "WHISKER_DEMO";
+    const DEMO_BATTERY: u8 = 78;
+    if std::env::var_os(DEMO_VAR).is_none() || !matches!(ev, Event::Absent | Event::Offline) {
+        return ev;
+    }
+    Event::Status(Status {
+        battery: DEMO_BATTERY,
+        charge: protocol::Charge::Discharging,
+        active_stage: active,
+        sensor: protocol::sensor().id,
+        raw: [0; protocol::REPORT_LEN],
+    })
 }
 
 // ---- formatting ----------------------------------------------------------

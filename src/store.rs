@@ -101,6 +101,11 @@ impl Default for AppConfig {
 
 /// `%APPDATA%\Whisker`, resolved by the shell; `None` disables saving.
 pub fn data_dir() -> Option<PathBuf> {
+    // Debug builds: `WHISKER_DATA=<dir>` keeps demo runs off the real data.
+    #[cfg(debug_assertions)]
+    if let Some(dir) = std::env::var_os("WHISKER_DATA") {
+        return Some(PathBuf::from(dir));
+    }
     Some(crate::platform::config_dir()?.join(APP_DIR))
 }
 
