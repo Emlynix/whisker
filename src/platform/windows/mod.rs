@@ -8,6 +8,7 @@ pub mod hid;
 pub mod input;
 pub mod install;
 pub mod net;
+pub mod sign;
 pub mod single;
 mod sys;
 mod tray;

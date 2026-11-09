@@ -1620,23 +1620,31 @@ fn about_dialog(f: &mut Frame, v: &View) {
     let license = fill(tr(T::License), &[LICENSE]);
     f.g.text(&license, Rect::new(inner.x, y + 20.0, inner.w, 18.0), Size::Caption, Weight::Normal, Align::Left, th().text);
 
-    // Product page as a link.
+    // Links go to the web; buttons below are actions.
     const SITE: &str = "www.emlynix.com/whisker";
-    let link = Rect::new(inner.x, y + 42.0, text_w(SITE, Size::Caption) + 4.0, 18.0);
-    let hot = f.button(Act::OpenWeb(Web::Site), link);
-    let c = if hot { th().text } else { th().accent };
-    f.g.text(SITE, link, Size::Caption, Weight::Semibold, Align::Left, c);
-    if hot {
-        f.g.fill(Rect::new(link.x, link.y + link.h - 1.0, link.w - 4.0, 1.0), 0.0, c);
-    }
+    const REPO: &str = "GitHub";
+    let x = text_link(f, Act::OpenWeb(Web::Site), SITE, inner.x, y + 42.0);
+    f.g.text("·", Rect::new(x + 6.0, y + 42.0, 10.0, 18.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
+    text_link(f, Act::OpenWeb(Web::Repo), REPO, x + 18.0, y + 42.0);
     update::about_row(f, &v.update, inner.x, y + 74.0, inner.w);
 
     let by = d.y + d.h - 24.0 - 36.0;
     let report = tr(T::ReportMouse);
     let report_w = text_w(report, Size::Body) + 32.0;
-    f.push_button(Act::OpenWeb(Web::Repo), Rect::new(inner.x, by, 100.0, 36.0), "GitHub", false);
-    f.push_button(Act::OpenWeb(Web::NewIssue), Rect::new(inner.x + 110.0, by, report_w, 36.0), report, false);
+    f.push_button(Act::OpenWeb(Web::NewIssue), Rect::new(inner.x, by, report_w, 36.0), report, false);
     f.push_button(Act::CloseDialog, Rect::new(d.x + d.w - 24.0 - 110.0, by, 110.0, 36.0), tr(T::Close), true);
+}
+
+/// Accent text that opens `act`, underlined on hover; returns its right edge.
+fn text_link(f: &mut Frame, act: Act, label: &str, x: f32, y: f32) -> f32 {
+    let r = Rect::new(x, y, text_w(label, Size::Caption) + 4.0, 18.0);
+    let hot = f.button(act, r);
+    let c = if hot { th().text } else { th().accent };
+    f.g.text(label, r, Size::Caption, Weight::Semibold, Align::Left, c);
+    if hot {
+        f.g.fill(Rect::new(r.x, r.y + r.h - 1.0, r.w - 4.0, 1.0), 0.0, c);
+    }
+    r.x + r.w
 }
 
 // ---- appearance ------------------------------------------------------------

@@ -34,6 +34,7 @@
 
 mod json;
 mod sha256;
+mod sig;
 
 use crate::platform::{self, Fetch, NetError};
 use json::Json;
@@ -54,6 +55,8 @@ const NOTES_MAX: usize = 4000;
 /// `YYYY-MM-DD`.
 const DATE_LEN: usize = 10;
 const DIGEST_PREFIX: &str = "sha256:";
+/// GitHub asset holding the signature of `<asset>`.
+const SIG_SUFFIX: &str = ".sig";
 
 const HTTP_OK: u16 = 200;
 const HTTP_NOT_FOUND: u16 = 404;
@@ -186,6 +189,17 @@ impl Purpose {
 struct Asset {
     url: Url,
     sha256: [u8; sha256::DIGEST_LEN],
+    sig: Signature,
+}
+
+/// Where the release key's signature of the file comes from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Signature {
+    /// latest.json: DER bytes (base64 in the file).
+    Inline(Vec<u8>),
+    /// GitHub: the `<asset>.sig` file.
+    File(Url),
+    Missing,
 }
 
 /// A release as one channel describes it.
@@ -224,6 +238,8 @@ pub enum Fail {
     Refused,
     /// Download differs from the published SHA-256.
     Mismatch,
+    /// No valid release-key signature.
+    Unsigned,
     /// The exe's folder can't be written, or the swap failed.
     Replace,
 }
@@ -306,9 +322,9 @@ fn clean_date(s: &str) -> String {
     if digits && d.len() == DATE_LEN { d.to_string() } else { String::new() }
 }
 
-fn asset_of(url: Option<&str>, hex: Option<&str>) -> Option<Asset> {
+fn asset_of(url: Option<&str>, hex: Option<&str>, sig: Signature) -> Option<Asset> {
     let url = Url::parse(url?).filter(|u| Purpose::Binary.allows(u))?;
-    Some(Asset { url, sha256: sha256::parse_hex(hex?)? })
+    Some(Asset { url, sha256: sha256::parse_hex(hex?)?, sig })
 }
 
 /// latest.json; `key` picks this platform's asset.
@@ -316,7 +332,8 @@ fn parse_manifest(text: &str, key: &str) -> Option<Manifest> {
     let j = json::parse(text)?;
     let version = Version::parse(j.get("version")?.str()?)?;
     let a = j.get("assets").and_then(|a| a.get(key));
-    let asset = a.and_then(|a| asset_of(a.get("url").and_then(Json::str), a.get("sha256").and_then(Json::str)));
+    let sig = |a: &Json| a.get("sig").and_then(Json::str).and_then(sig::base64).map_or(Signature::Missing, Signature::Inline);
+    let asset = a.and_then(|a| asset_of(a.get("url").and_then(Json::str), a.get("sha256").and_then(Json::str), sig(a)));
     Some(Manifest {
         version,
         date: j.get("date").and_then(Json::str).map(clean_date).unwrap_or_default(),
@@ -329,9 +346,14 @@ fn parse_manifest(text: &str, key: &str) -> Option<Manifest> {
 fn parse_github(text: &str, name: &str) -> Option<Manifest> {
     let j = json::parse(text)?;
     let version = Version::parse(j.get("tag_name")?.str()?)?;
-    let a = j.get("assets")?.items().iter().find(|a| a.get("name").and_then(Json::str) == Some(name));
+    let assets = j.get("assets")?.items();
+    let named = |n: &str| assets.iter().find(|a| a.get("name").and_then(Json::str) == Some(n));
+    let a = named(name);
+    let sig_name = format!("{name}{SIG_SUFFIX}");
+    let sig_url = named(&sig_name).and_then(|s| s.get("browser_download_url")).and_then(Json::str).and_then(Url::parse);
+    let sig = sig_url.filter(|u| Purpose::Binary.allows(u)).map_or(Signature::Missing, Signature::File);
     let hex = |a: &Json| a.get("digest").and_then(Json::str).and_then(|d| d.strip_prefix(DIGEST_PREFIX)).map(str::to_string);
-    let asset = a.and_then(|a| asset_of(a.get("browser_download_url").and_then(Json::str), hex(a).as_deref()));
+    let asset = a.and_then(|a| asset_of(a.get("browser_download_url").and_then(Json::str), hex(a).as_deref(), sig));
     Some(Manifest {
         version,
         date: j.get("published_at").and_then(Json::str).map(clean_date).unwrap_or_default(),
@@ -340,11 +362,21 @@ fn parse_github(text: &str, name: &str) -> Option<Manifest> {
     })
 }
 
-/// Downloads the release file; only bytes matching its SHA-256 come back.
+/// Downloads the release file; only bytes matching its SHA-256 and signed
+/// with the release key come back.
 pub fn download(r: &Release) -> Result<Vec<u8>, Fail> {
     let body = fetch(&r.asset.url, Purpose::Binary)?.ok_or(Fail::Network)?;
-    if sha256::digest(&body) != r.asset.sha256 {
+    let digest = sha256::digest(&body);
+    if digest != r.asset.sha256 {
         return Err(Fail::Mismatch);
+    }
+    let der = match &r.asset.sig {
+        Signature::Inline(der) => der.clone(),
+        Signature::File(url) => fetch(url, Purpose::Binary)?.filter(|b| b.len() <= sig::SIG_MAX).ok_or(Fail::Unsigned)?,
+        Signature::Missing => return Err(Fail::Unsigned),
+    };
+    if !sig::verify(&digest, &der) {
+        return Err(Fail::Unsigned);
     }
     Ok(body)
 }
@@ -454,7 +486,7 @@ mod tests {
 
     #[test]
     fn only_newer_versions_are_offered() {
-        let asset = Some(Asset { url: Url::parse("https://github.com/a").unwrap(), sha256: [0; 32] });
+        let asset = Some(Asset { url: Url::parse("https://github.com/a").unwrap(), sha256: [0; 32], sig: Signature::Missing });
         let m = |ver: &str, asset: Option<Asset>| Manifest { version: v(ver), date: String::new(), notes: String::new(), asset };
         assert!(matches!(judge(m("0.9.1", asset.clone()), v("0.9.0")), Check::Newer(_)));
         assert_eq!(judge(m("0.9.0", asset.clone()), v("0.9.0")), Check::Current);
@@ -513,6 +545,10 @@ mod tests {
         let m = parse_manifest(&text, "windows-x86_64").unwrap();
         assert_eq!((m.version, m.date.as_str(), m.notes.as_str()), (v("0.9.1"), "2026-11-20", "Fixes.\n- ab"));
         assert_eq!(m.asset.unwrap().url.host, "www.emlynix.com");
+        // A base64 signature next to the hash; unsigned when absent.
+        let signed = text.replacen(r#""sha256":"#, r#""sig":"aGVsbG8=","sha256":"#, 1);
+        assert_eq!(parse_manifest(&signed, "windows-x86_64").unwrap().asset.unwrap().sig, Signature::Inline(b"hello".to_vec()));
+        assert_eq!(parse_manifest(&text, "windows-x86_64").unwrap().asset.unwrap().sig, Signature::Missing);
         // Disallowed host or missing platform: release known, nothing to download.
         assert_eq!(parse_manifest(&text, "macos-universal").unwrap().asset, None);
         assert_eq!(parse_manifest(&text, "linux-x86_64").unwrap().asset, None);
@@ -532,7 +568,14 @@ mod tests {
         );
         let m = parse_github(&text, "whisker-windows-x86_64.exe").unwrap();
         assert_eq!((m.version, m.date.as_str(), m.notes.as_str()), (v("0.9.2"), "2026-11-21", "Notes"));
-        assert_eq!(m.asset.unwrap().sha256, sha256::parse_hex(HEX).unwrap());
+        let asset = m.asset.unwrap();
+        assert_eq!(asset.sha256, sha256::parse_hex(HEX).unwrap());
+        assert_eq!(asset.sig, Signature::Missing);
+        // The `.sig` file next to the exe.
+        let sig_asset = r#"{"name":"whisker-windows-x86_64.exe.sig","browser_download_url":"https://github.com/s.sig"},"#;
+        let signed = text.replacen(r#"{"name":"other.zip""#, &format!(r#"{sig_asset}{{"name":"other.zip""#), 1);
+        let sig = parse_github(&signed, "whisker-windows-x86_64.exe").unwrap().asset.unwrap().sig;
+        assert_eq!(sig, Signature::File(Url::parse("https://github.com/s.sig").unwrap()));
         // No digest: can't be verified, so nothing to download.
         let undigested = text.replace("\"digest\"", "\"x\"");
         assert_eq!(parse_github(&undigested, "whisker-windows-x86_64.exe").unwrap().asset, None);

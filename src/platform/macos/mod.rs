@@ -17,6 +17,7 @@ pub mod install;
 mod iokit;
 mod keymap;
 pub mod net;
+pub mod sign;
 pub mod single;
 mod sys;
 mod tray;
