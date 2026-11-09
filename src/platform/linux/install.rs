@@ -99,9 +99,18 @@ fn launcher(exe: &Path) -> Option<String> {
 }
 
 /// Copies the binary into the staging folder, made executable.
+/// Written into the install folder: only such a folder is ever deleted
+/// (`~/.local/share/whisker` could belong to another program).
+const MARKER: &str = ".whisker-install";
+
+fn ours(dir: &Path) -> bool {
+    dir.join(MARKER).is_file()
+}
+
 fn stage(cur: &Path, staging: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(staging)?;
+    std::fs::write(staging.join(MARKER), "")?;
     let exe = staging.join(EXE_NAME);
     std::fs::copy(cur, &exe)?;
     std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(EXE_MODE))?;
@@ -126,6 +135,9 @@ pub fn install(mode: Autostart) -> Result<(), String> {
     let _ = std::fs::remove_dir_all(&staging);
     stage(&cur, &staging).map_err(|e| format!("Copy failed: {e}"))?;
     if target.exists() {
+        if !ours(&target) {
+            return Err(format!("{} belongs to another program", target.display()));
+        }
         std::fs::remove_dir_all(&target).map_err(|e| e.to_string())?;
     }
     std::fs::rename(&staging, &target).map_err(|e| e.to_string())?;
@@ -177,7 +189,7 @@ pub fn uninstall(origin: Origin) -> bool {
         let _ = std::fs::remove_file(path);
     }
     // A running binary may be deleted on Linux; the process keeps its image.
-    if let Some(dir) = install_dir().filter(|d| d.is_dir()) {
+    if let Some(dir) = install_dir().filter(|d| ours(d)) {
         let _ = std::fs::remove_dir_all(dir);
     }
     true

@@ -106,7 +106,9 @@ pub fn notify(title: &str, text: &str, open: &str) {
     };
     let hints: HashMap<String, Variant> = HashMap::new();
     let actions = vec![DEFAULT_ACTION.to_string(), open.to_string()];
-    let args = (crate::APP_NAME, 0u32, "", title, text, actions, hints, EXPIRE_DEFAULT).into();
+    // Servers read the body as markup: "<b>" or "&" must stay plain text.
+    let body = gtk::glib::markup_escape_text(text);
+    let args = (crate::APP_NAME, 0u32, "", title, body.as_str(), actions, hints, EXPIRE_DEFAULT).into();
     let reply = VariantTy::new("(u)").ok();
     bus.call(Some(NOTIFY_NAME), NOTIFY_PATH, NOTIFY_NAME, "Notify", Some(&args), reply, DBusCallFlags::NONE, CALL_TIMEOUT_MS, None::<&gio::Cancellable>, |r| {
         let Some((id,)) = r.ok().and_then(|v| v.get::<(u32,)>()) else {

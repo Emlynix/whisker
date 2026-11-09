@@ -124,8 +124,26 @@ pub fn save_text(name: &str, text: &str) {
         return;
     }
     let tmp = dir.join(format!("{name}.tmp"));
-    if std::fs::write(&tmp, text).is_ok() {
+    if write_private(&tmp, text).is_ok() {
         let _ = std::fs::rename(&tmp, dir.join(name));
+    }
+}
+
+/// Config and statistics are the user's alone: 0600 on Unix.
+fn write_private(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        const OWNER_RW: u32 = 0o600;
+        // `mode` applies only to a new file: drop a leftover one first.
+        let _ = std::fs::remove_file(path);
+        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(OWNER_RW).open(path)?;
+        f.write_all(text.as_bytes())
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, text)
     }
 }
 

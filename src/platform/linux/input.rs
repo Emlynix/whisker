@@ -30,6 +30,9 @@ const REL_X: u16 = 0x00;
 const REL_Y: u16 = 0x01;
 const REL_WHEEL: u16 = 0x08;
 const BTN_LEFT: u16 = 0x110;
+/// Letter key codes run from KEY_Q (16) to KEY_M (50).
+const KEY_Q: u16 = 16;
+const KEY_M: u16 = 50;
 const BTN_RIGHT: u16 = 0x111;
 const BTN_MIDDLE: u16 = 0x112;
 const BTN_SIDE: u16 = 0x113;
@@ -66,10 +69,13 @@ fn has_bit(mask: &str, n: u16) -> bool {
 }
 
 /// Relative X/Y and a left button: a mouse, not a touchpad or keyboard.
+/// A node that also has letter keys (keyboard with a TrackPoint) is
+/// skipped, so no keystroke ever reaches the process.
 fn is_mouse(node: usize) -> bool {
     let cap = |kind: &str| std::fs::read_to_string(format!("{CLASS_DIR}/{NODE_PREFIX}{node}/device/capabilities/{kind}")).unwrap_or_default();
-    let rel = cap("rel");
-    has_bit(&rel, REL_X) && has_bit(&rel, REL_Y) && has_bit(&cap("key"), BTN_LEFT)
+    let (rel, keys) = (cap("rel"), cap("key"));
+    let letters = (KEY_Q..=KEY_M).any(|k| has_bit(&keys, k));
+    has_bit(&rel, REL_X) && has_bit(&rel, REL_Y) && has_bit(&keys, BTN_LEFT) && !letters
 }
 
 /// Numbers of the mouse event nodes present now.
@@ -114,8 +120,8 @@ impl Device {
             (EV_KEY, BTN_RIGHT) => m.right |= down,
             (EV_KEY, BTN_MIDDLE) => m.middle |= down,
             (EV_KEY, BTN_SIDE | BTN_EXTRA | BTN_FORWARD | BTN_BACK) => m.side |= down,
-            (EV_REL, REL_X) => m.dx += e.value,
-            (EV_REL, REL_Y) => m.dy += e.value,
+            (EV_REL, REL_X) => m.dx = m.dx.saturating_add(e.value),
+            (EV_REL, REL_Y) => m.dy = m.dy.saturating_add(e.value),
             (EV_REL, REL_WHEEL) => m.wheel |= e.value != 0,
             _ => return,
         }

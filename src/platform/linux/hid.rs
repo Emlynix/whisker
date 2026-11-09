@@ -46,6 +46,9 @@ const BUS_BLUETOOTH: u16 = 0x05;
 const ADDRESS_LEN: usize = 12;
 /// Largest report hidraw hands out (`HID_MAX_BUFFER_SIZE`).
 const MAX_REPORT: usize = 16384;
+// Other architectures lay out `_IOC` differently.
+#[cfg(not(any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "arm", target_arch = "riscv64")))]
+compile_error!("hidraw ioctl numbers assume the asm-generic _IOC layout");
 /// `_IOC` fields (asm-generic layout: x86, ARM, RISC-V).
 const IOC_WRITE: u64 = 1;
 const IOC_READ: u64 = 2;
@@ -61,7 +64,7 @@ const RULES: &str = include_str!("../../../bundle/linux/70-whisker.rules");
 const RULES_NAME: &str = "70-whisker.rules";
 const RULES_DIR: &str = "/etc/udev/rules.d";
 /// Applies the new rule to devices already connected.
-const RELOAD: &str = "sudo udevadm control --reload && sudo udevadm trigger";
+const RELOAD: &str = "sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=hidraw --subsystem-match=input";
 /// Debug builds: act as if the rule were missing (snapshots in WSL).
 #[cfg(debug_assertions)]
 const DENY_VAR: &str = "WHISKER_DENY_HID";
@@ -416,7 +419,7 @@ mod tests {
     fn command_quotes_the_rules_path() {
         let c = install_command(Path::new("/home/o'neil/.config/Whisker/70-whisker.rules"));
         assert!(c.starts_with("sudo install -m 644 '/home/o'\\''neil/.config/Whisker/70-whisker.rules' /etc/udev/rules.d/70-whisker.rules && "), "{c}");
-        assert!(c.ends_with("sudo udevadm control --reload && sudo udevadm trigger"), "{c}");
+        assert!(c.ends_with(RELOAD), "{c}");
     }
 
     #[test]
