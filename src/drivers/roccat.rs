@@ -643,4 +643,15 @@ mod tests {
             assert!(sc.valid(sc.raw(sc.min)) && sc.valid(sc.raw(sc.max)));
         }
     }
+
+    /// Every row is in data/mice.toml with the same DPI and rates.
+    #[test]
+    fn catalogue_agrees() {
+        use crate::devices::{Family, listed_as};
+        for m in MODELS {
+            let c = listed_as(VID, Some(m.pid), m.name).unwrap_or_else(|| panic!("{} {:04X} not listed", m.name, m.pid));
+            let dpi = DpiRange::Steps { min: m.scale.min, max: m.scale.max, step: m.scale.step };
+            assert_eq!((c.family, c.dpi.as_ref(), c.rates.as_slice()), (Family::Roccat, Some(&dpi), &RATES[..]), "{}", m.name);
+        }
+    }
 }

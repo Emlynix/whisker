@@ -129,16 +129,6 @@ const PORTS: [Port; 13] = [
     Port { vid: VID_COMPX, pid: 0xF510, cap_hz: 4000, access: Access::ReadOnly, spec: Some(&ATLANTIS_4K) },
 ];
 
-/// Known models as (name, vendor id, product id) for the catalogue.
-/// Models told apart only by the CID/MID reply on a shared receiver have
-/// no product id of their own (`None`); ATK ones use ATK's vendor id.
-pub fn listed() -> Vec<(&'static str, u16, Option<u16>)> {
-    let vid_of = |name: &str| if name.starts_with("ATK") { VID_ATK } else { VID_COMPX };
-    let shared = MODELS.iter().map(|(_, s)| (s.name, vid_of(s.name), None));
-    let own = PORTS.iter().filter_map(|p| p.spec.map(|s| (s.name, p.vid, Some(p.pid))));
-    shared.chain(own).collect()
-}
-
 fn port(vid: u16, pid: u16) -> Option<&'static Port> {
     PORTS.iter().find(|p| p.vid == vid && p.pid == pid)
 }
@@ -458,6 +448,28 @@ mod tests {
         // Lamzu receiver reads 250 Hz.
         let l = parse(&hex("08 08 00 00 00 02 04 51 00 00 00 00 00 00 00 00 ee"), &[CMD_READ]).unwrap();
         assert_eq!(pair(l[0], l[1]), Some(0x04));
+    }
+
+    /// Every model and port is in data/mice.toml under this family.
+    /// CID/MID models have no product id there; ATK ones use ATK's vid.
+    #[test]
+    fn catalogue_agrees() {
+        use crate::devices::{Entry, Family, listed_as, models};
+        let vid_of = |name: &str| if name.starts_with("ATK") { VID_ATK } else { VID_COMPX };
+        for (_, s) in MODELS {
+            let c = listed_as(vid_of(s.name), None, s.name).unwrap_or_else(|| panic!("{} not listed", s.name));
+            assert_eq!(c.family, Family::OemHid, "{}", s.name);
+        }
+
+        for p in &PORTS {
+            let Some(s) = p.spec else {
+                // Shared receiver: the vendor's auto entry.
+                assert!(models().any(|m| m.entry == Entry::Auto && m.vid == p.vid && m.family == Family::OemHid), "{:04X}", p.pid);
+                continue;
+            };
+            let c = listed_as(p.vid, Some(p.pid), s.name).unwrap_or_else(|| panic!("{} {:04X} not listed", s.name, p.pid));
+            assert_eq!(c.family, Family::OemHid, "{}", s.name);
+        }
     }
 
     #[test]

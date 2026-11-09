@@ -108,13 +108,10 @@ struct Model {
     presets: u8,
     layout: Layout,
     link: Link,
-    /// Physical buttons; for a future button remap page.
-    #[allow(dead_code)]
-    buttons: u8,
 }
 
-const fn m(name: &'static str, pids: &'static [u16], dpi: (u32, u32, u32), unit: Unit, presets: u8, layout: Layout, link: Link, buttons: u8) -> Model {
-    Model { name, pids, min: dpi.0, max: dpi.1, step: dpi.2, unit, presets, layout, link, buttons }
+const fn m(name: &'static str, pids: &'static [u16], dpi: (u32, u32, u32), unit: Unit, presets: u8, layout: Layout, link: Link) -> Model {
+    Model { name, pids, min: dpi.0, max: dpi.1, step: dpi.2, unit, presets, layout, link }
 }
 
 use Layout::{Plain, Xy};
@@ -124,33 +121,28 @@ use Unit::{Fifty, Hundred};
 /// From libratbag device files. Omni receiver mice (0x1ACE, Strix Impact
 /// III Wireless) are left out: they need report id 3 and a model probe.
 const MODELS: [Model; 21] = [
-    m("ROG GX860 Buzzard", &[0x1816], (100, 8200, 100), Fifty, 2, Plain, Cable, 10),
-    m("ROG Chakram Core", &[0x1958], (100, 16000, 100), Hundred, 4, Plain, Cable, 5),
-    m("ROG Chakram", &[0x18E3, 0x18E5], (100, 16000, 100), Hundred, 4, Plain, Wireless, 5),
-    m("ROG Chakram X", &[0x1A18, 0x1A1A], (100, 36000, 100), Hundred, 4, Xy, Wireless, 14),
-    m("ROG Gladius II", &[0x1845], (100, 12000, 100), Fifty, 2, Plain, Cable, 9),
-    m("ROG Gladius II Origin", &[0x1877], (100, 12000, 100), Hundred, 2, Plain, Cable, 8),
-    m("ROG Gladius II Origin PNK LTD", &[0x18CD], (100, 12000, 100), Hundred, 2, Plain, Cable, 8),
-    m("ROG Harpe Wireless", &[0x1A92], (100, 36000, 50), Fifty, 4, Plain, Wireless, 5),
-    m("ROG Keris", &[0x195C], (100, 16000, 100), Hundred, 4, Plain, Cable, 8),
-    m("ROG Keris Wireless", &[0x195E, 0x1960], (100, 16000, 100), Hundred, 4, Plain, Wireless, 8),
-    m("ROG Keris Wireless AimPoint", &[0x1A66, 0x1A68], (100, 36000, 50), Fifty, 4, Plain, Wireless, 7),
-    m("ROG Pugio", &[0x1846], (100, 7200, 100), Fifty, 2, Plain, Cable, 10),
-    m("ROG Spatha X", &[0x1979, 0x1977], (100, 19000, 50), Fifty, 4, Xy, Wireless, 14),
-    m("ROG Strix Carry", &[0x18B4], (100, 7200, 100), Fifty, 2, Plain, Wireless, 8),
-    m("ROG Strix Impact", &[0x1847], (100, 5000, 100), Fifty, 2, Plain, Cable, 6),
-    m("ROG Strix Impact II", &[0x18E1], (200, 6200, 100), Fifty, 4, Plain, Cable, 8),
-    m("ROG Strix Impact II Wireless", &[0x1947, 0x1949], (100, 16000, 100), Fifty, 4, Plain, Wireless, 8),
-    m("ROG Strix Impact III", &[0x1A88], (100, 12000, 50), Fifty, 4, Plain, Cable, 8),
-    m("TUF Gaming M3 Gen II", &[0x1A9B], (100, 8000, 100), Fifty, 4, Plain, Cable, 8),
-    m("TUF Gaming M4 Air", &[0x1A03], (100, 16000, 100), Fifty, 4, Plain, Cable, 6),
-    m("TUF Gaming Mini WL", &[0x1C56, 0x1C57], (100, 12000, 100), Fifty, 4, Xy, Wireless, 8),
+    m("ROG GX860 Buzzard", &[0x1816], (100, 8200, 100), Fifty, 2, Plain, Cable),
+    m("ROG Chakram Core", &[0x1958], (100, 16000, 100), Hundred, 4, Plain, Cable),
+    m("ROG Chakram", &[0x18E3, 0x18E5], (100, 16000, 100), Hundred, 4, Plain, Wireless),
+    m("ROG Chakram X", &[0x1A18, 0x1A1A], (100, 36000, 100), Hundred, 4, Xy, Wireless),
+    m("ROG Gladius II", &[0x1845], (100, 12000, 100), Fifty, 2, Plain, Cable),
+    m("ROG Gladius II Origin", &[0x1877], (100, 12000, 100), Hundred, 2, Plain, Cable),
+    m("ROG Gladius II Origin PNK LTD", &[0x18CD], (100, 12000, 100), Hundred, 2, Plain, Cable),
+    m("ROG Harpe Wireless", &[0x1A92], (100, 36000, 50), Fifty, 4, Plain, Wireless),
+    m("ROG Keris", &[0x195C], (100, 16000, 100), Hundred, 4, Plain, Cable),
+    m("ROG Keris Wireless", &[0x195E, 0x1960], (100, 16000, 100), Hundred, 4, Plain, Wireless),
+    m("ROG Keris Wireless AimPoint", &[0x1A66, 0x1A68], (100, 36000, 50), Fifty, 4, Plain, Wireless),
+    m("ROG Pugio", &[0x1846], (100, 7200, 100), Fifty, 2, Plain, Cable),
+    m("ROG Spatha X", &[0x1979, 0x1977], (100, 19000, 50), Fifty, 4, Xy, Wireless),
+    m("ROG Strix Carry", &[0x18B4], (100, 7200, 100), Fifty, 2, Plain, Wireless),
+    m("ROG Strix Impact", &[0x1847], (100, 5000, 100), Fifty, 2, Plain, Cable),
+    m("ROG Strix Impact II", &[0x18E1], (200, 6200, 100), Fifty, 4, Plain, Cable),
+    m("ROG Strix Impact II Wireless", &[0x1947, 0x1949], (100, 16000, 100), Fifty, 4, Plain, Wireless),
+    m("ROG Strix Impact III", &[0x1A88], (100, 12000, 50), Fifty, 4, Plain, Cable),
+    m("TUF Gaming M3 Gen II", &[0x1A9B], (100, 8000, 100), Fifty, 4, Plain, Cable),
+    m("TUF Gaming M4 Air", &[0x1A03], (100, 16000, 100), Fifty, 4, Plain, Cable),
+    m("TUF Gaming Mini WL", &[0x1C56, 0x1C57], (100, 12000, 100), Fifty, 4, Xy, Wireless),
 ];
-
-/// Known models as (name, product id), for the catalogue.
-pub fn listed() -> Vec<(&'static str, u16)> {
-    MODELS.iter().flat_map(|m| m.pids.iter().map(move |p| (m.name, *p))).collect()
-}
 
 fn model(pid: u16) -> Option<&'static Model> {
     MODELS.iter().find(|m| m.pids.contains(&pid))
@@ -455,7 +447,20 @@ mod tests {
         all.dedup();
         assert_eq!(all.len(), n);
         assert!(MODELS.iter().all(|m| m.presets == 2 || m.presets == 4));
-        assert!(MODELS.iter().all(|m| m.buttons > 0 && m.step % m.unit as u32 == 0));
+        assert!(MODELS.iter().all(|m| m.step % m.unit as u32 == 0));
+    }
+
+    /// Every row is in data/mice.toml with the same DPI and rates.
+    #[test]
+    fn catalogue_agrees() {
+        use crate::devices::{Family, listed_as};
+        for m in &MODELS {
+            for &pid in m.pids {
+                let c = listed_as(VID, Some(pid), m.name).unwrap_or_else(|| panic!("{} {pid:04X} not listed", m.name));
+                assert_eq!((c.family, c.dpi.as_ref(), c.rates.as_slice()), (Family::Asus, Some(&m.range()), &RATES[..]), "{}", m.name);
+                assert!(c.buttons.is_some_and(|b| b > 0), "{}", m.name);
+            }
+        }
     }
 
     #[test]

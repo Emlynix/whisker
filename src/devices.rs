@@ -1,15 +1,49 @@
 //! Catalogue of supported mice, brand -> model, and matching of connected
-//! ones to it. Named models come from the drivers' own model tables; each
-//! brand with a vendor-wide driver ends in "Other <brand> mouse".
+//! ones to it. Brands and models come from `data/mice.toml` (embedded);
+//! each brand with a vendor-wide driver ends in "Other <brand> mouse".
 //!
 //! ```text
 //!   White Shark  -> Lionel, Other White Shark mouse (auto-detect)
 //!   Corsair      -> Katar Pro, …, Other Corsair mouse (auto-detect)
 //!   Eternico     -> AET-MS480B (partial), AET-MVS490B (stats only)
-//!   Other brand  -> Other mouse (stats only)
+//!   Other brand  -> Other mouse (stats only, in code)
+//! ```
+//!
+//! # Data file format
+//!
+//! `#` starts a comment. `[[brand]]` and `[[mouse]]` start blocks of
+//! `key = value` lines. Values: `"text"` (no escapes), numbers (`26000`,
+//! `0x5B2F`), bare words, comma lists. Unknown keys or words are errors.
+//! File order is picker order; a mouse goes under its brand's block.
+//!
+//! - brand: `id`, `name` or `label` (`oem`), `in_names` (`true`: the
+//!   brand is part of the model names), `family`, `auto` (vendor id of
+//!   "Other <brand> mouse (auto-detect)"; none = no such entry).
+//! - mouse: `brand`, `model`, `vid`, `support` (`full`, `experimental`,
+//!   `partial`, `stats-only`) are required; `pids` (each with an optional
+//!   `receiver` / `cable`; none = only by vendor id), `family` (default:
+//!   the brand's), `dpi`, `rates`, `stage_dpi`, `buttons` are optional.
+//! - family: `telink-m022`, `hidpp`, `razer`, `eternico`, `sinowealth`,
+//!   `steelseries`, `oemhid`, `roccat`, `corsair`, `asus`, `none`.
+//!
+//! A ready-to-paste block (id = "<brand>/<slug of model>"):
+//!
+//! ```text
+//! [[mouse]]
+//! brand = corsair
+//! model = "M65 RGB Ultra"
+//! vid = 0x1B1C
+//! pids = 0x1B9E cable, 0x1BB4 receiver
+//! support = experimental
+//! dpi = 100..26000 step 50
+//! rates = 125, 250, 500, 1000
+//! stage_dpi = 400, 800, 1600, 3200
+//! buttons = 8
 //! ```
 
-use crate::drivers::Pick;
+mod data;
+
+use crate::drivers::{DpiRange, Pick};
 use crate::hid_link::DeviceInfo;
 use crate::i18n::{T, fill, tr};
 use crate::mouse::Target;
@@ -135,6 +169,12 @@ pub struct Model {
     pub caps: Caps,
     /// DPI of each stage for mice that only report the stage number.
     pub stage_dpi: &'static [u32],
+    /// DPI range from the data file (the driver still reports its own).
+    pub dpi: Option<DpiRange>,
+    /// Report rates in Hz from the data file; empty = unknown.
+    pub rates: Vec<u32>,
+    /// Physical buttons, for a future button remap page.
+    pub buttons: Option<u8>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -202,121 +242,88 @@ fn slug(name: &str) -> String {
     out.trim_end_matches('-').to_string()
 }
 
-/// Brand under construction; models of one name merge their product ids
-/// (cable and receiver are listed apart by the drivers).
-struct Builder {
-    brand: Brand,
-    family: Family,
-    caps: Caps,
-}
+/// The catalogue file, embedded at build time; order = picker order.
+const MICE: &str = include_str!("../data/mice.toml");
+/// "Other <brand> mouse (auto-detect)": the vendor-wide driver entry.
+const AUTO_SUPPORT: Support = Support::Experimental;
 
-impl Builder {
-    fn new(id: &'static str, name: &'static str, family: Family) -> Builder {
-        let brand = Brand { id, name, label: None, in_names: false, models: Vec::new() };
-        Builder { brand, family, caps: CAPS_BASIC }
-    }
-
-    fn model(&mut self, name: &'static str, vid: u16, pid: Option<u16>) {
-        let id = format!("{}/{}", self.brand.id, slug(name));
-        if let Some(m) = self.brand.models.iter_mut().find(|m| m.id == id && m.vid == vid) {
-            if let Some(p) = pid.filter(|p| !m.pids.iter().any(|(q, _)| q == p)) {
-                m.pids.push((p, None));
-            }
-            return;
-        }
-        let pids = pid.map(|p| (p, None)).into_iter().collect();
-        let (family, caps) = (self.family, self.caps);
-        let support = Support::Experimental;
-        self.brand.models.push(Model { id, brand: self.brand.id, name, entry: Entry::Named, vid, pids, family, support, caps, stage_dpi: &[] });
-    }
-
-    /// Adds "Other <brand> mouse (auto-detect)", the vendor-wide driver entry.
-    fn auto(mut self, vid: u16) -> Brand {
-        let (family, caps) = (self.family, self.caps);
-        let id = format!("{}/auto", self.brand.id);
-        let support = Support::Experimental;
-        self.brand.models.push(Model { id, brand: self.brand.id, name: "", entry: Entry::Auto, vid, pids: Vec::new(), family, support, caps, stage_dpi: &[] });
-        self.brand
-    }
-}
-
-const WHITE_SHARK_VID: u16 = 0x248A;
-const LIONEL_PIDS: [(u16, Option<Link>); 2] = [(0x5B2F, Some(Link::Receiver)), (0x5B2E, Some(Link::Cable))];
-const APPLE_VID: u16 = 0x05AC;
-const MVS490B_PID: u16 = 0x024F;
-const MS480B_STAGES: [u32; 4] = [1200, 2400, 3200, 6400];
-
-/// Brand -> model catalogue, built once from the drivers' model tables.
+/// Brand -> model catalogue, parsed once from `data/mice.toml`.
 pub fn brands() -> &'static [Brand] {
     static CATALOGUE: OnceLock<Vec<Brand>> = OnceLock::new();
     CATALOGUE.get_or_init(build)
 }
 
+/// The data file's brands, then "Other brand". A broken file (the tests
+/// parse it) leaves only "Other mouse" instead of failing at startup.
 fn build() -> Vec<Brand> {
-    use crate::drivers::{asus, corsair, eternico, hidpp, oemhid, razer, roccat, sinowealth, steelseries};
-    const GLORIOUS: &str = "Glorious ";
-    const ROG: &str = "ROG ";
-    const ATK: &str = "ATK ";
+    let mut brands = data::parse(MICE).map_or_else(|_| Vec::new(), from_data);
+    brands.push(other_brand());
+    brands
+}
 
-    // White Shark: the Lionel is the only Telink M022 model known by name.
-    let mut ws = Builder::new("whiteshark", "White Shark", Family::TelinkM022);
-    ws.caps = CAPS_ALL;
-    ws.model("Lionel", WHITE_SHARK_VID, None);
-    let lionel = &mut ws.brand.models[0];
-    (lionel.pids, lionel.support) = (LIONEL_PIDS.to_vec(), Support::Full);
+/// Records -> brands; each brand with `auto` ends in its Auto entry.
+fn from_data(d: data::Data<'static>) -> Vec<Brand> {
+    let data::Data { brands: recs, mice } = d;
+    let mut brands: Vec<Brand> = recs.iter().map(|r| Brand { id: r.id, name: r.name, label: r.label, in_names: r.in_names, models: Vec::new() }).collect();
 
-    let mut ss = Builder::new("steelseries", "SteelSeries", Family::SteelSeries);
-    for (n, p) in steelseries::listed() {
-        ss.model(n, steelseries::VID, Some(p));
-    }
-    let mut co = Builder::new("corsair", "Corsair", Family::Corsair);
-    for (n, p) in corsair::listed() {
-        co.model(n, corsair::VID, Some(p));
-    }
-    let mut rog = Builder::new("asus", "ASUS ROG", Family::Asus);
-    for (n, p) in asus::listed() {
-        rog.model(n.strip_prefix(ROG).unwrap_or(n), asus::VID, Some(p));
-    }
-    let mut ro = Builder::new("roccat", "Roccat", Family::Roccat);
-    for m in roccat::MODELS {
-        ro.model(m.name, roccat::VID, Some(m.pid));
-    }
-    // Sinowealth OEM firmware: Glorious, and other brands under one group.
-    let mut gl = Builder::new("glorious", "Glorious", Family::Sinowealth);
-    let mut oem = Builder::new("sinowealth", "", Family::Sinowealth);
-    (oem.brand.label, oem.brand.in_names) = (Some(T::BrandOem), true);
-    for m in sinowealth::MODELS {
-        match m.name.strip_prefix(GLORIOUS) {
-            Some(n) => gl.model(n, m.vid, Some(m.pid)),
-            None => oem.model(m.name, m.vid, Some(m.pid)),
-        }
-    }
-    let mut atk = Builder::new("atk", "ATK", Family::OemHid);
-    let mut vxe = Builder::new("vxe-vgn-lamzu", "VXE / VGN / Lamzu", Family::OemHid);
-    vxe.brand.in_names = true;
-    for (n, vid, pid) in oemhid::listed() {
-        match n.strip_prefix(ATK) {
-            Some(n) => atk.model(n, vid, pid),
-            None => vxe.model(n, vid, pid),
-        }
+    for m in mice {
+        let Some(i) = recs.iter().position(|r| r.id == m.brand) else {
+            continue;
+        };
+        let family = m.family.unwrap_or(recs[i].family);
+        brands[i].models.push(Model {
+            id: format!("{}/{}", m.brand, slug(m.model)),
+            brand: recs[i].id,
+            name: m.model,
+            entry: Entry::Named,
+            vid: m.vid,
+            pids: m.pids,
+            family,
+            support: m.support,
+            caps: caps_of(family),
+            stage_dpi: Vec::leak(m.stage_dpi),
+            dpi: m.dpi,
+            rates: m.rates,
+            buttons: m.buttons,
+        });
     }
 
-    // Eternico: two receivers, no vendor-wide driver.
-    let mut et = Builder::new("eternico", "Eternico", Family::Eternico);
-    et.caps = CAPS_STATUS;
-    et.model("AET-MS480B", eternico::VID, Some(eternico::PID));
-    et.model("AET-MVS490B", APPLE_VID, Some(MVS490B_PID));
-    if let [ms, mvs] = &mut et.brand.models[..] {
-        // Listen-only: battery and DPI stage, nothing to set.
-        (ms.support, ms.stage_dpi, ms.pids[0].1) = (Support::Partial, &MS480B_STAGES, Some(Link::Receiver));
-        // Reuses an Apple keyboard id; only its mouse collection is matched.
-        // Link state only: statistics, plus a Bluetooth battery where any.
-        (mvs.support, mvs.family, mvs.caps, mvs.pids[0].1) = (Support::StatsOnly, Family::NoDriver, CAPS_NONE, Some(Link::Receiver));
+    for (b, r) in brands.iter_mut().zip(&recs) {
+        let Some(vid) = r.auto else {
+            continue;
+        };
+        b.models.push(Model {
+            id: format!("{}/auto", r.id),
+            brand: r.id,
+            name: "",
+            entry: Entry::Auto,
+            vid,
+            pids: Vec::new(),
+            family: r.family,
+            support: AUTO_SUPPORT,
+            caps: caps_of(r.family),
+            stage_dpi: &[],
+            dpi: None,
+            rates: Vec::new(),
+            buttons: None,
+        });
     }
+    brands
+}
 
-    let mut other = Builder::new("other", "", Family::NoDriver).brand;
-    other.label = Some(T::OtherBrand);
-    other.models.push(Model {
+/// Pages a family's driver can fill.
+fn caps_of(f: Family) -> Caps {
+    match f {
+        Family::TelinkM022 => CAPS_ALL,
+        Family::Eternico => CAPS_STATUS,
+        Family::NoDriver => CAPS_NONE,
+        _ => CAPS_BASIC,
+    }
+}
+
+/// "Other brand › Other mouse": any mouse, statistics only.
+fn other_brand() -> Brand {
+    let other = Model {
         id: crate::store::GENERIC_DEVICE.into(),
         brand: "other",
         name: "",
@@ -327,23 +334,38 @@ fn build() -> Vec<Brand> {
         support: Support::StatsOnly,
         caps: CAPS_NONE,
         stage_dpi: &[],
-    });
+        dpi: None,
+        rates: Vec::new(),
+        buttons: None,
+    };
+    Brand { id: "other", name: "", label: Some(T::OtherBrand), in_names: false, models: vec![other] }
+}
 
-    vec![
-        ws.auto(WHITE_SHARK_VID),
-        Builder::new("logitech", "Logitech", Family::Hidpp).auto(hidpp::VID),
-        Builder::new("razer", "Razer", Family::Razer).auto(razer::VID),
-        ss.auto(steelseries::VID),
-        co.auto(corsair::VID),
-        rog.auto(asus::VID),
-        ro.auto(roccat::VID),
-        gl.auto(sinowealth::VIDS[1]),
-        et.brand,
-        atk.auto(oemhid::VIDS[0]),
-        vxe.auto(oemhid::VIDS[1]),
-        oem.auto(sinowealth::VIDS[0]),
-        other,
-    ]
+/// Distinct families of the catalogue entries with this vendor id, in
+/// catalogue order; e.g. 0x05AC -> [NoDriver] (the add-a-mouse wizard).
+pub fn families_for(vid: u16) -> Vec<Family> {
+    let mut out = Vec::new();
+    for m in models().filter(|m| m.vid == vid) {
+        if !out.contains(&m.family) {
+            out.push(m.family);
+        }
+    }
+    out
+}
+
+/// The named entry a driver table row is listed as: same vendor and
+/// product id (`None`: listed without one) and a name the driver's ends
+/// with ("ROG Chakram X" -> "Chakram X"). Driver tests pin their tables.
+#[cfg(test)]
+pub fn listed_as(vid: u16, pid: Option<u16>, name: &str) -> Option<&'static Model> {
+    let pid_ok = |m: &Model| pid.map_or(m.pids.is_empty(), |p| m.pids.iter().any(|(q, _)| *q == p));
+    models().find(|m| m.entry == Entry::Named && m.vid == vid && pid_ok(m) && name.ends_with(m.name))
+}
+
+/// Parse error of a data-file snippet, e.g. the report wizard's block.
+#[cfg(test)]
+pub fn check_data(src: &str) -> Result<usize, String> {
+    data::parse(src).map(|d| d.mice.len()).map_err(|e| format!("line {}: {}", e.line, e.msg))
 }
 
 /// Every catalogue entry, brand by brand.
@@ -518,6 +540,127 @@ mod tests {
             assert_eq!(by_id(old).map(|m| m.id.as_str()), Some(new), "{old}");
         }
         assert!(by_id(crate::store::GENERIC_DEVICE).is_none());
+    }
+
+    #[test]
+    fn embedded_data_parses() {
+        if let Err(e) = data::parse(MICE) {
+            panic!("data/mice.toml {e}");
+        }
+    }
+
+    /// Vendor ids each driver opens; `None` = the family is not tied to
+    /// one vendor table here.
+    fn driver_vids(f: Family) -> Option<Vec<u16>> {
+        use crate::drivers::{asus, corsair, eternico, hidpp, oemhid, razer, roccat, sinowealth, steelseries};
+        let vids = match f {
+            Family::TelinkM022 => vec![crate::protocol::VENDOR_ID],
+            Family::Hidpp => vec![hidpp::VID],
+            Family::Razer => vec![razer::VID],
+            Family::Eternico => vec![eternico::VID],
+            Family::Sinowealth => sinowealth::VIDS.to_vec(),
+            Family::SteelSeries => vec![steelseries::VID],
+            Family::OemHid => oemhid::VIDS.to_vec(),
+            Family::Roccat => vec![roccat::VID],
+            Family::Corsair => vec![corsair::VID],
+            Family::Asus => vec![asus::VID],
+            Family::NoDriver => return None,
+        };
+        Some(vids)
+    }
+
+    #[test]
+    fn every_model_has_its_driver() {
+        for m in models() {
+            match driver_vids(m.family) {
+                Some(vids) => assert!(vids.contains(&m.vid), "{} {:04X}", m.id, m.vid),
+                None => assert_eq!(m.support, Support::StatsOnly, "{}", m.id),
+            }
+        }
+
+        // Vendor-wide drivers without a model table: their auto entry.
+        for f in [Family::Hidpp, Family::Razer] {
+            let vid = driver_vids(f).unwrap()[0];
+            assert!(models().any(|m| m.entry == Entry::Auto && m.vid == vid && m.family == f), "{f:?}");
+        }
+    }
+
+    /// Families that tell models on one product id apart by firmware.
+    const SHARED_PID_FAMILIES: [Family; 1] = [Family::Sinowealth];
+
+    #[test]
+    fn product_ids_are_unique() {
+        let mut seen: Vec<(u16, u16, &Model)> = Vec::new();
+        for m in models().filter(|m| m.entry == Entry::Named) {
+            for &(pid, _) in &m.pids {
+                let clash = seen.iter().find(|(v, p, _)| (*v, *p) == (m.vid, pid));
+                if let Some((_, _, o)) = clash {
+                    let shared = SHARED_PID_FAMILIES.contains(&m.family) && o.family == m.family;
+                    assert!(shared, "{:04X}:{pid:04X} in {} and {}", m.vid, o.id, m.id);
+                }
+                seen.push((m.vid, pid, m));
+            }
+        }
+    }
+
+    #[test]
+    fn families_by_vendor() {
+        assert_eq!(families_for(0x05AC), [Family::NoDriver]);
+        assert_eq!(families_for(0x1D57), [Family::Eternico]);
+        assert_eq!(families_for(0x258A), [Family::Sinowealth]);
+        assert!(families_for(0x0458).is_empty());
+    }
+
+    #[test]
+    fn data_fills_the_new_fields() {
+        let chakram = by_id("asus/chakram-x").unwrap();
+        assert_eq!(chakram.dpi, Some(DpiRange::Steps { min: 100, max: 36000, step: 100 }));
+        assert_eq!((chakram.rates.len(), chakram.buttons), (4, Some(14)));
+        assert_eq!(by_id("eternico/aet-ms480b").unwrap().stage_dpi, [1200, 2400, 3200, 6400]);
+    }
+
+    /// Pinned text form of the whole catalogue.
+    const SNAPSHOT: &str = include_str!("devices/snapshot.txt");
+    const SNAPSHOT_PATH: &str = "src/devices/snapshot.txt";
+
+    /// One line per brand and per model, every catalogue field.
+    fn dump() -> String {
+        use std::fmt::Write;
+        let mut out = String::new();
+        for b in brands() {
+            let _ = writeln!(out, "brand {} name={:?} label={:?} in_names={}", b.id, b.name, b.label, b.in_names);
+            for m in &b.models {
+                let link = |l: Option<Link>| l.map_or(String::new(), |l| format!(":{l:?}"));
+                let pids: Vec<String> = m.pids.iter().map(|(p, l)| format!("{p:04X}{}", link(*l))).collect();
+                let _ = writeln!(
+                    out,
+                    "  {} brand={} name={:?} entry={:?} vid={:04X} pids=[{}] family={:?} support={:?} caps={:?} stage_dpi={:?}",
+                    m.id,
+                    m.brand,
+                    m.name,
+                    m.entry,
+                    m.vid,
+                    pids.join(","),
+                    m.family,
+                    m.support,
+                    m.caps,
+                    m.stage_dpi
+                );
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn catalogue_matches_snapshot() {
+        assert_eq!(dump(), SNAPSHOT.replace("\r\n", "\n"));
+    }
+
+    /// Rewrites the snapshot: `cargo test write_snapshot -- --ignored`.
+    #[test]
+    #[ignore]
+    fn write_snapshot() {
+        std::fs::write(SNAPSHOT_PATH, dump()).unwrap();
     }
 
     #[test]

@@ -107,4 +107,11 @@ mod tests {
         assert_eq!(parse(&[0x03, 0x10, 0x36, 0xFF, 0x48]), None);
         assert_eq!(parse(&[0x02, 0xE9, 0x00]), None);
     }
+
+    #[test]
+    fn catalogue_agrees() {
+        use crate::devices::{Family, listed_as};
+        let c = listed_as(VID, Some(PID), "AET-MS480B").expect("receiver not listed");
+        assert_eq!(c.family, Family::Eternico);
+    }
 }

@@ -557,4 +557,14 @@ mod tests {
             assert!(a.write_len.is_none_or(|n| n > HEADER_LEN));
         }
     }
+
+    /// Every row is in data/mice.toml under this family.
+    #[test]
+    fn catalogue_agrees() {
+        use crate::devices::{Family, listed_as};
+        for m in MODELS {
+            let c = listed_as(m.vid, Some(m.pid), m.name).unwrap_or_else(|| panic!("{} not listed", m.name));
+            assert_eq!(c.family, Family::Sinowealth, "{}", m.name);
+        }
+    }
 }

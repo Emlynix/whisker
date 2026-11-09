@@ -1,0 +1,786 @@
+# Whisker mouse catalogue: brand -> model. Read by src/devices/data.rs
+# (format in src/devices.rs). Order here = order in the picker; each
+# brand with `auto` ends in "Other <brand> mouse (auto-detect)".
+#
+# The drivers keep the protocol (commands, scales, codes). DPI ranges and
+# rates below repeat what the driver reports; driver tests check both agree.
+
+# White Shark: Telink "M022" firmware.
+[[brand]]
+id = whiteshark
+name = "White Shark"
+family = telink-m022
+auto = 0x248A
+
+[[mouse]]
+brand = whiteshark
+model = "Lionel"
+vid = 0x248A
+pids = 0x5B2F receiver, 0x5B2E cable
+support = full
+
+[[brand]]
+id = logitech
+name = "Logitech"
+family = hidpp
+auto = 0x046D
+
+[[brand]]
+id = razer
+name = "Razer"
+family = razer
+auto = 0x1532
+
+# SteelSeries (rivalcfg). Cable and dongle ids of one model in one block.
+[[brand]]
+id = steelseries
+name = "SteelSeries"
+family = steelseries
+auto = 0x1038
+
+[[mouse]]
+brand = steelseries
+model = "Rival 3"
+vid = 0x1038
+pids = 0x1824, 0x184C
+support = experimental
+dpi = 200..8500 step 100
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = steelseries
+model = "Rival 3 Gen 2"
+vid = 0x1038
+pids = 0x1870
+support = experimental
+dpi = 200..8500 step 100
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = steelseries
+model = "Rival 3 Wireless"
+vid = 0x1038
+pids = 0x1830
+support = experimental
+dpi = 100..18000 step 100
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = steelseries
+model = "Rival 3 Wireless Gen 2"
+vid = 0x1038
+pids = 0x1872
+support = experimental
+dpi = 100..18000 step 100
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = steelseries
+model = "Rival 5"
+vid = 0x1038
+pids = 0x183C, 0x183E
+support = experimental
+dpi = 100..18000 step 100
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = steelseries
+model = "Aerox 3"
+vid = 0x1038
+pids = 0x1836
+support = experimental
+dpi = 200..8500 step 100
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = steelseries
+model = "Aerox 3 Wireless"
+vid = 0x1038
+pids = 0x183A, 0x187A, 0x1838, 0x1878
+support = experimental
+dpi = 100..18000 step 100
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = steelseries
+model = "Aerox 5"
+vid = 0x1038
+pids = 0x1850
+support = experimental
+dpi = 100..18000 step 100
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = steelseries
+model = "Aerox 5 Wireless"
+vid = 0x1038
+pids = 0x1854, 0x185E, 0x1862, 0x1852, 0x185C, 0x1860
+support = experimental
+dpi = 100..18000 step 100
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = steelseries
+model = "Aerox 9 Wireless"
+vid = 0x1038
+pids = 0x185A, 0x1876, 0x1858, 0x1874
+support = experimental
+dpi = 100..18000 step 100
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = steelseries
+model = "Prime Wireless"
+vid = 0x1038
+pids = 0x1842, 0x184A, 0x1840, 0x1848
+support = experimental
+dpi = 100..18000 step 100
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = steelseries
+model = "Prime / Prime+"
+vid = 0x1038
+pids = 0x182E, 0x182A, 0x1856, 0x182C
+support = experimental
+dpi = 50..18000 step 50
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = steelseries
+model = "Prime Mini"
+vid = 0x1038
+pids = 0x184D
+support = experimental
+dpi = 50..18000 step 50
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = steelseries
+model = "Sensei Ten"
+vid = 0x1038
+pids = 0x1832, 0x1834
+support = experimental
+dpi = 50..18000 step 50
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = steelseries
+model = "Rival 110"
+vid = 0x1038
+pids = 0x1729, 0x1816
+support = experimental
+dpi = 200..7200 step 100
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = steelseries
+model = "Rival 310"
+vid = 0x1038
+pids = 0x1720, 0x171E, 0x1736
+support = experimental
+dpi = 100..12000 step 100
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = steelseries
+model = "Sensei 310"
+vid = 0x1038
+pids = 0x1722
+support = experimental
+dpi = 100..12000 step 100
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = steelseries
+model = "Rival 600"
+vid = 0x1038
+pids = 0x1724, 0x172E
+support = experimental
+dpi = 100..12000 step 100
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = steelseries
+model = "Rival 700 / 710"
+vid = 0x1038
+pids = 0x1700, 0x1730
+support = experimental
+dpi = 100..12000 step 100
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = steelseries
+model = "Rival 650 Wireless"
+vid = 0x1038
+pids = 0x172B, 0x1726
+support = experimental
+dpi = 100..12000 step 100
+rates = 125, 250, 500, 1000
+
+# Corsair Bragi (ckb-next, OpenRGB). Rates depend on what the mouse reports.
+[[brand]]
+id = corsair
+name = "Corsair"
+family = corsair
+auto = 0x1B1C
+
+[[mouse]]
+brand = corsair
+model = "Dark Core RGB Pro"
+vid = 0x1B1C
+pids = 0x1B80, 0x1B81
+support = experimental
+dpi = 100..18000 step 50
+
+[[mouse]]
+brand = corsair
+model = "Dark Core RGB Pro SE"
+vid = 0x1B1C
+pids = 0x1B7E, 0x1B7F
+support = experimental
+dpi = 100..18000 step 50
+
+[[mouse]]
+brand = corsair
+model = "Harpoon RGB Wireless"
+vid = 0x1B1C
+pids = 0x1B5E
+support = experimental
+dpi = 100..10000 step 50
+
+[[mouse]]
+brand = corsair
+model = "Ironclaw RGB Wireless"
+vid = 0x1B1C
+pids = 0x1B4C
+support = experimental
+dpi = 100..18000 step 50
+
+[[mouse]]
+brand = corsair
+model = "Ironclaw RGB Wireless SE"
+vid = 0x1B1C
+pids = 0x2B32, 0x2B00
+support = experimental
+dpi = 100..18000 step 50
+
+[[mouse]]
+brand = corsair
+model = "Katar Pro"
+vid = 0x1B1C
+pids = 0x1B93
+support = experimental
+dpi = 100..12400 step 50
+
+[[mouse]]
+brand = corsair
+model = "Katar Pro V2"
+vid = 0x1B1C
+pids = 0x1BBA
+support = experimental
+dpi = 100..12400 step 50
+
+[[mouse]]
+brand = corsair
+model = "Katar Pro XT"
+vid = 0x1B1C
+pids = 0x1BAC
+support = experimental
+dpi = 100..18000 step 50
+
+[[mouse]]
+brand = corsair
+model = "M55 RGB Pro"
+vid = 0x1B1C
+pids = 0x1B70
+support = experimental
+dpi = 100..12400 step 50
+
+[[mouse]]
+brand = corsair
+model = "M65 RGB Ultra"
+vid = 0x1B1C
+pids = 0x1B9E
+support = experimental
+dpi = 100..26000 step 50
+
+[[mouse]]
+brand = corsair
+model = "M65 RGB Ultra Wireless"
+vid = 0x1B1C
+pids = 0x1BB5
+support = experimental
+dpi = 100..26000 step 50
+
+[[mouse]]
+brand = corsair
+model = "M75"
+vid = 0x1B1C
+pids = 0x1BF0
+support = experimental
+dpi = 100..26000 step 50
+
+[[mouse]]
+brand = corsair
+model = "M75 Wireless"
+vid = 0x1B1C
+pids = 0x1BF1, 0x1BDC
+support = experimental
+dpi = 100..26000 step 50
+
+[[mouse]]
+brand = corsair
+model = "Scimitar Elite RGB"
+vid = 0x1B1C
+pids = 0x1BE3
+support = experimental
+dpi = 100..26000 step 50
+
+# Shared receivers: the paired mouse names the model.
+[[mouse]]
+brand = corsair
+model = "Slipstream receiver"
+vid = 0x1B1C
+pids = 0x1B65, 0x1B66, 0x1BA6
+support = experimental
+
+# ASUS ROG (libratbag). Names without "ROG ".
+[[brand]]
+id = asus
+name = "ASUS ROG"
+family = asus
+auto = 0x0B05
+
+[[mouse]]
+brand = asus
+model = "GX860 Buzzard"
+vid = 0x0B05
+pids = 0x1816
+support = experimental
+dpi = 100..8200 step 100
+rates = 125, 250, 500, 1000
+buttons = 10
+
+[[mouse]]
+brand = asus
+model = "Chakram Core"
+vid = 0x0B05
+pids = 0x1958
+support = experimental
+dpi = 100..16000 step 100
+rates = 125, 250, 500, 1000
+buttons = 5
+
+[[mouse]]
+brand = asus
+model = "Chakram"
+vid = 0x0B05
+pids = 0x18E3, 0x18E5
+support = experimental
+dpi = 100..16000 step 100
+rates = 125, 250, 500, 1000
+buttons = 5
+
+[[mouse]]
+brand = asus
+model = "Chakram X"
+vid = 0x0B05
+pids = 0x1A18, 0x1A1A
+support = experimental
+dpi = 100..36000 step 100
+rates = 125, 250, 500, 1000
+buttons = 14
+
+[[mouse]]
+brand = asus
+model = "Gladius II"
+vid = 0x0B05
+pids = 0x1845
+support = experimental
+dpi = 100..12000 step 100
+rates = 125, 250, 500, 1000
+buttons = 9
+
+[[mouse]]
+brand = asus
+model = "Gladius II Origin"
+vid = 0x0B05
+pids = 0x1877
+support = experimental
+dpi = 100..12000 step 100
+rates = 125, 250, 500, 1000
+buttons = 8
+
+[[mouse]]
+brand = asus
+model = "Gladius II Origin PNK LTD"
+vid = 0x0B05
+pids = 0x18CD
+support = experimental
+dpi = 100..12000 step 100
+rates = 125, 250, 500, 1000
+buttons = 8
+
+[[mouse]]
+brand = asus
+model = "Harpe Wireless"
+vid = 0x0B05
+pids = 0x1A92
+support = experimental
+dpi = 100..36000 step 50
+rates = 125, 250, 500, 1000
+buttons = 5
+
+[[mouse]]
+brand = asus
+model = "Keris"
+vid = 0x0B05
+pids = 0x195C
+support = experimental
+dpi = 100..16000 step 100
+rates = 125, 250, 500, 1000
+buttons = 8
+
+[[mouse]]
+brand = asus
+model = "Keris Wireless"
+vid = 0x0B05
+pids = 0x195E, 0x1960
+support = experimental
+dpi = 100..16000 step 100
+rates = 125, 250, 500, 1000
+buttons = 8
+
+[[mouse]]
+brand = asus
+model = "Keris Wireless AimPoint"
+vid = 0x0B05
+pids = 0x1A66, 0x1A68
+support = experimental
+dpi = 100..36000 step 50
+rates = 125, 250, 500, 1000
+buttons = 7
+
+[[mouse]]
+brand = asus
+model = "Pugio"
+vid = 0x0B05
+pids = 0x1846
+support = experimental
+dpi = 100..7200 step 100
+rates = 125, 250, 500, 1000
+buttons = 10
+
+[[mouse]]
+brand = asus
+model = "Spatha X"
+vid = 0x0B05
+pids = 0x1979, 0x1977
+support = experimental
+dpi = 100..19000 step 50
+rates = 125, 250, 500, 1000
+buttons = 14
+
+[[mouse]]
+brand = asus
+model = "Strix Carry"
+vid = 0x0B05
+pids = 0x18B4
+support = experimental
+dpi = 100..7200 step 100
+rates = 125, 250, 500, 1000
+buttons = 8
+
+[[mouse]]
+brand = asus
+model = "Strix Impact"
+vid = 0x0B05
+pids = 0x1847
+support = experimental
+dpi = 100..5000 step 100
+rates = 125, 250, 500, 1000
+buttons = 6
+
+[[mouse]]
+brand = asus
+model = "Strix Impact II"
+vid = 0x0B05
+pids = 0x18E1
+support = experimental
+dpi = 200..6200 step 100
+rates = 125, 250, 500, 1000
+buttons = 8
+
+[[mouse]]
+brand = asus
+model = "Strix Impact II Wireless"
+vid = 0x0B05
+pids = 0x1947, 0x1949
+support = experimental
+dpi = 100..16000 step 100
+rates = 125, 250, 500, 1000
+buttons = 8
+
+[[mouse]]
+brand = asus
+model = "Strix Impact III"
+vid = 0x0B05
+pids = 0x1A88
+support = experimental
+dpi = 100..12000 step 50
+rates = 125, 250, 500, 1000
+buttons = 8
+
+[[mouse]]
+brand = asus
+model = "TUF Gaming M3 Gen II"
+vid = 0x0B05
+pids = 0x1A9B
+support = experimental
+dpi = 100..8000 step 100
+rates = 125, 250, 500, 1000
+buttons = 8
+
+[[mouse]]
+brand = asus
+model = "TUF Gaming M4 Air"
+vid = 0x0B05
+pids = 0x1A03
+support = experimental
+dpi = 100..16000 step 100
+rates = 125, 250, 500, 1000
+buttons = 6
+
+[[mouse]]
+brand = asus
+model = "TUF Gaming Mini WL"
+vid = 0x0B05
+pids = 0x1C56, 0x1C57
+support = experimental
+dpi = 100..12000 step 100
+rates = 125, 250, 500, 1000
+buttons = 8
+
+# Roccat Kone family (libratbag).
+[[brand]]
+id = roccat
+name = "Roccat"
+family = roccat
+auto = 0x1E7D
+
+[[mouse]]
+brand = roccat
+model = "Kone+"
+vid = 0x1E7D
+pids = 0x2D51
+support = experimental
+dpi = 100..6000 step 100
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = roccat
+model = "Kone XTD"
+vid = 0x1E7D
+pids = 0x2E22
+support = experimental
+dpi = 200..8200 step 200
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = roccat
+model = "Kone Pure"
+vid = 0x1E7D
+pids = 0x2DBE
+support = experimental
+dpi = 200..8200 step 200
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = roccat
+model = "Kone Pure (variant)"
+vid = 0x1E7D
+pids = 0x2DC2, 0x2DCB
+support = experimental
+dpi = 200..8200 step 200
+rates = 125, 250, 500, 1000
+
+[[mouse]]
+brand = roccat
+model = "Kone EMP"
+vid = 0x1E7D
+pids = 0x2E24
+support = experimental
+dpi = 100..12000 step 100
+rates = 125, 250, 500, 1000
+
+# Sinowealth firmware, Glorious branded. DPI depends on the sensor read.
+[[brand]]
+id = glorious
+name = "Glorious"
+family = sinowealth
+auto = 0x3794
+
+[[mouse]]
+brand = glorious
+model = "Model O/O-"
+vid = 0x258A
+pids = 0x0036
+support = experimental
+
+[[mouse]]
+brand = glorious
+model = "Model D/D-"
+vid = 0x258A
+pids = 0x0033
+support = experimental
+
+[[mouse]]
+brand = glorious
+model = "Model O (old firmware)"
+vid = 0x258A
+pids = 0x0027
+support = experimental
+
+[[mouse]]
+brand = glorious
+model = "Model O Eternal"
+vid = 0x3794
+pids = 0xA000
+support = experimental
+
+# Eternico: two receivers, no vendor-wide driver.
+[[brand]]
+id = eternico
+name = "Eternico"
+family = eternico
+
+# Listen-only: battery and DPI stage, nothing to set.
+[[mouse]]
+brand = eternico
+model = "AET-MS480B"
+vid = 0x1D57
+pids = 0xFA60 receiver
+support = partial
+stage_dpi = 1200, 2400, 3200, 6400
+
+# Reuses an Apple keyboard id; only its mouse collection is matched.
+# Link state only: statistics, plus a Bluetooth battery where any.
+[[mouse]]
+brand = eternico
+model = "AET-MVS490B"
+vid = 0x05AC
+pids = 0x024F receiver
+family = none
+support = stats-only
+
+# One OEM protocol (OpenMouse). Models on shared receivers have no
+# product id of their own: the mouse names itself (CID/MID).
+[[brand]]
+id = atk
+name = "ATK"
+family = oemhid
+auto = 0x373B
+
+[[mouse]]
+brand = atk
+model = "F1 Ultimate 2.0"
+vid = 0x373B
+support = experimental
+
+[[mouse]]
+brand = atk
+model = "X1 Pro Max"
+vid = 0x373B
+support = experimental
+
+[[mouse]]
+brand = atk
+model = "A9 Plus Nearlink"
+vid = 0x373B
+support = experimental
+
+[[brand]]
+id = vxe-vgn-lamzu
+name = "VXE / VGN / Lamzu"
+in_names = true
+family = oemhid
+auto = 0x3554
+
+[[mouse]]
+brand = vxe-vgn-lamzu
+model = "VXE R1 Pro Max"
+vid = 0x3554
+support = experimental
+
+[[mouse]]
+brand = vxe-vgn-lamzu
+model = "VGN Dragonfly F2 Master+"
+vid = 0x3554
+pids = 0xFB57, 0xFB56
+support = experimental
+
+[[mouse]]
+brand = vxe-vgn-lamzu
+model = "Lamzu Atlantis"
+vid = 0x3554
+pids = 0xF50F, 0xF50D, 0xF510
+support = experimental
+
+# Sinowealth firmware under other brands. One product id, several
+# firmwares: the driver tells them apart.
+[[brand]]
+id = sinowealth
+label = oem
+in_names = true
+family = sinowealth
+auto = 0x258A
+
+[[mouse]]
+brand = sinowealth
+model = "Dream Machines DM5 Blink"
+vid = 0x258A
+pids = 0x0027
+support = experimental
+
+[[mouse]]
+brand = sinowealth
+model = "Genesis Xenon 770"
+vid = 0x258A
+pids = 0x0027
+support = experimental
+
+[[mouse]]
+brand = sinowealth
+model = "G-Wolves Hati HT-M Wired"
+vid = 0x258A
+pids = 0x0027
+support = experimental
+
+[[mouse]]
+brand = sinowealth
+model = "Machenike M620"
+vid = 0x258A
+pids = 0x0029
+support = experimental
+
+[[mouse]]
+brand = sinowealth
+model = "Mad Dog GM905"
+vid = 0x258A
+pids = 0x0029
+support = experimental
+
+[[mouse]]
+brand = sinowealth
+model = "T-Dagger Imperial T-TGM310"
+vid = 0x258A
+pids = 0x0051
+support = experimental
+
+[[mouse]]
+brand = sinowealth
+model = "Marvo Scorpion G961"
+vid = 0x258A
+pids = 0x1007
+support = experimental

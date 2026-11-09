@@ -343,11 +343,6 @@ const MODELS: [Model; 25] = [
     },
 ];
 
-/// Known models as (name, product id), for the catalogue.
-pub fn listed() -> Vec<(&'static str, u16)> {
-    MODELS.iter().flat_map(|m| m.pids.iter().map(move |p| (m.name, *p))).collect()
-}
-
 fn model(pid: u16) -> Option<&'static Model> {
     MODELS.iter().find(|m| m.pids.contains(&pid))
 }
@@ -645,6 +640,19 @@ mod tests {
         all.sort();
         all.dedup();
         assert_eq!(all.len(), n);
+    }
+
+    /// Every row is in data/mice.toml with the same DPI and rates.
+    #[test]
+    fn catalogue_agrees() {
+        use crate::devices::{Family, listed_as};
+        for m in &MODELS {
+            let rates: Vec<u32> = m.rates.iter().map(|(hz, _)| *hz).collect();
+            for &pid in m.pids {
+                let c = listed_as(VID, Some(pid), m.name).unwrap_or_else(|| panic!("{} {pid:04X} not listed", m.name));
+                assert_eq!((c.family, c.dpi.as_ref(), &c.rates), (Family::SteelSeries, Some(&m.dpi.scale().range()), &rates), "{}", m.name);
+            }
+        }
     }
 
     #[test]

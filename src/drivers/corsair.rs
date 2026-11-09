@@ -135,11 +135,6 @@ const MODELS: [Model; 21] = [
     m("Slipstream receiver", 0x1BA6, Link::Shared, 0),
 ];
 
-/// Known models as (name, product id), for the catalogue.
-pub fn listed() -> Vec<(&'static str, u16)> {
-    MODELS.iter().map(|m| (m.name, m.pid)).collect()
-}
-
 fn model(pid: u16) -> Option<&'static Model> {
     MODELS.iter().find(|m| m.pid == pid)
 }
@@ -401,6 +396,17 @@ mod tests {
         all.sort();
         all.dedup();
         assert_eq!(all.len(), n);
+    }
+
+    /// Every row is in data/mice.toml with the same DPI range.
+    #[test]
+    fn catalogue_agrees() {
+        use crate::devices::{Family, listed_as};
+        for m in &MODELS {
+            let c = listed_as(VID, Some(m.pid), m.name).unwrap_or_else(|| panic!("{} {:04X} not listed", m.name, m.pid));
+            let dpi = (m.link != Link::Shared).then_some(DpiRange::Steps { min: DPI_MIN, max: m.dpi_max, step: DPI_STEP });
+            assert_eq!((c.family, &c.dpi), (Family::Corsair, &dpi), "{}", m.name);
+        }
     }
 
     #[test]
