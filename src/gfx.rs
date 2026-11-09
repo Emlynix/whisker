@@ -58,8 +58,8 @@ pub enum Size {
 }
 
 /// Optical size of the UI font: Text cut for small sizes, Display from 20 px.
-/// macOS: the system font switches by itself.
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+/// macOS: the system font switches by itself; Linux: one family (Pango).
+#[cfg_attr(any(target_os = "macos", target_os = "linux"), allow(dead_code))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Face {
     Text,
@@ -67,7 +67,7 @@ pub enum Face {
 }
 
 impl Size {
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    #[cfg_attr(any(target_os = "macos", target_os = "linux"), allow(dead_code))]
     const DISPLAY_FROM: f32 = 20.0;
     const LABEL_TRACKING: f32 = 0.4;
 
@@ -90,7 +90,7 @@ impl Size {
         }
     }
 
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    #[cfg_attr(any(target_os = "macos", target_os = "linux"), allow(dead_code))]
     pub fn face(self) -> Face {
         if self.px() >= Self::DISPLAY_FROM { Face::Display } else { Face::Text }
     }
