@@ -97,7 +97,8 @@ impl Page {
     }
 }
 
-const NAV_TOP: f32 = 76.0;
+/// Leaves room under the header for a future profile switcher.
+const NAV_TOP: f32 = 116.0;
 const NAV_STEP: f32 = 40.0;
 /// Underlined tab row under the title; tabbed pages start below it.
 const TAB_H: f32 = 30.0;
@@ -719,7 +720,6 @@ fn sidebar(f: &mut Frame, v: &View) {
     f.g.fill(Rect::new(0.0, 0.0, SIDE_W, HEIGHT), 0.0, th().side);
 
     const BOTTOM: f32 = HEIGHT - 14.0;
-    const FOOTER_H: f32 = 64.0;
     const ITEM_H: f32 = NAV_STEP - 4.0;
 
     // Logo and name open About; the mouse name opens its details.
@@ -728,10 +728,16 @@ fn sidebar(f: &mut Frame, v: &View) {
     mouse_logo(f.g, 24.0, 20.0);
     let name_c = if hot { th().accent } else { th().text };
     f.g.text(crate::APP_NAME, Rect::new(62.0, 16.0, 140.0, 24.0), 18.0, Weight::Bold, Align::Left, name_c);
+    // Mouse name and its status line open Settings › Mouse.
     let sub = Rect::new(62.0, 38.0, SIDE_W - 76.0, 16.0);
-    let hot = f.button(Act::Nav(Page::Mouse), Rect::new(sub.x, sub.y - 2.0, sub.w, sub.h + 4.0));
+    let status = (v.caps.battery || v.has_battery).then(|| Rect::new(sub.x, sub.y + 18.0, sub.w, 16.0));
+    let area_h = status.map_or(sub.h, |r| r.y + r.h - sub.y);
+    let hot = f.button(Act::Nav(Page::Mouse), Rect::new(sub.x, sub.y - 2.0, sub.w, area_h + 4.0));
     let sub_c = if hot { th().accent } else { th().faint };
     f.g.text(&v.device_name, sub, fit_size(&v.device_name, sub.w, 11.0), Weight::Normal, Align::Left, sub_c);
+    if let Some(r) = status {
+        status_line(f, v, r);
+    }
 
     for (k, page) in nav_pages(&v.caps).into_iter().enumerate() {
         let r = Rect::new(14.0, NAV_TOP + k as f32 * NAV_STEP, SIDE_W - 28.0, NAV_STEP - 4.0);
@@ -744,24 +750,25 @@ fn sidebar(f: &mut Frame, v: &View) {
     let r = Rect::new(14.0, about.y - NAV_STEP, SIDE_W - 28.0, ITEM_H);
     nav_item(f, Nav::Page(Page::General), r, Mark::of(v.page.nav() == Page::General));
 
-    let footer = v.caps.battery || v.has_battery;
-    let footer_y = r.y - 8.0 - FOOTER_H;
+}
 
-    // Connection + battery summary (mice with a driver or a Bluetooth battery).
-    if !footer {
-        return;
-    }
-    let card = Rect::new(14.0, footer_y, SIDE_W - 28.0, FOOTER_H);
-    let hot = f.button(Act::Nav(Page::Mouse), card);
-    f.g.fill(card, 10.0, if hot { th().hover } else { th().card });
-    f.g.circle(card.x + 16.0, card.y + 20.0, 4.0, if v.connected { th().good } else { th().faint });
-    f.g.text(&v.link, Rect::new(card.x + 28.0, card.y + 10.0, card.w - 34.0, 20.0), 12.0, Weight::Normal, Align::Left, th().muted);
-
-    if v.connected && v.has_battery {
-        f.bar(Rect::new(card.x + 12.0, card.y + 41.0, card.w - 70.0, 6.0), v.battery, battery_color(v));
-        let pct = Rect::new(card.x + card.w - 52.0, card.y + 34.0, 40.0, 20.0);
-        f.g.text(&format!("{} %", v.battery), pct, 12.0, Weight::Semibold, Align::Right, th().text);
-    }
+/// "● Connected · 55 %" (⚡ while charging): green, warn colour when the
+/// battery runs low, muted "● Disconnected" offline.
+fn status_line(f: &mut Frame, v: &View, r: Rect) {
+    const SIZE: f32 = 11.5;
+    const LOW_PCT: u8 = 20;
+    let (text, c) = if !v.connected {
+        (tr(T::Disconnected).to_string(), th().muted)
+    } else if !v.has_battery {
+        (tr(T::LinkConnected).to_string(), th().good)
+    } else {
+        let charging = if v.charge == Charge::Charging { " ⚡" } else { "" };
+        let c = if v.battery < LOW_PCT { th().warn } else { th().good };
+        (format!("{} · {} %{charging}", tr(T::LinkConnected), v.battery), c)
+    };
+    f.g.circle(r.x + 3.5, r.y + r.h / 2.0, 3.5, c);
+    let label = Rect::new(r.x + 12.0, r.y, r.w - 12.0, r.h);
+    f.g.text(&text, label, fit_size(&text, label.w, SIZE), Weight::Normal, Align::Left, c);
 }
 
 /// Sidebar entry: a page, or About (opens its dialog).

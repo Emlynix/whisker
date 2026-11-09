@@ -223,9 +223,10 @@ pub enum T {
     ReportMouse,
     Close,
     AboutTagline,
+    Disconnected,
 }
 
-const COUNT: usize = T::AboutTagline as usize + 1;
+const COUNT: usize = T::Disconnected as usize + 1;
 type Table = [&'static str; COUNT];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -594,6 +595,7 @@ const EN: Table = [
     "Report a mouse",
     "Close",
     "Lightweight control app for gaming mice.",
+    "Disconnected",
 ];
 
 const SK: Table = [
@@ -813,6 +815,7 @@ const SK: Table = [
     "Nahlásiť myš",
     "Zavrieť",
     "Ľahká aplikácia na nastavenie herných myší.",
+    "Odpojená",
 ];
 
 const CS: Table = [
@@ -1032,6 +1035,7 @@ const CS: Table = [
     "Nahlásit myš",
     "Zavřít",
     "Lehká aplikace pro nastavení herních myší.",
+    "Odpojeno",
 ];
 
 const PL: Table = [
@@ -1251,6 +1255,7 @@ const PL: Table = [
     "Zgłoś mysz",
     "Zamknij",
     "Lekka aplikacja do konfiguracji myszy gamingowych.",
+    "Rozłączono",
 ];
 
 const DE: Table = [
@@ -1470,6 +1475,7 @@ const DE: Table = [
     "Maus melden",
     "Schließen",
     "Schlanke App zum Einstellen von Gaming-Mäusen.",
+    "Getrennt",
 ];
 
 const FR: Table = [
@@ -1689,6 +1695,7 @@ const FR: Table = [
     "Signaler une souris",
     "Fermer",
     "Application légère pour régler les souris de jeu.",
+    "Déconnectée",
 ];
 
 const ES: Table = [
@@ -1908,6 +1915,7 @@ const ES: Table = [
     "Informar de un ratón",
     "Cerrar",
     "Aplicación ligera para configurar ratones gaming.",
+    "Desconectado",
 ];
 
 const PT: Table = [
@@ -2127,6 +2135,7 @@ const PT: Table = [
     "Reportar um rato",
     "Fechar",
     "Aplicação leve para configurar ratos gaming.",
+    "Desligado",
 ];
 
 const IT: Table = [
@@ -2346,6 +2355,7 @@ const IT: Table = [
     "Segnala un mouse",
     "Chiudi",
     "App leggera per configurare i mouse da gioco.",
+    "Disconnesso",
 ];
 
 const JA: Table = [
@@ -2565,6 +2575,7 @@ const JA: Table = [
     "マウスを報告",
     "閉じる",
     "ゲーミングマウス用の軽量設定アプリ。",
+    "未接続",
 ];
 
 const KO: Table = [
@@ -2784,6 +2795,7 @@ const KO: Table = [
     "마우스 제보",
     "닫기",
     "게이밍 마우스용 가벼운 설정 앱.",
+    "연결 끊김",
 ];
 
 const ZH_HANS: Table = [
@@ -3003,6 +3015,7 @@ const ZH_HANS: Table = [
     "报告鼠标",
     "关闭",
     "轻量的游戏鼠标设置工具。",
+    "未连接",
 ];
 
 const ZH_HANT: Table = [
@@ -3222,6 +3235,7 @@ const ZH_HANT: Table = [
     "回報滑鼠",
     "關閉",
     "輕量的電競滑鼠設定工具。",
+    "未連線",
 ];
 
 #[cfg(test)]
