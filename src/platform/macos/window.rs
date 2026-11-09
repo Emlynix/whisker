@@ -299,6 +299,16 @@ pub fn modifiers() -> Mods {
     Mods { ctrl: on(NSEventModifierFlags::Control), shift: on(NSEventModifierFlags::Shift), alt: on(NSEventModifierFlags::Option), win: on(NSEventModifierFlags::Command) }
 }
 
+/// Puts `text` on the general pasteboard as plain text.
+pub fn set_clipboard(text: &str) -> bool {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+    let pb = NSPasteboard::generalPasteboard();
+    pb.clearContents();
+    // SAFETY: AppKit constant, initialized when the framework loads.
+    let kind = unsafe { NSPasteboardTypeString };
+    pb.setString_forType(&NSString::from_str(text), kind)
+}
+
 pub fn set_tray(level: Level, tip: &str) {
     let Some(mtm) = MainThreadMarker::new() else {
         return;

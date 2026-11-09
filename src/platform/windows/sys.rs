@@ -40,6 +40,22 @@ pub fn dark_mode() -> bool {
     !(r == 0 && value == 1)
 }
 
+/// Opens an `http(s)` link in the default browser; other schemes are refused
+/// so a crafted string can never start a program.
+pub fn open_url(url: &str) -> bool {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    /// ShellExecute returns a value above 32 on success.
+    const SHELL_OK: isize = 32;
+
+    if !crate::platform::is_web_url(url) {
+        return false;
+    }
+    let (verb, file) = (wide("open"), wide(url));
+    let r = unsafe { ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), file.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL) };
+    r as isize > SHELL_OK
+}
+
 /// Local date as `(year, month, day)`.
 pub fn today() -> (i64, i64, i64) {
     let mut t: SYSTEMTIME = unsafe { std::mem::zeroed() };

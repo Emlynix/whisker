@@ -95,6 +95,43 @@ pub fn modifiers() -> Mods {
     Mods { ctrl: down(VK_CONTROL), shift: down(VK_SHIFT), alt: down(VK_MENU), win: down(VK_LWIN) || down(VK_RWIN) }
 }
 
+/// Puts `text` on the clipboard as Unicode text; the window owns it.
+pub fn set_clipboard(text: &str) -> bool {
+    use windows_sys::Win32::Foundation::GlobalFree;
+    use windows_sys::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData};
+    use windows_sys::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
+    /// Standard clipboard format of UTF-16 text.
+    const CF_UNICODETEXT: u32 = 13;
+
+    let data = super::win::wide(text);
+    let bytes = data.len() * size_of::<u16>();
+    unsafe {
+        if OpenClipboard(hwnd()) == 0 {
+            return false;
+        }
+        EmptyClipboard();
+        let mem = GlobalAlloc(GMEM_MOVEABLE, bytes);
+        let dst = if mem.is_null() { std::ptr::null_mut() } else { GlobalLock(mem) as *mut u16 };
+        if dst.is_null() {
+            if !mem.is_null() {
+                GlobalFree(mem);
+            }
+            CloseClipboard();
+            return false;
+        }
+        std::ptr::copy_nonoverlapping(data.as_ptr(), dst, data.len());
+        GlobalUnlock(mem);
+
+        // On success the clipboard owns the memory; free it only on failure.
+        let ok = !SetClipboardData(CF_UNICODETEXT, mem).is_null();
+        if !ok {
+            GlobalFree(mem);
+        }
+        CloseClipboard();
+        ok
+    }
+}
+
 pub fn set_tray(level: Level, tip: &str) {
     tray::update(hwnd(), level, tip);
 }

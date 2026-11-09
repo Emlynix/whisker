@@ -20,6 +20,8 @@
 //! - `user_locale() -> Option<String>`: UI language as a locale name,
 //!   e.g. `"sk-SK"`; `i18n` maps it to a `Lang`.
 //! - `today() -> (i64, i64, i64)`: local date as (year, month, day).
+//! - `open_url(url) -> bool`: opens an `http(s)` link in the default
+//!   browser; any other scheme is refused (`is_web_url`).
 //!
 //! `window` — one app window on the UI thread, plus the tray icon:
 //! - `create(title, w, h, Hooks) -> bool`: hidden window of `w` x `h` DIPs
@@ -30,6 +32,8 @@
 //! - `set_timer(id, ms)`, `kill_timer(id)`: repeating timer to `Hooks::timer`.
 //! - `set_dark_title(bool)`: title bar matching the theme (may be a no-op).
 //! - `modifiers() -> shell::Mods`: modifier keys held now.
+//! - `set_clipboard(text) -> bool`: replaces the clipboard with plain text
+//!   (the window owns it on Windows).
 //! - `set_tray(tray::Level, tip)`: battery glyph (`tray::glyph`) and tooltip.
 //!   Tray clicks arrive as `Hooks::tray` (left = open, menu = open/quit).
 //!
@@ -75,6 +79,13 @@ pub const INSTALLED_ARG: &str = "--installed";
 pub const AUTOSTART_ON_ARG: &str = "--autostart-on";
 pub const AUTOSTART_OFF_ARG: &str = "--autostart-off";
 
+/// Only web links may be opened: `file:`, `ms-settings:` or bare paths
+/// would let a string launch local programs.
+fn is_web_url(url: &str) -> bool {
+    const SCHEMES: [&str; 2] = ["https://", "http://"];
+    SCHEMES.iter().any(|s| url.starts_with(s)) && !url.chars().any(|c| c.is_whitespace() || c.is_control())
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Autostart {
     On,
@@ -114,3 +125,16 @@ mod linux;
 mod macos;
 #[cfg(target_os = "macos")]
 pub use self::macos::*;
+
+#[cfg(test)]
+mod tests {
+    use super::is_web_url;
+
+    #[test]
+    fn only_web_links_open() {
+        assert!(is_web_url("https://github.com/Emlynix/whisker"));
+        assert!(!is_web_url("file:///C:/Windows/System32/calc.exe"));
+        assert!(!is_web_url(r"C:\Windows\notepad.exe"));
+        assert!(!is_web_url("https://x.y/a b"));
+    }
+}
