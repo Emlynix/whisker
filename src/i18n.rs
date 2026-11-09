@@ -230,9 +230,14 @@ pub enum T {
     ChartSince,
     DirForward,
     DirReverse,
+    NewMouseBanner,
+    NewMouseTitle,
+    NewMouseTip,
+    SwitchMouse,
+    NotNow,
 }
 
-const COUNT: usize = T::DirReverse as usize + 1;
+const COUNT: usize = T::NotNow as usize + 1;
 type Table = [&'static str; COUNT];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -618,6 +623,11 @@ const EN: Table = [
     "Collecting data since {}",
     "Forward",
     "Reverse",
+    "New mouse connected: {}",
+    "New mouse connected",
+    "{} – click to switch to it.",
+    "Switch",
+    "Not now",
 ];
 
 const SK: Table = [
@@ -844,6 +854,11 @@ const SK: Table = [
     "Zbieram dáta od {}",
     "Dopredu",
     "Dozadu",
+    "Pripojená nová myš: {}",
+    "Pripojená nová myš",
+    "{} – kliknutím na ňu prepneš.",
+    "Prepnúť",
+    "Teraz nie",
 ];
 
 const CS: Table = [
@@ -1070,6 +1085,11 @@ const CS: Table = [
     "Sbírám data od {}",
     "Vpřed",
     "Vzad",
+    "Připojena nová myš: {}",
+    "Připojena nová myš",
+    "{} – kliknutím na ni přepnete.",
+    "Přepnout",
+    "Teď ne",
 ];
 
 const PL: Table = [
@@ -1296,6 +1316,11 @@ const PL: Table = [
     "Zbieram dane od {}",
     "Do przodu",
     "Do tyłu",
+    "Podłączono nową mysz: {}",
+    "Podłączono nową mysz",
+    "{} – kliknij, aby przełączyć.",
+    "Przełącz",
+    "Nie teraz",
 ];
 
 const DE: Table = [
@@ -1522,6 +1547,11 @@ const DE: Table = [
     "Daten werden seit {} gesammelt",
     "Vorwärts",
     "Rückwärts",
+    "Neue Maus verbunden: {}",
+    "Neue Maus verbunden",
+    "{} – klicken, um zu wechseln.",
+    "Wechseln",
+    "Nicht jetzt",
 ];
 
 const FR: Table = [
@@ -1748,6 +1778,11 @@ const FR: Table = [
     "Collecte des données depuis le {}",
     "Avant",
     "Arrière",
+    "Nouvelle souris connectée : {}",
+    "Nouvelle souris connectée",
+    "{} – cliquez pour basculer.",
+    "Basculer",
+    "Pas maintenant",
 ];
 
 const ES: Table = [
@@ -1974,6 +2009,11 @@ const ES: Table = [
     "Recopilando datos desde el {}",
     "Adelante",
     "Atrás",
+    "Nuevo ratón conectado: {}",
+    "Nuevo ratón conectado",
+    "{} – haz clic para cambiar.",
+    "Cambiar",
+    "Ahora no",
 ];
 
 const PT: Table = [
@@ -2200,6 +2240,11 @@ const PT: Table = [
     "A recolher dados desde {}",
     "Avançar",
     "Recuar",
+    "Novo rato ligado: {}",
+    "Novo rato ligado",
+    "{} – clique para mudar.",
+    "Mudar",
+    "Agora não",
 ];
 
 const IT: Table = [
@@ -2426,6 +2471,11 @@ const IT: Table = [
     "Raccolta dati dal {}",
     "Avanti",
     "Indietro",
+    "Nuovo mouse collegato: {}",
+    "Nuovo mouse collegato",
+    "{} – fai clic per passare.",
+    "Passa",
+    "Non ora",
 ];
 
 const JA: Table = [
@@ -2652,6 +2702,11 @@ const JA: Table = [
     "{} からデータを収集中",
     "順方向",
     "逆方向",
+    "新しいマウスを接続: {}",
+    "新しいマウスを接続しました",
+    "{} – クリックで切り替え",
+    "切り替え",
+    "後で",
 ];
 
 const KO: Table = [
@@ -2878,6 +2933,11 @@ const KO: Table = [
     "{}부터 데이터 수집 중",
     "정방향",
     "역방향",
+    "새 마우스 연결됨: {}",
+    "새 마우스가 연결됨",
+    "{} – 클릭하면 전환합니다.",
+    "전환",
+    "나중에",
 ];
 
 const ZH_HANS: Table = [
@@ -3104,6 +3164,11 @@ const ZH_HANS: Table = [
     "自 {} 起收集数据",
     "正向",
     "反向",
+    "已连接新鼠标：{}",
+    "已连接新鼠标",
+    "{} – 点击切换。",
+    "切换",
+    "暂不",
 ];
 
 const ZH_HANT: Table = [
@@ -3330,6 +3395,11 @@ const ZH_HANT: Table = [
     "自 {} 起收集資料",
     "正向",
     "反向",
+    "已連接新滑鼠：{}",
+    "已連接新滑鼠",
+    "{} – 按一下即可切換。",
+    "切換",
+    "暫不",
 ];
 
 #[cfg(test)]

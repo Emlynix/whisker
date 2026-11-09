@@ -324,6 +324,11 @@ pub fn set_tray(level: Level, tip: &str) {
     tray::update(mtm, level, tip);
 }
 
+/// System notification: skipped on macOS. `UNUserNotificationCenter`
+/// needs a signed app bundle with a bundle id, which a plain binary run
+/// from a folder lacks (it throws); the window's banner still shows.
+pub fn notify(_title: &str, _text: &str) {}
+
 fn on_tray(a: TrayAction) {
     if let Some(f) = with_shell(|s| s.hooks.tray) {
         f(a);

@@ -42,6 +42,9 @@
 //!   (the window owns it on Windows).
 //! - `set_tray(tray::Level, tip)`: battery glyph (`tray::glyph`) and tooltip.
 //!   Tray clicks arrive as `Hooks::tray` (left = open, menu = open/about/quit).
+//! - `notify(title, text)`: system notification from the tray icon; a click
+//!   on it arrives as `TrayAction::Open`. Windows: tray balloon (`NIF_INFO`,
+//!   shown as a toast). macOS: no-op (needs a signed bundle).
 //!
 //! `gfx::Gfx` — drawing in DIPs, given to `Hooks::draw` per frame:
 //! `clear(c)`, `fill(r, radius, c)`, `stroke(r, radius, width, c)` (inside

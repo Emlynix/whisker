@@ -6,7 +6,8 @@
 //!   (freedesktop portal `color-scheme`), `user_locale` (`LC_ALL`,
 //!   `LC_MESSAGES`, `LANG`), `today` (local date).
 //! - `window`: create, run, post, invalidate, show, quit, set_timer,
-//!   kill_timer, set_title_colors, modifiers, set_tray (StatusNotifierItem).
+//!   kill_timer, set_title_colors, modifiers, set_tray (StatusNotifierItem),
+//!   notify (org.freedesktop.Notifications).
 //! - `gfx::Gfx`: clear, fill, stroke, circle, ring, line, polyline, text.
 //! - `hid`: interfaces, mice, `Channel` over `/dev/hidraw*` (read, write,
 //!   read_until, get_feature, set_feature via `HIDIOC*` ioctls).

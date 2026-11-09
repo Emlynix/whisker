@@ -56,6 +56,8 @@ pub struct AppConfig {
     pub theme: theme::Choice,
     /// `None` follows the Windows display language.
     pub lang: Option<Lang>,
+    /// Mice answered "Not now" in the new-mouse banner, as `mouse_key`.
+    pub ignored_mice: Vec<String>,
 }
 
 impl Default for AppConfig {
@@ -76,6 +78,7 @@ impl Default for AppConfig {
             setup_asked: false,
             theme: theme::Choice::System,
             lang: None,
+            ignored_mice: Vec::new(),
         }
     }
 }
@@ -213,6 +216,7 @@ fn parse_config(text: &str, mut c: AppConfig) -> AppConfig {
             ("setup_asked", _) => c.setup_asked = v == "1",
             ("theme", _) => c.theme = theme::Choice::from_id(v),
             ("lang", _) => c.lang = Lang::from_code(v),
+            ("ignored_mice", _) => c.ignored_mice = v.split(',').map(str::trim).filter(|k| !k.is_empty()).map(String::from).collect(),
             _ => {}
         }
     }
@@ -242,6 +246,7 @@ fn format_config(c: &AppConfig) -> String {
         format!("setup_asked={}", c.setup_asked as u8),
         format!("theme={}", c.theme.id()),
         format!("lang={}", c.lang.map(|l| l.code()).unwrap_or("system")),
+        format!("ignored_mice={}", c.ignored_mice.join(",")),
     ];
     let mut text = lines.join("\n") + "\n";
     for (i, m) in c.macros.iter().enumerate().filter(|(_, m)| !m.is_empty()) {
@@ -449,6 +454,14 @@ mod tests {
         assert_eq!(back.lighting, c.lighting);
         assert_eq!((back.debounce, back.lod, back.power), (c.debounce, c.lod, c.power));
         assert!(back.setup_asked);
+    }
+
+    #[test]
+    fn ignored_mice_roundtrip() {
+        let mut c = AppConfig::default();
+        c.ignored_mice = vec!["046D:C547".into(), "05AC:024F:AB12".into()];
+        let back = parse_config(&format_config(&c), AppConfig::default());
+        assert_eq!(back.ignored_mice, c.ignored_mice);
     }
 
     #[test]

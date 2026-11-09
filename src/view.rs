@@ -27,7 +27,7 @@ mod art;
 mod buttons;
 mod device;
 pub use buttons::{DelayMode, Picker, Tab, button_name};
-pub use device::{Badge, Detect, DetectRow, DeviceView};
+pub use device::{Badge, Banner, Detect, DetectRow, DeviceView};
 use crate::devices::{Caps, DpiUi};
 use crate::store::{DEBOUNCE_CHOICES, SLEEP_CHOICES};
 use crate::theme::{self, THEMES, Theme};
@@ -218,6 +218,10 @@ pub enum Act {
     AssignMacro,
     /// Assigns the selected macro to this button.
     AssignTo(usize),
+    /// New-mouse banner: use the new mouse.
+    BannerSwitch,
+    /// New-mouse banner: never ask for this mouse again.
+    BannerDismiss,
 }
 
 /// Pages of the project site the About dialog links to.
@@ -377,6 +381,8 @@ pub struct View {
     pub diagnostics: bool,
     /// Opacity of the pulsing recording dot.
     pub pulse: u8,
+    /// "New mouse connected" offer over the title row.
+    pub banner: Option<Banner>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -645,6 +651,10 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
     let title = Rect::new(X0, 18.0, CW, 36.0);
     f.g.text(tr(v.page.title()), title, Size::Title, Weight::Semibold, Align::Left, th().text);
     header_status(&mut f, v);
+    // Over the title row: never covers controls of the page.
+    if let Some(b) = &v.banner {
+        device::banner(&mut f, b);
+    }
 
     match v.page {
         Page::Overview => overview(&mut f, v),

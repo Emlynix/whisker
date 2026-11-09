@@ -31,7 +31,8 @@ fn data(hwnd: HWND) -> NOTIFYICONDATAW {
     d
 }
 
-fn copy_tip(dst: &mut [u16; 128], tip: &str) {
+/// Copies `tip` into a fixed UTF-16 field, cut to fit, NUL-terminated.
+fn copy_tip<const N: usize>(dst: &mut [u16; N], tip: &str) {
     let w: Vec<u16> = tip.encode_utf16().take(dst.len() - 1).collect();
     dst[..w.len()].copy_from_slice(&w);
     dst[w.len()] = 0;
@@ -60,6 +61,17 @@ pub fn update(hwnd: HWND, level: Level, tip: &str) {
     replace_icon(icon);
 }
 
+/// Balloon (a toast on Windows 10/11) next to the icon; a click on it
+/// comes back as `TrayAction::Open`.
+pub fn notify(hwnd: HWND, title: &str, text: &str) {
+    let mut d = data(hwnd);
+    d.uFlags = NIF_INFO;
+    d.dwInfoFlags = NIIF_INFO;
+    copy_tip(&mut d.szInfoTitle, title);
+    copy_tip(&mut d.szInfo, text);
+    unsafe { Shell_NotifyIconW(NIM_MODIFY, &d) };
+}
+
 pub fn remove(hwnd: HWND) {
     let d = data(hwnd);
     unsafe { Shell_NotifyIconW(NIM_DELETE, &d) };
@@ -73,10 +85,11 @@ fn replace_icon(new: HICON) {
     }
 }
 
-/// Handles `WM_TRAY`: left click opens, right click shows the menu.
+/// Handles `WM_TRAY`: left click or a click on our notification opens,
+/// right click shows the menu.
 pub fn on_message(hwnd: HWND, lparam: isize) -> Option<TrayAction> {
     match (lparam & 0xFFFF) as u32 {
-        WM_LBUTTONUP => Some(TrayAction::Open),
+        WM_LBUTTONUP | NIN_BALLOONUSERCLICK => Some(TrayAction::Open),
         WM_RBUTTONUP => menu(hwnd),
         _ => None,
     }

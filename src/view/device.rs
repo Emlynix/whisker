@@ -1,9 +1,9 @@
 //! Settings › Mouse tab (hardware info, diagnostics) and the "which mouse
 //! do you use?" dialog.
 
-use super::{Act, BODY, CW, Frame, GAP, Glyph, HEIGHT, Place, R_CTRL, RADIUS, View, WIDTH, X0, art, check_badge, th};
+use super::{Act, BODY, CW, Frame, GAP, Glyph, HEIGHT, Page, Place, R_CTRL, RADIUS, View, WIDTH, X0, art, check_badge, icon, text_w, th};
 use crate::gfx::{Align, Color, Rect, Size, Weight};
-use crate::i18n::{T, tr};
+use crate::i18n::{T, fill, tr};
 
 const ROW: f32 = 26.0;
 const PAD: f32 = 20.0;
@@ -34,6 +34,14 @@ pub struct Detect {
     pub manual: bool,
     /// Nothing was detected.
     pub empty: bool,
+}
+
+/// "New mouse connected: Logitech G305 (Supported)  [Not now] [Switch]".
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Banner {
+    pub name: String,
+    pub badge: String,
+    pub kind: Badge,
 }
 
 /// Device page content prepared by the controller: (caption, value) rows.
@@ -223,4 +231,33 @@ fn tile(f: &mut Frame, r: Rect, selected: bool, hot: bool) {
     if selected {
         check_badge(f.g, r);
     }
+}
+
+/// New-mouse offer over the title row: mouse icon, name with its support
+/// badge, "Not now" and "Switch".
+pub(super) fn banner(f: &mut Frame, b: &Banner) {
+    const TOP: f32 = 12.0;
+    const H: f32 = 48.0;
+    const BTN_H: f32 = 32.0;
+    const BTN_GAP: f32 = 8.0;
+    let r = Rect::new(X0, TOP, CW, H);
+    f.g.fill(r, RADIUS, th().card_hi);
+    f.g.stroke(r, RADIUS, 1.0, th().accent);
+    icon(f.g, Page::Buttons, r.x + 14.0, r.y + (H - 20.0) / 2.0, th().accent);
+
+    // Buttons from the right: Switch (primary), then Not now.
+    let by = r.y + (H - BTN_H) / 2.0;
+    let switch_w = text_w(tr(T::SwitchMouse), Size::Body) + 32.0;
+    let later_w = text_w(tr(T::NotNow), Size::Body) + 32.0;
+    let switch = Rect::new(r.x + r.w - 8.0 - switch_w, by, switch_w, BTN_H);
+    let later = Rect::new(switch.x - BTN_GAP - later_w, by, later_w, BTN_H);
+    f.push_button(Act::BannerDismiss, later, tr(T::NotNow), false);
+    f.push_button(Act::BannerSwitch, switch, tr(T::SwitchMouse), true);
+
+    // Text: what was connected on top, its support badge below.
+    let text_x = r.x + 44.0;
+    let room = later.x - 12.0 - text_x;
+    let title = fill(tr(T::NewMouseBanner), &[&b.name]);
+    f.g.text(&title, Rect::new(text_x, r.y + 5.0, room, 20.0), Size::Body, Weight::Semibold, Align::Left, th().text);
+    f.g.text(&b.badge, Rect::new(text_x, r.y + 25.0, room, 18.0), Size::Caption, Weight::Semibold, Align::Left, badge_color(b.kind));
 }

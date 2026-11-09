@@ -168,6 +168,11 @@ pub fn set_tray(level: Level, tip: &str) {
     tray::update(hwnd(), level, tip);
 }
 
+/// System notification from the tray icon; a click on it opens the window.
+pub fn notify(title: &str, text: &str) {
+    tray::notify(hwnd(), title, text);
+}
+
 /// Creates the (hidden) main window of `w` x `h` DIPs and the tray icon.
 pub fn create(title: &str, w: f32, h: f32, hooks: Hooks) -> bool {
     let (class, title) = (wide(CLASS), wide(title));

@@ -28,8 +28,8 @@ use crate::theme::{self, THEMES};
 use crate::store::{self, AppConfig};
 use crate::tray::{Level, TrayAction};
 use crate::view::{
-    self, Act, Badge, BasicView, Charge, DelayMode, Detect, DetectRow, DeviceView, Dialog, Focus, Hit, Page, Picker, StageView, Sync,
-    Toast, View, Web,
+    self, Act, Badge, Banner, BasicView, Charge, DelayMode, Detect, DetectRow, DeviceView, Dialog, Focus, Hit, Page, Picker,
+    StageView, Sync, Toast, View, Web,
 };
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
@@ -39,6 +39,9 @@ const TIMER_SAVE: usize = 2;
 const TIMER_TOAST: usize = 3;
 const TIMER_FADE: usize = 4;
 const TIMER_PULSE: usize = 5;
+const TIMER_SCAN: usize = 6;
+/// How often connected mice are listed to notice a new one.
+const SCAN_MS: u32 = 4000;
 const REFRESH_MS: u32 = 1000;
 const SAVE_MS: u32 = 60_000;
 /// How long a toast (and its Undo) stays.
@@ -121,6 +124,15 @@ struct Controller {
     acts: Vec<Act>,
     /// Start of the macro recording, for the pulsing dot.
     rec_start: Instant,
+    /// The window is on screen (else new mice are announced by notification).
+    visible: bool,
+    /// Keys (`mouse_key`) of the mice connected at the last scan; `None`
+    /// until the startup list arrived.
+    seen: Option<Vec<String>>,
+    /// A scan is running on its thread.
+    scanning: bool,
+    /// The mouse the new-mouse banner offers.
+    offer: Option<DeviceInfo>,
 }
 
 /// State before a destructive action, kept while its toast shows.
@@ -190,6 +202,10 @@ pub fn run(mode: StartMode) {
         saved_at: None,
         acts: Vec::new(),
         rec_start: Instant::now(),
+        visible: false,
+        seen: None,
+        scanning: false,
+        offer: None,
     };
     ctrl.stats.set_vendor(stats_vendor(ctrl.cfg.device.as_deref()));
     CTRL.with(|c| *c.borrow_mut() = Some(ctrl));
@@ -206,6 +222,7 @@ pub fn run(mode: StartMode) {
 
     platform::single::listen(|| post(|c| c.show()), || window::post(window::quit));
     window::set_timer(TIMER_SAVE, SAVE_MS);
+    window::set_timer(TIMER_SCAN, SCAN_MS);
 
     if mode == StartMode::Visible || first_run {
         with_ctrl(|c| c.show());
@@ -276,6 +293,7 @@ fn initial_view(cfg: &AppConfig, ask_setup: bool) -> View {
         dialog: None,
         diagnostics: false,
         pulse: u8::MAX,
+        banner: None,
     }
 }
 
@@ -384,6 +402,52 @@ fn detect_rows(mice: &[DeviceInfo]) -> Vec<DetectRow> {
             DetectRow { title, sub, badge, kind, choice }
         })
         .collect()
+}
+
+/// Identity for "Not now": VID:PID, plus the serial when the mouse has
+/// one (kept to letters and digits, the config is comma-separated).
+fn mouse_key(d: &DeviceInfo) -> String {
+    let id = format!("{:04X}:{:04X}", d.vid, d.pid);
+    let serial: String = d.serial.chars().filter(char::is_ascii_alphanumeric).collect();
+    if serial.is_empty() { id } else { format!("{id}:{serial}") }
+}
+
+/// A mouse worth offering: connected since the last scan (`seen`), in the
+/// catalogue with settings support (not statistics only), not the current
+/// model and not dismissed. Unknown mice never are; until a mouse is
+/// chosen, the first-run dialog asks anyway.
+fn new_mouse<'a>(mice: &'a [DeviceInfo], seen: &[String], device: Option<&str>, ignored: &[String]) -> Option<&'a DeviceInfo> {
+    let current = device?;
+    mice.iter().find(|d| {
+        let key = mouse_key(d);
+        let Match::Known(m) = devices::match_device(d) else {
+            return false;
+        };
+        m.support != Support::Basic && m.id != current && !seen.contains(&key) && !ignored.contains(&key)
+    })
+}
+
+/// The banner for a catalogue mouse; `None` for any other.
+fn banner_of(d: &DeviceInfo) -> Option<Banner> {
+    let Match::Known(m) = devices::match_device(d) else {
+        return None;
+    };
+    let (badge, kind) = support_badge(m.support);
+    let name = detect_rows(std::slice::from_ref(d)).remove(0).title;
+    Some(Banner { name, badge: badge.into(), kind })
+}
+
+/// Device id "Switch" stores: what the detect dialog would.
+fn offer_choice(d: &DeviceInfo) -> String {
+    detect_rows(std::slice::from_ref(d)).remove(0).choice
+}
+
+/// Remembers a "Not now" for this mouse.
+fn ignore_mouse(cfg: &mut AppConfig, d: &DeviceInfo) {
+    let key = mouse_key(d);
+    if !cfg.ignored_mice.contains(&key) {
+        cfg.ignored_mice.push(key);
+    }
 }
 
 /// Manual choice: every catalogue model plus "other mouse".
@@ -662,6 +726,7 @@ fn hook_timer(id: usize) {
         TIMER_TOAST => c.hide_toast(),
         TIMER_FADE => c.fade_sync(),
         TIMER_PULSE => c.pulse(),
+        TIMER_SCAN => c.scan(),
         _ => {}
     });
 }
@@ -715,6 +780,7 @@ impl Controller {
     // ---- window ----
 
     fn show(&mut self) {
+        self.visible = true;
         window::show();
         self.mouse.send(Command::Visible(true));
         self.mouse.send(Command::RefreshNow);
@@ -724,6 +790,7 @@ impl Controller {
 
     /// Hidden window: slow polling, no UI refresh timer.
     fn on_hidden(&mut self) {
+        self.visible = false;
         self.on_focus_lost();
         window::kill_timer(TIMER_REFRESH);
         self.mouse.send(Command::Visible(false));
@@ -834,6 +901,8 @@ impl Controller {
                 }
             }
             Act::ChangeMouse => self.open_detect(hid_link::list_mice()),
+            Act::BannerSwitch => self.switch_to_offer(),
+            Act::BannerDismiss => self.ignore_offer(),
             Act::BasicDpi => {}
             Act::BasicRate(hz) => {
                 self.view.basic.rate = Some(hz);
@@ -1112,12 +1181,91 @@ impl Controller {
     }
 
     fn on_mice(&mut self, mice: Vec<DeviceInfo>) {
+        // Mice connected at start are no news.
+        self.seen = Some(mice.iter().map(mouse_key).collect());
         self.mice = mice.clone();
         self.retarget_bluetooth();
         self.refresh_device();
         if self.cfg.device.is_none() {
             self.open_detect(mice);
         }
+    }
+
+    // ---- new mouse ----
+
+    /// Lists the connected mice off the UI thread; `on_scan` gets them.
+    fn scan(&mut self) {
+        if self.scanning || self.removed {
+            return;
+        }
+        self.scanning = true;
+        std::thread::spawn(|| {
+            let mice = hid_link::list_mice();
+            post(move |c| c.on_scan(mice));
+        });
+    }
+
+    /// Offers a catalogue mouse connected since the last scan; drops the
+    /// banner when its mouse is unplugged again.
+    fn on_scan(&mut self, mice: Vec<DeviceInfo>) {
+        self.scanning = false;
+        let keys: Vec<String> = mice.iter().map(mouse_key).collect();
+        if self.offer.as_ref().is_some_and(|o| !keys.contains(&mouse_key(o))) {
+            self.close_offer();
+        }
+        let Some(seen) = self.seen.replace(keys) else {
+            return;
+        };
+        let found = new_mouse(&mice, &seen, self.cfg.device.as_deref(), &self.cfg.ignored_mice).cloned();
+        if let Some(d) = found {
+            self.offer_mouse(d);
+        }
+    }
+
+    /// Banner in the window; a system notification while it is hidden
+    /// (a click on it opens the window with the banner).
+    fn offer_mouse(&mut self, d: DeviceInfo) {
+        let Some(banner) = banner_of(&d) else {
+            return;
+        };
+        if !self.visible {
+            let what = format!("{} ({})", banner.name, banner.badge);
+            window::notify(tr(T::NewMouseTitle), &fill(tr(T::NewMouseTip), &[&what]));
+        }
+        self.view.banner = Some(banner);
+        self.offer = Some(d);
+        window::invalidate();
+    }
+
+    fn close_offer(&mut self) {
+        self.offer = None;
+        self.view.banner = None;
+        window::invalidate();
+    }
+
+    /// "Switch": the same as picking the mouse in the detect dialog.
+    fn switch_to_offer(&mut self) {
+        let Some(d) = self.offer.take() else {
+            return;
+        };
+        self.close_offer();
+        self.view.detect = None;
+        let choice = offer_choice(&d);
+        // No-driver models are found among the detected mice.
+        if !self.mice.contains(&d) {
+            self.mice.push(d);
+        }
+        self.apply_device(choice);
+    }
+
+    /// "Not now": this mouse is never offered again.
+    fn ignore_offer(&mut self) {
+        let Some(d) = self.offer.take() else {
+            return;
+        };
+        self.close_offer();
+        ignore_mouse(&mut self.cfg, &d);
+        store::save_config(&self.cfg);
     }
 
     fn open_detect(&mut self, mice: Vec<DeviceInfo>) {
@@ -2004,6 +2152,72 @@ mod tests {
         let mid = fade_alpha(SAVED_HOLD + SAVED_FADE / 2).unwrap();
         assert!(mid > 100 && mid < 150);
         assert_eq!(fade_alpha(SAVED_HOLD + SAVED_FADE), None);
+    }
+
+    /// A catalogue mouse as the OS would list it.
+    fn listed(id: &str, serial: &str) -> DeviceInfo {
+        let m = devices::by_id(id).unwrap();
+        // Vendor-wide entries take any product id.
+        let pid = m.pids.first().map_or(0x0001, |p| p.0);
+        DeviceInfo { vid: m.vid, pid, serial: serial.into(), ..DeviceInfo::default() }
+    }
+
+    const LIONEL: &str = "whiteshark-lionel";
+    const ETERNICO: &str = "eternico-ms480b";
+
+    #[test]
+    fn banner_offers_a_new_known_mouse() {
+        let (lionel, eternico) = (listed(LIONEL, ""), listed(ETERNICO, ""));
+        let seen = vec![mouse_key(&lionel)];
+        let mice = [lionel, eternico.clone()];
+        assert_eq!(new_mouse(&mice, &seen, Some(LIONEL), &[]), Some(&eternico));
+        let b = banner_of(&eternico).unwrap();
+        assert_eq!(b.name, devices::by_id(ETERNICO).unwrap().full_name());
+
+        // Statistics-only models are not worth a banner.
+        let basic = listed("eternico-mvs490b", "");
+        assert_eq!(new_mouse(&[basic], &[], Some(LIONEL), &[]), None);
+
+        // Already there at the last scan: no news.
+        let seen: Vec<String> = mice.iter().map(mouse_key).collect();
+        assert_eq!(new_mouse(&mice, &seen, Some(LIONEL), &[]), None);
+        // Before the first-run choice the detect dialog asks instead.
+        assert_eq!(new_mouse(&mice, &[], None, &[]), None);
+    }
+
+    #[test]
+    fn banner_skips_the_current_and_unknown_mice() {
+        let cable = DeviceInfo { pid: devices::by_id(LIONEL).unwrap().pids[1].0, ..listed(LIONEL, "") };
+        assert_eq!(new_mouse(&[cable], &[], Some(LIONEL), &[]), None);
+
+        let unknown = DeviceInfo { vid: 0x1234, pid: 0x5678, product: "Office mouse".into(), ..DeviceInfo::default() };
+        assert_eq!(new_mouse(std::slice::from_ref(&unknown), &[], Some(LIONEL), &[]), None);
+        assert_eq!(new_mouse(&[unknown], &[], Some(store::GENERIC_DEVICE), &[]), None);
+    }
+
+    #[test]
+    fn not_now_is_remembered_per_mouse() {
+        let mut cfg = AppConfig { device: Some(LIONEL.into()), ..AppConfig::default() };
+        let first = listed(ETERNICO, "A1-B2");
+        ignore_mouse(&mut cfg, &first);
+        ignore_mouse(&mut cfg, &first);
+        assert_eq!(cfg.ignored_mice, ["1D57:FA60:A1B2"]);
+        assert_eq!(new_mouse(std::slice::from_ref(&first), &[], Some(LIONEL), &cfg.ignored_mice), None);
+
+        // Another one of the same model, with its own serial, still asks.
+        let second = listed(ETERNICO, "C3");
+        assert_eq!(new_mouse(std::slice::from_ref(&second), &[], Some(LIONEL), &cfg.ignored_mice), Some(&second));
+    }
+
+    #[test]
+    fn switch_retargets_to_the_offered_mouse() {
+        let mut cfg = AppConfig { device: Some(LIONEL.into()), ..AppConfig::default() };
+        let mut undo = Some(Undo::Buttons(DEFAULT_ACTIONS));
+        let offered = listed("razer", "");
+        switch_device(&mut cfg, &mut undo, offer_choice(&offered));
+        assert_eq!(cfg.device.as_deref(), Some("razer"));
+        assert_eq!(undo, None);
+        assert_eq!(target_of(cfg.device.as_deref()), Target::Razer);
     }
 
     #[test]
