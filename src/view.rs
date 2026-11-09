@@ -878,14 +878,28 @@ fn sidebar(f: &mut Frame, v: &View) {
     mouse_logo(f.g, 24.0, 20.0);
     let name_c = if hot { th().accent } else { th().text };
     f.g.text(crate::APP_NAME, Rect::new(62.0, 13.0, 140.0, 26.0), Size::Subtitle, Weight::Bold, Align::Left, name_c);
-    // Mouse name and its status line open Settings › Mouse.
+    // Mouse name "White Shark Lionel ▾" opens the "which mouse" dialog;
+    // the status line under it opens Settings › Mouse. The space down to
+    // the nav stays free for a profile switcher.
+    const CHEVRON_W: f32 = 14.0;
     let sub = Rect::new(62.0, 46.0, SIDE_W - 76.0, 16.0);
-    let status = (v.caps.battery || v.has_battery).then(|| Rect::new(sub.x, sub.y + 18.0, sub.w, 16.0));
-    let area_h = status.map_or(sub.h, |r| r.y + r.h - sub.y);
-    let hot = f.button(Act::Nav(Page::Mouse), Rect::new(sub.x, sub.y - 2.0, sub.w, area_h + 4.0));
-    let sub_c = if hot { th().accent } else { th().subtle };
-    f.g.text(&v.device_name, sub, Size::Caption, Weight::Normal, Align::Left, sub_c);
-    if let Some(r) = status {
+    // A select-like field: the chevron sits at its right end.
+    let pick = Rect::new(sub.x - 4.0, sub.y - 2.0, sub.w + 8.0, sub.h + 4.0);
+    let name_w = pick.w - CHEVRON_W - 12.0;
+    let hot = f.button(Act::ChangeMouse, pick);
+    if hot {
+        f.g.fill(pick, R_INNER, th().hover);
+    }
+    let name_c = if hot { th().text } else { th().subtle };
+    f.g.text(&v.device_name, Rect::new(sub.x, sub.y, name_w, sub.h), Size::Caption, Weight::Normal, Align::Left, name_c);
+    glyph(f.g, Glyph::ChevronDown, pick.x + pick.w - CHEVRON_W / 2.0 - 2.0, sub.y + sub.h / 2.0, name_c);
+
+    if v.caps.battery || v.has_battery {
+        let r = Rect::new(sub.x, sub.y + 20.0, sub.w, 16.0);
+        let area = Rect::new(r.x - 4.0, r.y - 2.0, r.w + 4.0, r.h + 4.0);
+        if f.button(Act::Nav(Page::Mouse), area) {
+            f.g.fill(area, R_INNER, th().hover);
+        }
         status_line(f, v, r);
     }
 
