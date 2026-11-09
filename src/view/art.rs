@@ -15,6 +15,7 @@
 
 use super::{Act, Frame, th};
 use crate::gfx::{Align, Color, Rect, Seg, Size, Weight};
+use crate::protocol::BUTTON_COUNT;
 
 const UNIT_W: f32 = 100.0;
 const UNIT_H: f32 = 150.0;
@@ -30,7 +31,7 @@ pub(super) enum Marks {
 }
 
 /// Marker centers per button index: left, right, middle, back, forward, DPI.
-const MARKERS: [(f32, f32); 6] = [(27.0, 30.0), (73.0, 30.0), (50.0, 22.0), (17.0, 96.0), (17.0, 70.0), (50.0, 48.0)];
+const MARKERS: [(f32, f32); BUTTON_COUNT] = [(27.0, 30.0), (73.0, 30.0), (50.0, 22.0), (17.0, 96.0), (17.0, 70.0), (50.0, 48.0)];
 const MIDDLE: usize = 2;
 const BACK: usize = 3;
 const FORWARD: usize = 4;
