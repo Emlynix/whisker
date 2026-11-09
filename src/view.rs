@@ -340,6 +340,8 @@ pub struct View {
     pub connected: bool,
     pub link: String,
     pub battery: u8,
+    /// Coarse battery level: shown with "≈", no mid-level warning.
+    pub battery_approx: bool,
     pub charge: Charge,
     pub battery_note: String,
     pub stages: Vec<StageView>,
@@ -672,11 +674,17 @@ fn text_w(text: &str, size: Size) -> f32 {
     ems(text) * size.px()
 }
 
+/// "56 %", or "≈ 50 %" for a coarse level.
+pub fn battery_text(v: &View) -> String {
+    let approx = if v.battery_approx { "≈ " } else { "" };
+    format!("{approx}{} %", v.battery)
+}
+
 pub fn battery_color(v: &View) -> Color {
     match v.battery {
         _ if v.charge == Charge::Charging => th().accent,
         b if b <= LOW => th().bad,
-        b if b <= MID => th().warn,
+        b if b <= MID && !v.battery_approx => th().warn,
         _ => th().good,
     }
 }
@@ -978,7 +986,7 @@ fn status_line(f: &mut Frame, v: &View, r: Rect) {
     } else {
         let charging = if v.charge == Charge::Charging { " ⚡" } else { "" };
         let c = if v.battery < LOW_PCT { th().warn } else { th().good };
-        (format!("{} · {} %{charging}", tr(T::LinkConnected), v.battery), c)
+        (format!("{} · {}{charging}", tr(T::LinkConnected), battery_text(v)), c)
     };
     f.g.circle(r.x + 3.5, r.y + r.h / 2.0, 3.5, c);
     let label = Rect::new(r.x + 12.0, r.y, r.w - 12.0, r.h);
@@ -1051,7 +1059,7 @@ fn overview(f: &mut Frame, v: &View) {
     let shown = v.connected && v.has_battery;
     if shown {
         let big = Rect::new(card.x + SIDE_PAD, card.y + 40.0, 170.0, 56.0);
-        f.g.text(&format!("{} %", v.battery), big, Size::Hero, Weight::Bold, Align::Left, tint);
+        f.g.text(&battery_text(v), big, Size::Hero, Weight::Bold, Align::Left, tint);
     } else {
         skeleton(f.g, Rect::new(card.x + SIDE_PAD, card.y + 52.0, 120.0, 34.0));
     }
@@ -1161,7 +1169,7 @@ fn overview_basic(f: &mut Frame, v: &View) {
         let tint = battery_color(v);
         f.caption(tr(T::Battery), card.x + card.w - 200.0, card.y + 20.0);
         let pct = Rect::new(card.x + card.w - 200.0, card.y + 36.0, 180.0, 30.0);
-        f.g.text(&format!("{} %", v.battery), pct, Size::Subtitle, Weight::Bold, Align::Left, tint);
+        f.g.text(&battery_text(v), pct, Size::Subtitle, Weight::Bold, Align::Left, tint);
         f.bar(Rect::new(card.x + card.w - 200.0, card.y + 70.0, 180.0, 8.0), v.battery, tint);
     }
 

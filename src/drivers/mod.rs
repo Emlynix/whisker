@@ -84,6 +84,9 @@ pub struct Reading {
     pub rate_hz: Option<u32>,
     /// Current DPI stage (1-based), for mice that only report the stage.
     pub stage: Option<u8>,
+    /// Battery comes in coarse steps (Logitech M705: 90 / 50 / 20 / 5 %)
+    /// or from a voltage curve: show it as "≈ 50 %".
+    pub battery_approx: bool,
 }
 
 /// Battery % from a Li-ion cell voltage (rough discharge curve).

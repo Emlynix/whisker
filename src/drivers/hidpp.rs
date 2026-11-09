@@ -205,12 +205,14 @@ impl Hidpp {
         } else if let Some(f) = self.feature(F_BATTERY_LEVEL) {
             if let Some(p) = self.call(f, 0, &[]).filter(|p| p.len() >= 3) {
                 (r.battery, r.charging) = (Some(p[0].min(100)), matches!(p[2], 1..=4));
+                r.battery_approx = true;
             }
         } else if let Some(f) = self.feature(F_BATTERY_VOLTAGE) {
             if let Some(p) = self.call(f, 0, &[]).filter(|p| p.len() >= 3) {
                 const CHARGING_BIT: u8 = 0x80;
                 let mv = u16::from_be_bytes([p[0], p[1]]);
                 (r.battery, r.charging) = (Some(percent_from_mv(mv)), p[2] & CHARGING_BIT != 0);
+                r.battery_approx = true;
             }
         }
         if let Some(f) = self.feature(F_DPI) {

@@ -319,6 +319,7 @@ fn initial_view(cfg: &AppConfig, ask_setup: bool) -> View {
         connected: false,
         link: tr(T::LinkSearching).into(),
         battery: 0,
+        battery_approx: false,
         charge: Charge::Discharging,
         battery_note: String::new(),
         stages: Vec::new(),
@@ -402,6 +403,11 @@ fn narrow_caps(caps: Caps, ability: &Ability) -> Caps {
     Caps { dpi, polling: caps.polling && !ability.rates.is_empty(), ..caps }
 }
 
+/// Tray tooltip percentage: "50" or "≈ 50".
+fn approx_pct(pct: u8, approx: bool) -> String {
+    if approx { format!("≈ {pct}") } else { pct.to_string() }
+}
+
 /// Devices the driver may open for the configured mouse; any for "other".
 fn pick_for(device: Option<&str>, usb: Option<(u16, u16)>) -> Pick {
     device.and_then(devices::by_id).map(|m| m.pick(usb)).unwrap_or_default()
@@ -437,6 +443,7 @@ fn forget_mouse(v: &mut View, caps: Caps) {
     v.basic = BasicView::default();
     v.connected = false;
     v.battery = 0;
+    v.battery_approx = false;
     v.charge = Charge::Discharging;
     v.has_battery = caps.battery;
     v.link = tr(T::LinkSearching).into();
@@ -1333,6 +1340,7 @@ impl Controller {
                 let dpi = self.view.basic.dpi;
                 self.view.has_battery = r.battery.is_some();
                 self.view.battery = r.battery.unwrap_or(0);
+                self.view.battery_approx = r.battery_approx;
                 self.view.charge = if r.charging { Charge::Charging } else { Charge::Discharging };
                 if let Some(d) = dpi {
                     self.stats.set_dpi(d);
@@ -1378,7 +1386,7 @@ impl Controller {
     fn update_tray(&self) {
         let tip = match self.level {
             Level::Battery { pct, charging } => {
-                let base = format!("{} · {}", crate::APP_NAME, fill(tr(T::TipBattery), &[&pct.to_string()]));
+                let base = format!("{} · {}", crate::APP_NAME, fill(tr(T::TipBattery), &[&approx_pct(pct, self.view.battery_approx)]));
                 if charging { format!("{base} · {}", tr(T::TipCharging)) } else { base }
             }
             Level::Offline => format!("{} · {}", crate::APP_NAME, tr(self.link)),
@@ -1395,6 +1403,7 @@ impl Controller {
             self.sync_stages();
         }
         self.view.battery = s.battery;
+        self.view.battery_approx = false;
         self.view.charge = match s.charge {
             protocol::Charge::Discharging => Charge::Discharging,
             protocol::Charge::Charging => Charge::Charging,
@@ -2593,6 +2602,26 @@ fn day_label(days_back: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn coarse_battery_is_approximate() {
+        // M705 reports 50 % as one of four steps: no warning colour.
+        let mut v = initial_view(&AppConfig::default(), false);
+        (v.connected, v.has_battery, v.battery, v.battery_approx) = (true, true, 50, true);
+        assert_eq!(view::battery_text(&v), "≈ 50 %");
+        assert!(view::battery_color(&v) == th_good());
+
+        // An exact 50 % still warns; low stays red either way.
+        v.battery_approx = false;
+        assert_eq!(view::battery_text(&v), "50 %");
+        assert!(view::battery_color(&v) != th_good());
+        (v.battery, v.battery_approx) = (5, true);
+        assert!(view::battery_color(&v) != th_good());
+    }
+
+    fn th_good() -> crate::gfx::Color {
+        crate::theme::current().good
+    }
 
     #[test]
     fn switching_to_driverless_mouse_drops_old_battery() {
