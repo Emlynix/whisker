@@ -16,6 +16,7 @@ pub const WM_TRAY: u32 = WM_APP + 2;
 const ICON_ID: u32 = 1;
 const MENU_OPEN: usize = 1;
 const MENU_QUIT: usize = 2;
+const MENU_ABOUT: usize = 3;
 
 thread_local! {
     static ICON: Cell<HICON> = const { Cell::new(std::ptr::null_mut()) };
@@ -82,10 +83,11 @@ pub fn on_message(hwnd: HWND, lparam: isize) -> Option<TrayAction> {
 }
 
 fn menu(hwnd: HWND) -> Option<TrayAction> {
-    let (open, quit) = (wide(tr(T::TrayOpen)), wide(tr(T::TrayQuit)));
+    let (open, about, quit) = (wide(tr(T::TrayOpen)), wide(tr(T::About)), wide(tr(T::TrayQuit)));
     unsafe {
         let m = CreatePopupMenu();
         AppendMenuW(m, MF_STRING, MENU_OPEN, open.as_ptr());
+        AppendMenuW(m, MF_STRING, MENU_ABOUT, about.as_ptr());
         AppendMenuW(m, MF_SEPARATOR, 0, std::ptr::null());
         AppendMenuW(m, MF_STRING, MENU_QUIT, quit.as_ptr());
 
@@ -99,6 +101,7 @@ fn menu(hwnd: HWND) -> Option<TrayAction> {
 
         match cmd as usize {
             MENU_OPEN => Some(TrayAction::Open),
+            MENU_ABOUT => Some(TrayAction::About),
             MENU_QUIT => Some(TrayAction::Quit),
             _ => None,
         }

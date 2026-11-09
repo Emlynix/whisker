@@ -9,8 +9,8 @@
 //!  +------------------+    +--------+--------------------------+
 //! ```
 
-use super::{Act, Frame, GAP, HEIGHT, RADIUS, TOP, View, WIDTH, X0, CW, th};
-use crate::gfx::{Align, Rect, Weight};
+use super::{Act, BODY, Frame, GAP, HEIGHT, Mark, RADIUS, View, WIDTH, X0, CW, th};
+use crate::gfx::{Align, Color, Rect, Weight};
 use crate::i18n::{T, fill, tr};
 use crate::keys;
 use crate::protocol::{
@@ -72,6 +72,8 @@ pub struct Picker {
     pub loops: u8,
     pub macro_index: usize,
     pub mode: MacroMode,
+    /// Preset picked on a one-click tab, applied with "Apply".
+    pub chosen: Option<Action>,
 }
 
 impl Picker {
@@ -88,6 +90,7 @@ impl Picker {
             loops: 0,
             macro_index: 0,
             mode: MacroMode::Times(1),
+            chosen: None,
         };
         match current {
             Action::Consumer(_) => p.tab = Tab::Media,
@@ -103,13 +106,14 @@ impl Picker {
         p
     }
 
-    /// Action built from the editable tabs; `None` until it is complete.
+    /// Action the "Apply" button assigns; `None` until one is complete.
+    /// Every tab applies the same way: pick, then Apply.
     pub fn built(&self) -> Option<Action> {
         match self.tab {
             Tab::Keyboard => self.key.map(|usage| Action::Key { mods: self.mods, usage }),
             Tab::Fire => Some(Action::Fire { interval: self.interval, loops: self.loops }),
             Tab::Macro => Some(Action::Macro { index: self.macro_index, mode: self.mode }),
-            _ => None,
+            Tab::Mouse | Tab::Media | Tab::Shortcuts | Tab::Other => self.chosen,
         }
     }
 }
@@ -215,7 +219,7 @@ fn mouse_chip_label(t: T, a: Action) -> String {
 // ---- buttons page ----------------------------------------------------------
 
 pub(super) fn buttons_page(f: &mut Frame, v: &View) {
-    let card = Rect::new(X0, TOP, CW, ROW * v.buttons.len() as f32 + 12.0);
+    let card = Rect::new(X0, BODY, CW, ROW * v.buttons.len() as f32 + 12.0);
     f.card(card);
 
     for (i, a) in v.buttons.iter().enumerate() {
@@ -232,7 +236,13 @@ pub(super) fn buttons_page(f: &mut Frame, v: &View) {
     }
 
     let y = card.y + card.h + GAP;
-    f.push_button(Act::ResetButtons, Rect::new(X0, y, 200.0, 36.0), tr(T::ResetAll), false);
+    // Nothing to reset while the layout is the default one.
+    let reset = Rect::new(X0, y, 200.0, 36.0);
+    if v.buttons == DEFAULT_ACTIONS {
+        f.dead_button(reset, tr(T::ResetAll));
+    } else {
+        f.push_button(Act::ResetButtons, reset, tr(T::ResetAll), false);
+    }
     let note = Rect::new(X0 + 216.0, y - 2.0, CW - 216.0, 40.0);
     f.g.text(tr(T::ButtonsNote), note, 12.0, Weight::Normal, Align::Wrap, th().muted);
     if !v.notice.is_empty() {
@@ -269,19 +279,27 @@ fn users_of(v: &View, index: usize) -> Vec<&'static str> {
 pub(super) fn macros_page(f: &mut Frame, v: &View) {
     const LIST_W: f32 = 150.0;
     for i in 0..MACRO_COUNT {
-        let r = Rect::new(X0, TOP + i as f32 * 52.0, LIST_W, 44.0);
+        let r = Rect::new(X0, BODY + i as f32 * 52.0, LIST_W, 44.0);
         let steps = fill(tr(T::Steps), &[&v.macros[i].len().to_string()]);
         f.choice(Act::MacroSel(i), r, &fill(tr(T::ActMacro), &[&(i + 1).to_string()]), &steps, v.macro_sel == i);
     }
 
-    let card = Rect::new(X0 + LIST_W + GAP, TOP, CW - LIST_W - GAP, HEIGHT - TOP - 24.0);
+    let card = Rect::new(X0 + LIST_W + GAP, BODY, CW - LIST_W - GAP, HEIGHT - BODY - 24.0);
     f.card(card);
     let x = card.x + PAD;
     let w = card.w - 2.0 * PAD;
     let sel = v.macro_sel;
 
+    // Title with "Assign to button…" on the right.
+    const ASSIGN_W: f32 = 180.0;
     let title = fill(tr(T::ActMacro), &[&(sel + 1).to_string()]);
-    f.g.text(&title, Rect::new(x, card.y + 14.0, w, 26.0), 18.0, Weight::Bold, Align::Left, th().text);
+    f.g.text(&title, Rect::new(x, card.y + 14.0, w - ASSIGN_W, 26.0), 18.0, Weight::Bold, Align::Left, th().text);
+    let assign = Rect::new(x + w - ASSIGN_W, card.y + 12.0, ASSIGN_W, 32.0);
+    if v.macros[sel].is_empty() {
+        f.dead_button(assign, tr(T::AssignMacro));
+    } else {
+        f.push_button(Act::AssignMacro, assign, tr(T::AssignMacro), false);
+    }
     let users = users_of(v, sel);
     let used = if users.is_empty() { tr(T::MacroUnused).to_string() } else { fill(tr(T::MacroUsedBy), &[&users.join(", ")]) };
     f.g.text(&used, Rect::new(x, card.y + 40.0, w, 18.0), 12.0, Weight::Normal, Align::Left, th().muted);
@@ -289,9 +307,14 @@ pub(super) fn macros_page(f: &mut Frame, v: &View) {
     let y = card.y + 68.0;
     let rec = if v.recording { tr(T::StopRec) } else { tr(T::Record) };
     f.push_button(Act::MacroRecord, Rect::new(x, y, 130.0, 36.0), rec, true);
-    f.push_button(Act::MacroClear, Rect::new(x + 140.0, y, 110.0, 36.0), tr(T::Clear), false);
+    let clear = Rect::new(x + 140.0, y, 110.0, 36.0);
+    if v.macros[sel].is_empty() {
+        f.dead_button(clear, tr(T::Clear));
+    } else {
+        f.push_button(Act::MacroClear, clear, tr(T::Clear), false);
+    }
     if v.recording {
-        f.g.circle(x + 122.0, y + 8.0, 4.0, th().bad);
+        f.g.circle(x + 122.0, y + 8.0, 4.0, Color(th().bad.0, v.pulse));
     }
 
     let y = y + 52.0;
@@ -310,6 +333,18 @@ pub(super) fn macros_page(f: &mut Frame, v: &View) {
     let area = Rect::new(x, y + 70.0, w, card.y + card.h - (y + 70.0) - PAD);
     f.g.fill(area, 8.0, th().bg);
     let events = &v.macros[sel];
+    let mut inner = area.inset(12.0);
+
+    // Recording: accent border and "● Recording… N steps" with a pulsing dot.
+    if v.recording {
+        f.g.stroke(area, 8.0, 2.0, th().accent);
+        f.g.circle(inner.x + 5.0, inner.y + 9.0, 5.0, Color(th().bad.0, v.pulse));
+        let head = fill(tr(T::RecordingSteps), &[&events.len().to_string()]);
+        let r = Rect::new(inner.x + 16.0, inner.y, inner.w - 16.0, 18.0);
+        f.g.text(&head, r, 13.0, Weight::Semibold, Align::Left, th().accent);
+        inner = Rect::new(inner.x, inner.y + 26.0, inner.w, inner.h - 26.0);
+    }
+
     let text = if !events.is_empty() {
         events.iter().map(|e| format!("{} {}ms", event_label(e), e.delay_ms)).collect::<Vec<_>>().join("   ")
     } else if v.recording {
@@ -318,12 +353,41 @@ pub(super) fn macros_page(f: &mut Frame, v: &View) {
         tr(T::MacroEmpty).into()
     };
     let color = if events.is_empty() { th().faint } else { th().text };
-    let inner = area.inset(12.0);
     f.g.text(&text, Rect::new(inner.x, inner.y, inner.w, inner.h - 34.0), 13.0, Weight::Normal, Align::Wrap, color);
 
     // Macros are plain data on disk and in the mouse: warn before passwords end up there.
     let warn = Rect::new(inner.x, inner.y + inner.h - 32.0, inner.w, 32.0);
     f.g.text(tr(T::MacroWarn), warn, 11.5, Weight::Normal, Align::Wrap, th().warn);
+}
+
+/// "Assign macro N to button": one row per button with what it does now.
+pub(super) fn assign_dialog(f: &mut Frame, v: &View) {
+    const W: f32 = 460.0;
+    const ITEM_H: f32 = 40.0;
+    let h = 64.0 + ITEM_H * v.buttons.len() as f32 + 76.0;
+    f.g.fill(Rect::new(0.0, 0.0, WIDTH, HEIGHT), 0.0, th().scrim);
+    let d = Rect::new((WIDTH - W) / 2.0, (HEIGHT - h) / 2.0, W, h);
+    f.g.fill(d, RADIUS, th().card_hi);
+    f.g.stroke(d, RADIUS, 1.0, th().border);
+
+    let name = fill(tr(T::ActMacro), &[&(v.macro_sel + 1).to_string()]);
+    let title = fill(tr(T::AssignMacroTitle), &[&name]);
+    f.g.text(&title, Rect::new(d.x + 24.0, d.y + 18.0, d.w - 48.0, 28.0), 18.0, Weight::Bold, Align::Left, th().text);
+
+    for (i, a) in v.buttons.iter().enumerate() {
+        let r = Rect::new(d.x + 16.0, d.y + 60.0 + i as f32 * ITEM_H, d.w - 32.0, ITEM_H - 4.0);
+        if f.button(Act::AssignTo(i), r) {
+            f.g.fill(r, 8.0, th().hover);
+        }
+        let left = Rect::new(r.x + 12.0, r.y, 170.0, r.h);
+        f.g.text(button_name(i), left, 14.0, Weight::Semibold, Align::Left, th().text);
+        let right = Rect::new(r.x + 190.0, r.y, r.w - 202.0, r.h);
+        let label = action_label(*a);
+        f.g.text(&label, right, super::fit_size(&label, right.w, 13.0), Weight::Normal, Align::Left, th().muted);
+    }
+
+    let by = d.y + d.h - 24.0 - 36.0;
+    f.push_button(Act::CloseDialog, Rect::new(d.x + d.w - 24.0 - 120.0, by, 120.0, 36.0), tr(T::Cancel), false);
 }
 
 // ---- assign dialog ---------------------------------------------------------
@@ -337,13 +401,17 @@ pub(super) fn picker(f: &mut Frame, v: &View, p: &Picker) {
     let title = fill(tr(T::PickTitle), &[button_name(p.button)]);
     f.g.text(&title, Rect::new(d.x + 24.0, d.y + 18.0, d.w - 48.0, 28.0), 18.0, Weight::Bold, Align::Left, th().text);
 
+    // Categories: a plain list with a bar, unlike the action tiles.
     for (k, (tab, name)) in TABS.iter().enumerate() {
-        let r = Rect::new(d.x + 20.0, d.y + 64.0 + k as f32 * 44.0, 150.0, 38.0);
-        f.choice(Act::PickTab(*tab), r, tr(*name), "", p.tab == *tab);
+        let r = Rect::new(d.x + 16.0, d.y + 64.0 + k as f32 * 44.0, 158.0, 38.0);
+        category(f, Act::PickTab(*tab), r, tr(*name), Mark::of(p.tab == *tab));
     }
+    let sep = d.x + 182.0;
+    f.g.line(sep, d.y + 64.0, sep, d.y + d.h - 70.0, 1.0, th().border);
 
-    let area = Rect::new(d.x + 190.0, d.y + 64.0, d.w - 214.0, d.h - 64.0 - 70.0);
-    let current = v.buttons[p.button];
+    let area = Rect::new(d.x + 198.0, d.y + 64.0, d.w - 222.0, d.h - 64.0 - 70.0);
+    // Highlight the pick, else what the button does now.
+    let current = p.chosen.unwrap_or(v.buttons[p.button]);
     match p.tab {
         Tab::Mouse => {
             let items: Vec<(String, Action)> = MOUSE_ACTIONS.iter().map(|(t, a)| (mouse_chip_label(*t, *a), *a)).collect();
@@ -380,7 +448,21 @@ pub(super) fn picker(f: &mut Frame, v: &View, p: &Picker) {
     }
 }
 
-/// Two-column grid of one-click presets.
+fn category(f: &mut Frame, act: Act, r: Rect, label: &str, mark: Mark) {
+    let selected = mark == Mark::Current;
+    let hot = f.button(act, r);
+    if selected || hot {
+        f.g.fill(r, 8.0, if selected { th().accent_soft } else { th().hover });
+    }
+    if selected {
+        f.g.fill(Rect::new(r.x, r.y + 8.0, 3.0, r.h - 16.0), 1.5, th().accent);
+    }
+    let label_r = Rect::new(r.x + 16.0, r.y, r.w - 20.0, r.h);
+    let weight = if selected { Weight::Semibold } else { Weight::Normal };
+    f.g.text(label, label_r, 14.0, weight, Align::Left, if selected { th().text } else { th().muted });
+}
+
+/// Two-column grid of presets; a click picks, "Apply" assigns.
 fn preset_grid(f: &mut Frame, area: Rect, items: &[(String, Action)], current: Action) {
     let w = (area.w - 10.0) / 2.0;
     let h = if items.len() > 10 { 34.0 } else { 38.0 };

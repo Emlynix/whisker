@@ -265,6 +265,13 @@ pub fn hours_left(samples: &[BatterySample]) -> Option<f64> {
     Some(last.pct as f64 / pct_per_hour)
 }
 
+/// Local `(month, day)` `days_back` days ago, for chart labels.
+pub fn month_day(days_back: i64) -> (i64, i64) {
+    let (y, m, d) = crate::platform::today();
+    let (_, m, d) = civil_from_days(days_from_civil(y, m, d) - days_back);
+    (m, d)
+}
+
 /// Local date `days_back` days ago as `YYYY-MM-DD`, e.g. `local_date(0)` is today.
 fn local_date(days_back: i64) -> String {
     let (y, m, d) = crate::platform::today();

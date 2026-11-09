@@ -1,6 +1,6 @@
 //! Menu-bar item (`NSStatusItem`) showing the battery glyph of
 //! `crate::tray`. Left click opens the window, right or Control click
-//! shows the Open / Quit menu.
+//! shows the Open / About / Quit menu.
 
 use crate::i18n::{T, tr};
 use crate::tray::{ICON_SIZE, Level, TrayAction, glyph};
@@ -49,6 +49,11 @@ define_class!(
         #[unsafe(method(open:))]
         fn open(&self, _sender: Option<&NSObject>) {
             fire(TrayAction::Open);
+        }
+
+        #[unsafe(method(about:))]
+        fn about(&self, _sender: Option<&NSObject>) {
+            fire(TrayAction::About);
         }
 
         #[unsafe(method(quit:))]
@@ -102,6 +107,7 @@ pub fn add(mtm: MainThreadMarker, on: fn(TrayAction)) {
 
     let menu = NSMenu::new(mtm);
     menu.addItem(&menu_item(mtm, tr(T::TrayOpen), sel!(open:), &target));
+    menu.addItem(&menu_item(mtm, tr(T::About), sel!(about:), &target));
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     menu.addItem(&menu_item(mtm, tr(T::TrayQuit), sel!(quit:), &target));
 

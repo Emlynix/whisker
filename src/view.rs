@@ -4,12 +4,15 @@
 //! objects, a frame is just a function of state.
 //!
 //! ```text
-//!  +---------+------------------------------------------+
-//!  | Whisker |  Title                                   |
-//!  |  nav    |  page content (cards)                    |
-//!  |  ...    |                                          |
-//!  | status  |                                          |
-//!  +---------+------------------------------------------+
+//!  +-----------+----------------------------------------+
+//!  | Whisker   |  Title                  [status chip]  |
+//!  |  mouse    |  Tab | Tab   (Buttons, Settings only)  |
+//!  |  nav x6   |  page content (cards)                  |
+//!  |           |                                        |
+//!  | Settings  |                                        |
+//!  | [status]  |            [toast · Undo]              |
+//!  | v0.9.0    |                                        |
+//!  +-----------+----------------------------------------+
 //!    210 px          content x = 234 .. 796
 //! ```
 
@@ -22,7 +25,7 @@ use crate::protocol::{
 
 mod buttons;
 mod device;
-pub use buttons::{DelayMode, Picker, Tab};
+pub use buttons::{DelayMode, Picker, Tab, button_name};
 pub use device::{Badge, Detect, DetectRow, DeviceView};
 use crate::devices::{Caps, DpiUi};
 use crate::store::{DEBOUNCE_CHOICES, SLEEP_CHOICES};
@@ -45,23 +48,80 @@ const RADIUS: f32 = 12.0;
 const LOW: u8 = 20;
 const MID: u8 = 50;
 
-pub const PAGES: [T; 10] = [
-    T::PageOverview, T::PageDpi, T::PagePolling, T::PageLighting, T::PageButtons, T::PageMacros, T::PageStats,
-    T::PageDevice, T::PageAppearance, T::PageSettings,
-];
-pub const PAGE_SETTINGS: usize = 9;
-const NAV_TOP: f32 = 76.0;
+/// Screens. Macros is a tab of Buttons; Appearance and Mouse are tabs of
+/// Settings (`General`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Page {
+    Overview,
+    Dpi,
+    Polling,
+    Lighting,
+    Buttons,
+    Macros,
+    Stats,
+    General,
+    Appearance,
+    Mouse,
+}
+
+/// Sidebar order; Settings (`General`) is pinned at the bottom.
+const NAV: [Page; 6] = [Page::Overview, Page::Dpi, Page::Polling, Page::Lighting, Page::Buttons, Page::Stats];
+const BUTTON_TABS: [(Page, T); 2] = [(Page::Buttons, T::PageButtons), (Page::Macros, T::PageMacros)];
+const SETTING_TABS: [(Page, T); 3] = [(Page::General, T::TabGeneral), (Page::Appearance, T::PageAppearance), (Page::Mouse, T::TabMouse)];
+
+impl Page {
+    /// Sidebar entry the page belongs to, e.g. Macros -> Buttons.
+    pub fn nav(self) -> Page {
+        match self {
+            Page::Macros => Page::Buttons,
+            Page::Appearance | Page::Mouse => Page::General,
+            p => p,
+        }
+    }
+
+    fn title(self) -> T {
+        match self.nav() {
+            Page::Overview => T::PageOverview,
+            Page::Dpi => T::PageDpi,
+            Page::Polling => T::PagePolling,
+            Page::Lighting => T::PageLighting,
+            Page::Buttons => T::PageButtons,
+            Page::Stats => T::PageStats,
+            _ => T::PageSettings,
+        }
+    }
+
+    /// The page sends settings to the mouse (offline banner, sync chip).
+    fn configures(self) -> bool {
+        matches!(self, Page::Dpi | Page::Polling | Page::Lighting | Page::Buttons | Page::Macros)
+    }
+}
+
+/// Leaves room under the header for a future profile switcher.
+const NAV_TOP: f32 = 116.0;
 const NAV_STEP: f32 = 40.0;
+/// Underlined tab row under the title; tabbed pages start below it.
+const TAB_H: f32 = 30.0;
+const BODY: f32 = TOP + TAB_H + GAP;
+
+const COPYRIGHT: &str = "© 2026 Emlynix s.r.o.";
+const LICENSE: &str = "GPL-3.0-or-later";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Whether a page applies to the selected mouse.
-pub fn page_visible(page: usize, caps: &Caps) -> bool {
-    match page {
-        1 => caps.dpi != DpiUi::None,
-        2 => caps.polling,
-        3 => caps.lighting,
-        4 | 5 => caps.buttons,
+pub fn page_visible(page: Page, caps: &Caps) -> bool {
+    match page.nav() {
+        Page::Dpi => caps.dpi != DpiUi::None,
+        Page::Polling => caps.polling,
+        Page::Lighting => caps.lighting,
+        Page::Buttons => caps.buttons,
         _ => true,
     }
+}
+
+/// Sidebar pages shown for a mouse, in order (also Ctrl+1..6).
+pub fn nav_pages(caps: &Caps) -> Vec<Page> {
+    NAV.into_iter().filter(|p| page_visible(*p, caps)).collect()
 }
 
 /// Pickable colors for lighting and the DPI indicator.
@@ -78,7 +138,7 @@ const PERIODS: [T; 3] = [T::PeriodToday, T::PeriodWeek, T::PeriodAll];
 /// Everything the user can click. Also used as the hit id.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Act {
-    Nav(usize),
+    Nav(Page),
     Activate(usize),
     Toggle(usize),
     Slider(usize),
@@ -136,6 +196,84 @@ pub enum Act {
     DetectSel(usize),
     DetectManual,
     DetectUse,
+    /// Closes the dialog; the current mouse stays.
+    DetectCancel,
+    /// From the model list back to the detected mice.
+    DetectBack,
+    /// Reverts the last destructive action (toast button, Ctrl+Z).
+    Undo,
+    About,
+    /// Closes the About or "assign macro" dialog.
+    CloseDialog,
+    OpenWeb(Web),
+    Diagnostics,
+    CopyDiagnostics,
+    /// Opens the "assign macro to button" dialog.
+    AssignMacro,
+    /// Assigns the selected macro to this button.
+    AssignTo(usize),
+}
+
+/// Pages of the project site the About dialog links to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Web {
+    Repo,
+    NewIssue,
+}
+
+/// Small modal dialogs (the bigger ones have their own state).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Dialog {
+    About,
+    AssignMacro,
+}
+
+/// Header chip: settings on their way to the mouse.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Sync {
+    Hidden,
+    Waiting,
+    /// Fading out; opacity 0..=255.
+    Saved(u8),
+}
+
+/// Keyboard focus: a hit of the frame by position, since the same act
+/// can sit in several places (logo and About item, mouse name and tab).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Focus {
+    pub index: usize,
+    pub act: Act,
+}
+
+impl Focus {
+    /// Position of the focused hit among `acts`; `None` if it is gone.
+    /// The same position if it still holds the act, else its first place.
+    pub fn locate(self, acts: &[Act]) -> Option<usize> {
+        if acts.get(self.index) == Some(&self.act) {
+            return Some(self.index);
+        }
+        acts.iter().position(|a| *a == self.act)
+    }
+}
+
+/// Bottom message, e.g. "All buttons reset · Undo".
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Toast {
+    pub text: String,
+    pub undo: bool,
+}
+
+/// Whether a list entry is the current one (sidebar, picker categories).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mark {
+    Current,
+    Other,
+}
+
+impl Mark {
+    fn of(current: bool) -> Mark {
+        if current { Mark::Current } else { Mark::Other }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -167,7 +305,7 @@ pub struct StageView {
 
 /// Snapshot of what the screens show; owned by the controller.
 pub struct View {
-    pub page: usize,
+    pub page: Page,
     pub period: usize,
     pub connected: bool,
     pub link: String,
@@ -178,13 +316,15 @@ pub struct View {
     pub active: usize,
     pub steps: usize,
     pub polling: usize,
-    pub measured: String,
+    /// Report rate measured from mouse input, while the mouse moves.
+    pub measured: Option<u32>,
     pub today_clicks: String,
     pub today_distance: String,
     pub tiles: Vec<(&'static str, String)>,
     /// Battery history as (0..1 time, 0..100 %) points.
     pub chart: Vec<(f32, f32)>,
-    pub chart_caption: String,
+    /// X axis labels at 0..1, e.g. (0.5, "6.11.").
+    pub chart_ticks: Vec<(f32, String)>,
     pub autostart: bool,
     pub installed: bool,
     pub install_dir: String,
@@ -220,6 +360,15 @@ pub struct View {
     pub basic: BasicView,
     /// The mouse reports a battery level.
     pub has_battery: bool,
+    /// Keyboard focus ring (Tab).
+    pub focus: Option<Focus>,
+    pub toast: Option<Toast>,
+    pub sync: Sync,
+    pub dialog: Option<Dialog>,
+    /// Diagnostics section of the Mouse tab is expanded.
+    pub diagnostics: bool,
+    /// Opacity of the pulsing recording dot.
+    pub pulse: u8,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -288,14 +437,45 @@ impl Frame<'_> {
 
     fn push_button(&mut self, act: Act, r: Rect, label: &str, primary: bool) {
         let hot = self.button(act, r);
+        // Long translations shrink rather than spill out of the button.
+        let size = fit_size(label, r.w - 16.0, 14.0);
         if primary {
             self.g.fill(r, 8.0, if hot { th().accent_hover } else { th().accent });
-            self.g.text(label, r, 14.0, Weight::Semibold, Align::Center, th().on_accent);
+            self.g.text(label, r, size, Weight::Semibold, Align::Center, th().on_accent);
             return;
         }
         self.g.fill(r, 8.0, if hot { th().hover } else { th().card });
         self.g.stroke(r, 8.0, 1.0, th().border);
-        self.g.text(label, r, 14.0, Weight::Semibold, Align::Center, th().text);
+        self.g.text(label, r, size, Weight::Semibold, Align::Center, th().text);
+    }
+
+    /// Button that can't be pressed now, e.g. "Clear" on an empty macro.
+    fn dead_button(&mut self, r: Rect, label: &str) {
+        self.g.stroke(r, 8.0, 1.0, th().border);
+        self.g.text(label, r, 14.0, Weight::Semibold, Align::Center, th().faint);
+    }
+
+    /// Underlined text tabs, e.g. "Buttons | Macros"; a tab is a page.
+    fn tabs(&mut self, items: &[(Page, T)], current: Page) {
+        const SIZE: f32 = 14.0;
+        const PAD: f32 = 12.0;
+        let y = TOP;
+        self.g.fill(Rect::new(X0, y + TAB_H - 1.0, CW, 1.0), 0.0, th().border);
+
+        let mut x = X0;
+        for &(page, key) in items {
+            let label = tr(key);
+            let r = Rect::new(x, y, text_w(label, SIZE) + 2.0 * PAD, TAB_H);
+            let hot = self.button(Act::Nav(page), r);
+            let sel = page == current;
+            let color = if sel || hot { th().text } else { th().muted };
+            let weight = if sel { Weight::Semibold } else { Weight::Normal };
+            self.g.text(label, Rect::new(r.x, r.y, r.w, r.h - 4.0), SIZE, weight, Align::Center, color);
+            if sel {
+                self.g.fill(Rect::new(r.x + 4.0, r.y + r.h - 3.0, r.w - 8.0, 3.0), 1.5, th().accent);
+            }
+            x += r.w + 4.0;
+        }
     }
 
     /// Selectable tile with a title and optional subtitle.
@@ -325,11 +505,21 @@ impl Frame<'_> {
 /// a Latin glyph is ~0.56 em, CJK ~1 em).
 fn fit_size(text: &str, width: f32, size: f32) -> f32 {
     const MIN: f32 = 10.0;
-    let ems: f32 = text.chars().map(|c| if (c as u32) < 0x2E80 { 0.56 } else { 1.0 }).sum();
+    let ems = ems(text);
     if ems * size <= width {
         return size;
     }
     (width / ems).max(MIN)
+}
+
+/// Rough text width in em (see `fit_size`).
+fn ems(text: &str) -> f32 {
+    text.chars().map(|c| if (c as u32) < 0x2E80 { 0.56 } else { 1.0 }).sum()
+}
+
+/// Rough width of a one-line text in DIPs.
+fn text_w(text: &str, size: f32) -> f32 {
+    ems(text) * size
 }
 
 pub fn battery_color(v: &View) -> Color {
@@ -347,33 +537,49 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
 
     sidebar(&mut f, v);
     let title = Rect::new(X0, 18.0, CW, 36.0);
-    f.g.text(tr(PAGES[v.page]), title, 24.0, Weight::Bold, Align::Left, th().text);
-    // Overview names the mouse it describes.
-    if v.page == 0 {
-        let size = fit_size(&v.device_name, title.w - 200.0, 16.0);
-        f.g.text(&v.device_name, Rect::new(title.x + 200.0, title.y + 2.0, title.w - 200.0, title.h), size, Weight::Semibold, Align::Right, th().muted);
-    }
+    f.g.text(tr(v.page.title()), title, 24.0, Weight::Bold, Align::Left, th().text);
+    header_status(&mut f, v);
 
     match v.page {
-        0 => overview(&mut f, v),
-        1 => dpi(&mut f, v),
-        2 => performance(&mut f, v),
-        3 => lighting(&mut f, v),
-        4 => buttons::buttons_page(&mut f, v),
-        5 => buttons::macros_page(&mut f, v),
-        6 => stats(&mut f, v),
-        7 => device::device_page(&mut f, v),
-        8 => appearance(&mut f, v),
-        _ => settings(&mut f, v),
+        Page::Overview => overview(&mut f, v),
+        Page::Dpi => dpi(&mut f, v),
+        Page::Polling => performance(&mut f, v),
+        Page::Lighting => lighting(&mut f, v),
+        Page::Buttons | Page::Macros => {
+            f.tabs(&BUTTON_TABS, v.page);
+            if v.page == Page::Buttons { buttons::buttons_page(&mut f, v) } else { buttons::macros_page(&mut f, v) }
+        }
+        Page::Stats => stats(&mut f, v),
+        Page::General | Page::Appearance | Page::Mouse => {
+            f.tabs(&SETTING_TABS, v.page);
+            match v.page {
+                Page::General => settings(&mut f, v),
+                Page::Appearance => appearance(&mut f, v),
+                _ => device::device_page(&mut f, v),
+            }
+        }
     }
 
-    if let Some(p) = &v.picker {
-        // Modal: drop hits of the page underneath.
-        f.hits.clear();
-        buttons::picker(&mut f, v, p);
+    if let Some(t) = &v.toast {
+        toast(&mut f, t);
     }
 
     // Modal dialogs: drop hits of the page underneath. Install comes first.
+    if let Some(p) = &v.picker {
+        f.hits.clear();
+        buttons::picker(&mut f, v, p);
+    }
+    match v.dialog {
+        Some(Dialog::About) => {
+            f.hits.clear();
+            about_dialog(&mut f);
+        }
+        Some(Dialog::AssignMacro) => {
+            f.hits.clear();
+            buttons::assign_dialog(&mut f, v);
+        }
+        None => {}
+    }
     if v.ask_setup {
         f.hits.clear();
         setup_dialog(&mut f, v);
@@ -381,24 +587,79 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
         f.hits.clear();
         device::detect_dialog(&mut f, d);
     }
+
+    focus_ring(&f, v.focus);
     f.hits
+}
+
+/// Keyboard focus: a ring around the focused hit of this frame.
+fn focus_ring(f: &Frame, focus: Option<Focus>) {
+    let acts: Vec<Act> = f.hits.iter().map(|h| h.act).collect();
+    let Some(h) = focus.and_then(|x| x.locate(&acts)).map(|i| f.hits[i]) else {
+        return;
+    };
+    let r = Rect::new(h.rect.x - 3.0, h.rect.y - 3.0, h.rect.w + 6.0, h.rect.h + 6.0);
+    // Text color, so it differs from the accent border of a selected tile.
+    f.g.stroke(r, 10.0, 2.0, th().text);
+}
+
+/// Right side of the title row: offline note on pages that configure the
+/// mouse, otherwise whether the last change reached it.
+fn header_status(f: &mut Frame, v: &View) {
+    const H: f32 = 28.0;
+    const SIZE: f32 = 12.5;
+    const MAX_W: f32 = 380.0;
+    let offline = v.page.configures() && !v.connected;
+    let (text, dot, alpha) = match v.sync {
+        _ if offline => (tr(T::OfflineBanner), th().warn, 255),
+        Sync::Waiting => (tr(T::SyncWaiting), th().faint, 255),
+        Sync::Saved(a) => (tr(T::SyncSaved), th().good, a),
+        Sync::Hidden => return,
+    };
+    let w = (text_w(text, SIZE) + 52.0).min(MAX_W);
+    let r = Rect::new(X0 + CW - w, 22.0, w, H);
+    f.g.fill(r, H / 2.0, Color(th().card.0, alpha));
+    f.g.stroke(r, H / 2.0, 1.0, Color(th().border.0, alpha));
+    f.g.circle(r.x + 15.0, r.y + H / 2.0, 4.0, Color(dot.0, alpha));
+    let label = Rect::new(r.x + 26.0, r.y, r.w - 34.0, H);
+    f.g.text(text, label, fit_size(text, label.w, SIZE), Weight::Normal, Align::Left, Color(th().muted.0, alpha));
+}
+
+/// Bottom message with an optional "Undo".
+fn toast(f: &mut Frame, t: &Toast) {
+    const W: f32 = 420.0;
+    const H: f32 = 44.0;
+    let r = Rect::new(X0 + (CW - W) / 2.0, HEIGHT - H - 16.0, W, H);
+    f.g.fill(r, 10.0, th().card_hi);
+    f.g.stroke(r, 10.0, 1.0, th().faint);
+
+    let undo_w = if t.undo { text_w(tr(T::UndoBtn), 14.0) + 32.0 } else { 0.0 };
+    let label = Rect::new(r.x + 18.0, r.y, r.w - 36.0 - undo_w, r.h);
+    f.g.text(&t.text, label, fit_size(&t.text, label.w, 13.5), Weight::Normal, Align::Left, th().text);
+    if !t.undo {
+        return;
+    }
+    let b = Rect::new(r.x + r.w - undo_w - 8.0, r.y + 6.0, undo_w, r.h - 12.0);
+    let hot = f.button(Act::Undo, b);
+    f.g.fill(b, 8.0, if hot { th().hover } else { th().card_hi });
+    f.g.text(tr(T::UndoBtn), b, 14.0, Weight::Semibold, Align::Center, th().accent);
 }
 
 // ---- icons (24 x 24 grid scaled into `s` px at x, y) -----------------------
 
-fn icon(g: &Gfx, page: usize, x: f32, y: f32, c: Color) {
+fn icon(g: &Gfx, page: Page, x: f32, y: f32, c: Color) {
     let s = 18.0 / 24.0;
     let p = |a: f32, b: f32| (x + a * s, y + b * s);
     let w = 1.8;
 
     match page {
-        0 => {
+        Page::Overview => {
             for (a, b) in [(4.0, 4.0), (13.0, 4.0), (4.0, 13.0), (13.0, 13.0)] {
                 let (px, py) = p(a, b);
                 g.stroke(Rect::new(px, py, 7.0 * s, 7.0 * s), 1.0, w, c);
             }
         }
-        1 => {
+        Page::Dpi => {
             let (cx, cy) = p(12.0, 12.0);
             g.ring(cx, cy, 4.0 * s, w, c);
             for (a, b, d, e) in [(12.0, 2.0, 12.0, 6.0), (12.0, 18.0, 12.0, 22.0), (2.0, 12.0, 6.0, 12.0), (18.0, 12.0, 22.0, 12.0)] {
@@ -406,11 +667,11 @@ fn icon(g: &Gfx, page: usize, x: f32, y: f32, c: Color) {
                 g.line(x0, y0, x1, y1, w, c);
             }
         }
-        2 => {
+        Page::Polling => {
             let pts: Vec<_> = [(2.0, 12.0), (7.0, 12.0), (9.0, 6.0), (13.0, 18.0), (15.0, 12.0), (22.0, 12.0)].iter().map(|&(a, b)| p(a, b)).collect();
             g.polyline(&pts, w, c);
         }
-        3 => {
+        Page::Lighting => {
             // Sun: lighting.
             let (cx, cy) = p(12.0, 12.0);
             g.ring(cx, cy, 4.5 * s, w, c);
@@ -421,48 +682,17 @@ fn icon(g: &Gfx, page: usize, x: f32, y: f32, c: Color) {
                 g.line(x0, y0, x1, y1, w, c);
             }
         }
-        4 => {
+        Page::Buttons => {
             // Mouse outline: buttons.
             let (x0, y0) = p(7.0, 3.0);
             g.stroke(Rect::new(x0, y0, 10.0 * s, 18.0 * s), 5.0 * s, w, c);
             let ((lx, ly0), (_, ly1)) = (p(12.0, 4.0), p(12.0, 10.0));
             g.line(lx, ly0, lx, ly1, w, c);
         }
-        5 => {
-            // Keyboard: macros.
-            let (x0, y0) = p(2.5, 6.0);
-            g.stroke(Rect::new(x0, y0, 19.0 * s, 12.0 * s), 2.0, w, c);
-            for (a, b) in [(6.5, 10.0), (10.5, 10.0), (14.5, 10.0), (17.5, 10.0)] {
-                let (dx, dy) = p(a, b);
-                g.circle(dx, dy, 1.0, c);
-            }
-            let ((sx0, sy), (sx1, _)) = (p(8.0, 14.0), p(16.0, 14.0));
-            g.line(sx0, sy, sx1, sy, w, c);
-        }
-        6 => {
+        Page::Stats => {
             for (a, top) in [(5.0, 11.0), (12.0, 5.0), (19.0, 14.0)] {
                 let ((x0, y0), (_, y1)) = (p(a, top), p(a, 20.0));
                 g.line(x0, y0, x0, y1, w + 0.4, c);
-            }
-        }
-        7 => {
-            // Chip: device info.
-            let (x0, y0) = p(6.0, 6.0);
-            g.stroke(Rect::new(x0, y0, 12.0 * s, 12.0 * s), 2.0, w, c);
-            for k in [9.0, 12.0, 15.0] {
-                for (a, b, d, e) in [(k, 2.0, k, 5.0), (k, 19.0, k, 22.0), (2.0, k, 5.0, k), (19.0, k, 22.0, k)] {
-                    let ((lx0, ly0), (lx1, ly1)) = (p(a, b), p(d, e));
-                    g.line(lx0, ly0, lx1, ly1, 1.4, c);
-                }
-            }
-        }
-        8 => {
-            // Palette: ring with three paint dots.
-            let (cx, cy) = p(12.0, 12.0);
-            g.ring(cx, cy, 9.0 * s, w, c);
-            for (a, b) in [(8.5, 9.0), (13.0, 7.5), (16.0, 11.5)] {
-                let (dx, dy) = p(a, b);
-                g.circle(dx, dy, 1.6, c);
             }
         }
         _ => {
@@ -475,6 +705,15 @@ fn icon(g: &Gfx, page: usize, x: f32, y: f32, c: Color) {
             }
         }
     }
+}
+
+/// Circled "i" (About), on the same 18 px grid as `icon`.
+fn info_icon(g: &Gfx, x: f32, y: f32, c: Color) {
+    const S: f32 = 18.0 / 24.0;
+    let (cx, cy) = (x + 12.0 * S, y + 12.0 * S);
+    g.ring(cx, cy, 9.0 * S, 1.8, c);
+    g.circle(cx, cy - 4.0 * S, 1.3, c);
+    g.line(cx, cy - 1.0 * S, cx, cy + 5.0 * S, 1.8, c);
 }
 
 /// The app's mouse with whiskers, matching the exe icon.
@@ -502,46 +741,95 @@ fn mouse_logo(g: &Gfx, x: f32, y: f32) {
 fn sidebar(f: &mut Frame, v: &View) {
     f.g.fill(Rect::new(0.0, 0.0, SIDE_W, HEIGHT), 0.0, th().side);
 
+    const BOTTOM: f32 = HEIGHT - 14.0;
+    const ITEM_H: f32 = NAV_STEP - 4.0;
+
+    // Logo and name open About; the mouse name opens its details.
+    let brand = Rect::new(14.0, 12.0, SIDE_W - 28.0, 28.0);
+    let hot = f.button(Act::About, brand);
     mouse_logo(f.g, 24.0, 20.0);
-    f.g.text(crate::APP_NAME, Rect::new(62.0, 16.0, 140.0, 24.0), 18.0, Weight::Bold, Align::Left, th().text);
+    let name_c = if hot { th().accent } else { th().text };
+    f.g.text(crate::APP_NAME, Rect::new(62.0, 16.0, 140.0, 24.0), 18.0, Weight::Bold, Align::Left, name_c);
+    // Mouse name and its status line open Settings › Mouse.
     let sub = Rect::new(62.0, 38.0, SIDE_W - 76.0, 16.0);
-    f.g.text(&v.device_name, sub, fit_size(&v.device_name, sub.w, 11.0), Weight::Normal, Align::Left, th().faint);
+    let status = (v.caps.battery || v.has_battery).then(|| Rect::new(sub.x, sub.y + 18.0, sub.w, 16.0));
+    let area_h = status.map_or(sub.h, |r| r.y + r.h - sub.y);
+    let hot = f.button(Act::Nav(Page::Mouse), Rect::new(sub.x, sub.y - 2.0, sub.w, area_h + 4.0));
+    let sub_c = if hot { th().accent } else { th().faint };
+    f.g.text(&v.device_name, sub, fit_size(&v.device_name, sub.w, 11.0), Weight::Normal, Align::Left, sub_c);
+    if let Some(r) = status {
+        status_line(f, v, r);
+    }
 
-    let visible = PAGES.iter().enumerate().filter(|(i, _)| page_visible(*i, &v.caps));
-    for (k, (i, &key)) in visible.enumerate() {
-        let name = tr(key);
+    for (k, page) in nav_pages(&v.caps).into_iter().enumerate() {
         let r = Rect::new(14.0, NAV_TOP + k as f32 * NAV_STEP, SIDE_W - 28.0, NAV_STEP - 4.0);
-        let hot = f.button(Act::Nav(i), r);
-        let sel = v.page == i;
-        if sel || hot {
-            f.g.fill(r, 8.0, if sel { th().accent_soft } else { th().hover });
-        }
-        icon(f.g, i, r.x + 12.0, r.y + 9.0, if sel { th().accent } else { th().muted });
-        let label = Rect::new(r.x + 42.0, r.y, r.w - 42.0, r.h);
-        f.g.text(name, label, 14.0, Weight::Normal, Align::Left, if sel { th().text } else { th().muted });
+        nav_item(f, Nav::Page(page), r, Mark::of(v.page.nav() == page));
     }
 
-    // Connection + battery summary (mice with a driver or a Bluetooth battery).
-    if !v.caps.battery && !v.has_battery {
-        return;
-    }
-    let card = Rect::new(14.0, HEIGHT - 78.0, SIDE_W - 28.0, 64.0);
-    f.g.fill(card, 10.0, th().card);
-    f.g.circle(card.x + 16.0, card.y + 20.0, 4.0, if v.connected { th().good } else { th().faint });
-    f.g.text(&v.link, Rect::new(card.x + 28.0, card.y + 10.0, card.w - 34.0, 20.0), 12.0, Weight::Normal, Align::Left, th().muted);
+    // Pinned at the bottom: Settings, then About right under it.
+    let about = Rect::new(14.0, BOTTOM - ITEM_H, SIDE_W - 28.0, ITEM_H);
+    // About opens a dialog, never a page: hover only, no current-page bar.
+    nav_item(f, Nav::About, about, Mark::Other);
+    let r = Rect::new(14.0, about.y - NAV_STEP, SIDE_W - 28.0, ITEM_H);
+    nav_item(f, Nav::Page(Page::General), r, Mark::of(v.page.nav() == Page::General));
 
-    if v.connected && v.has_battery {
-        f.bar(Rect::new(card.x + 12.0, card.y + 41.0, card.w - 70.0, 6.0), v.battery, battery_color(v));
-        let pct = Rect::new(card.x + card.w - 52.0, card.y + 34.0, 40.0, 20.0);
-        f.g.text(&format!("{} %", v.battery), pct, 12.0, Weight::Semibold, Align::Right, th().text);
+}
+
+/// "● Connected · 55 %" (⚡ while charging): green, warn colour when the
+/// battery runs low, muted "● Disconnected" offline.
+fn status_line(f: &mut Frame, v: &View, r: Rect) {
+    const SIZE: f32 = 11.5;
+    const LOW_PCT: u8 = 20;
+    let (text, c) = if !v.connected {
+        (tr(T::Disconnected).to_string(), th().muted)
+    } else if !v.has_battery {
+        (tr(T::LinkConnected).to_string(), th().good)
+    } else {
+        let charging = if v.charge == Charge::Charging { " ⚡" } else { "" };
+        let c = if v.battery < LOW_PCT { th().warn } else { th().good };
+        (format!("{} · {} %{charging}", tr(T::LinkConnected), v.battery), c)
+    };
+    f.g.circle(r.x + 3.5, r.y + r.h / 2.0, 3.5, c);
+    let label = Rect::new(r.x + 12.0, r.y, r.w - 12.0, r.h);
+    f.g.text(&text, label, fit_size(&text, label.w, SIZE), Weight::Normal, Align::Left, c);
+}
+
+/// Sidebar entry: a page, or About (opens its dialog).
+#[derive(Clone, Copy)]
+enum Nav {
+    Page(Page),
+    About,
+}
+
+/// Sidebar entry: icon, name; the current one gets a tint and a left bar.
+fn nav_item(f: &mut Frame, item: Nav, r: Rect, mark: Mark) {
+    let (act, label) = match item {
+        Nav::Page(p) => (Act::Nav(p), tr(p.title())),
+        Nav::About => (Act::About, tr(T::About)),
+    };
+    let sel = mark == Mark::Current;
+    let hot = f.button(act, r);
+    if sel || hot {
+        f.g.fill(r, 8.0, if sel { th().accent_soft } else { th().hover });
     }
+    if sel {
+        f.g.fill(Rect::new(r.x, r.y + 7.0, 3.0, r.h - 14.0), 1.5, th().accent);
+    }
+    let c = if sel { th().accent } else { th().muted };
+    match item {
+        Nav::Page(p) => icon(f.g, p, r.x + 12.0, r.y + 9.0, c),
+        Nav::About => info_icon(f.g, r.x + 12.0, r.y + 9.0, c),
+    }
+    let text_r = Rect::new(r.x + 42.0, r.y, r.w - 42.0, r.h);
+    let weight = if sel { Weight::Semibold } else { Weight::Normal };
+    f.g.text(label, text_r, 14.0, weight, Align::Left, if sel { th().text } else { th().muted });
 }
 
 // ---- pages ---------------------------------------------------------------
 
 fn stat_card(f: &mut Frame, r: Rect, label: &str, value: &str, note: &str) {
     f.card(r);
-    f.caption(label, r.x + 16.0, r.y + 16.0);
+    f.caption_in(label, r.x + 16.0, r.y + 16.0, r.w - 32.0);
     f.g.text(value, Rect::new(r.x + 16.0, r.y + 34.0, r.w - 32.0, 36.0), 26.0, Weight::Bold, Align::Left, th().text);
     f.g.text(note, Rect::new(r.x + 16.0, r.y + 74.0, r.w - 32.0, 32.0), 12.0, Weight::Normal, Align::Wrap, th().muted);
 }
@@ -594,26 +882,53 @@ fn overview(f: &mut Frame, v: &View) {
         false => v.basic.rate.map_or("—".into(), |r| format!("{r} Hz")),
     };
     if v.caps.polling {
-        stat_card(f, Rect::new(X0 + w + GAP, y, w, 110.0), tr(T::PollingRate), &hz, &fill(tr(T::MeasuredValue), &[&v.measured]));
+        // Only a real measurement is worth a line.
+        let note = v.measured.map(|hz| fill(tr(T::MeasuredValue), &[&format!("{hz} Hz")])).unwrap_or_default();
+        stat_card(f, Rect::new(X0 + w + GAP, y, w, 110.0), tr(T::PollingRate), &hz, &note);
     } else {
         // The mouse doesn't report its rate: show what Raw Input measures.
-        stat_card(f, Rect::new(X0 + w + GAP, y, w, 110.0), tr(T::Measured), &v.measured, tr(T::PollingRate));
+        stat_card(f, Rect::new(X0 + w + GAP, y, w, 110.0), tr(T::Measured), &measured(v), tr(T::PollingRate));
     }
     let today = fill(tr(T::ClicksMoved), &[&v.today_distance]);
     stat_card(f, Rect::new(X0 + 2.0 * (w + GAP), y, w, 110.0), tr(T::Today), &v.today_clicks, &today);
 
     // Quick DPI switch: one chip per enabled stage.
-    if !stages {
-        return;
+    let mut y = y + 110.0 + GAP;
+    if stages {
+        let card = Rect::new(X0, y, CW, 96.0);
+        f.card(card);
+        f.caption(tr(T::QuickDpi), card.x + 20.0, card.y + 16.0);
+        let mut x = card.x + 20.0;
+        for (i, s) in v.stages.iter().enumerate().filter(|(_, s)| s.enabled) {
+            f.choice(Act::Activate(i), Rect::new(x, card.y + 40.0, 80.0, 38.0), &s.dpi.to_string(), "", i == v.active);
+            x += 88.0;
+        }
+        y += card.h + GAP;
     }
-    let card = Rect::new(X0, y + 110.0 + GAP, CW, 96.0);
-    f.card(card);
-    f.caption(tr(T::QuickDpi), card.x + 20.0, card.y + 16.0);
-    let mut x = card.x + 20.0;
-    for (i, s) in v.stages.iter().enumerate().filter(|(_, s)| s.enabled) {
-        f.choice(Act::Activate(i), Rect::new(x, card.y + 40.0, 80.0, 38.0), &s.dpi.to_string(), "", i == v.active);
-        x += 88.0;
-    }
+    device_line(f, v, y);
+}
+
+fn measured(v: &View) -> String {
+    v.measured.map_or("—".into(), |hz| format!("{hz} Hz"))
+}
+
+/// Compact mouse line, e.g. "White Shark Lionel · FW 1.77      Details ›";
+/// opens Settings › Mouse.
+fn device_line(f: &mut Frame, v: &View, y: f32) {
+    const H: f32 = 40.0;
+    let r = Rect::new(X0, y, CW, H);
+    let hot = f.button(Act::Nav(Page::Mouse), r);
+    f.g.fill(r, RADIUS, if hot { th().hover } else { th().card });
+    f.g.stroke(r, RADIUS, 1.0, th().border);
+
+    let fw = &v.device.firmware;
+    let text = if fw.is_empty() { v.device_name.clone() } else { format!("{} · FW {fw}", v.device_name) };
+    let details = format!("{} ›", tr(T::Details));
+    let link_w = text_w(&details, 13.0) + 20.0;
+    let left = Rect::new(r.x + 18.0, r.y, r.w - 36.0 - link_w, H);
+    f.g.text(&text, left, fit_size(&text, left.w, 13.0), Weight::Normal, Align::Left, th().muted);
+    let right = Rect::new(r.x + r.w - 18.0 - link_w, r.y, link_w, H);
+    f.g.text(&details, right, 13.0, Weight::Semibold, Align::Right, if hot { th().accent_hover } else { th().accent });
 }
 
 /// Overview for a mouse without a driver: model and today's statistics.
@@ -636,7 +951,8 @@ fn overview_basic(f: &mut Frame, v: &View) {
     let y = card.y + card.h + GAP;
     let today = fill(tr(T::ClicksMoved), &[&v.today_distance]);
     stat_card(f, Rect::new(X0, y, w, 110.0), tr(T::Today), &v.today_clicks, &today);
-    stat_card(f, Rect::new(X0 + w + GAP, y, w, 110.0), tr(T::Measured), &v.measured, tr(T::PollingRate));
+    stat_card(f, Rect::new(X0 + w + GAP, y, w, 110.0), tr(T::Measured), &measured(v), tr(T::PollingRate));
+    device_line(f, v, y + 110.0 + GAP);
 }
 
 /// One DPI value for driver-based mice: big number and a slider.
@@ -672,11 +988,23 @@ fn dpi(f: &mut Frame, v: &View) {
         return;
     }
     const ROW: f32 = 52.0;
-    let card = Rect::new(X0, TOP, CW, ROW * v.stages.len() as f32 + 16.0);
+    const HEAD: f32 = 34.0;
+    // Column x offsets: active radio, cycle switch, color dot, slider.
+    const COL_CYCLE: f32 = 72.0;
+    const COL_COLOR: f32 = 132.0;
+    const COL_DPI: f32 = 184.0;
+    let card = Rect::new(X0, TOP, CW, HEAD + ROW * v.stages.len() as f32 + 8.0);
     f.card(card);
 
+    // Column headers instead of help sentences.
+    let hy = card.y + 14.0;
+    f.caption_in(tr(T::ColActive), card.x + 16.0, hy, COL_CYCLE - 20.0);
+    f.caption_in(tr(T::ColCycle), card.x + COL_CYCLE, hy, COL_COLOR - COL_CYCLE - 4.0);
+    f.caption_in(tr(T::ColorCaption), card.x + COL_COLOR, hy, COL_DPI - COL_COLOR - 4.0);
+    f.caption_in("DPI", card.x + COL_DPI, hy, 60.0);
+
     for (i, s) in v.stages.iter().enumerate() {
-        let y = card.y + 8.0 + i as f32 * ROW;
+        let y = card.y + HEAD + i as f32 * ROW;
         let active = i == v.active;
         if active {
             f.g.fill(Rect::new(card.x + 8.0, y, card.w - 16.0, ROW), 8.0, th().card_hi);
@@ -696,12 +1024,12 @@ fn dpi(f: &mut Frame, v: &View) {
         let num_c = if s.enabled { th().text } else { th().faint };
         f.g.text(&(i + 1).to_string(), Rect::new(card.x + 50.0, y, 16.0, ROW), 14.0, Weight::Semibold, Align::Left, num_c);
 
-        // The active stage can't be switched off.
+        // The active stage can't be switched off (note under the card).
         let toggle_act = (!active).then_some(Act::Toggle(i));
-        f.toggle(toggle_act, card.x + 72.0, cy - 11.0, s.enabled);
+        f.toggle(toggle_act, card.x + COL_CYCLE, cy - 11.0, s.enabled);
 
         // Indicator color; click cycles through the palette.
-        let (dx, dot) = (card.x + 132.0, Color::rgb(v.dpi_colors[i]));
+        let (dx, dot) = (card.x + COL_COLOR + 12.0, Color::rgb(v.dpi_colors[i]));
         let hot = f.button(Act::DpiColor(i), Rect::new(dx - 12.0, cy - 12.0, 24.0, 24.0));
         if hot {
             f.g.ring(dx, cy, 10.0, 1.5, th().muted);
@@ -710,7 +1038,7 @@ fn dpi(f: &mut Frame, v: &View) {
         f.g.ring(dx, cy, 7.0, 1.0, th().border);
 
         // Slider.
-        let (x0, x1) = (card.x + 160.0, card.x + card.w - 120.0);
+        let (x0, x1) = (card.x + COL_DPI + 8.0, card.x + card.w - 120.0);
         let t = s.index as f32 / (v.steps - 1).max(1) as f32;
         let kx = x0 + (x1 - x0) * t;
         let track_c = if s.enabled { th().accent } else { th().faint };
@@ -727,16 +1055,19 @@ fn dpi(f: &mut Frame, v: &View) {
         f.g.text(&format!("{} DPI", s.dpi), label, 15.0, Weight::Semibold, Align::Right, num_c);
     }
 
-    let note = format!("{} {}", tr(T::DpiHelp), tr(T::DpiColorHelp));
-    let r = Rect::new(X0, card.y + card.h + 12.0, CW, 54.0);
-    f.g.text(&note, r, 12.0, Weight::Normal, Align::Wrap, th().muted);
+    // Why the active stage's switch is greyed out.
+    let r = Rect::new(X0, card.y + card.h + 12.0, CW, 36.0);
+    f.g.text(tr(T::ActiveLocked), r, 12.0, Weight::Normal, Align::Wrap, th().muted);
 }
 
 fn performance(f: &mut Frame, v: &View) {
+    const TILE_Y: f32 = TOP + 22.0;
+    const TILE_H: f32 = 56.0;
+    f.caption(tr(T::PollingRate), X0, TOP);
     if v.caps.extras {
         let w = (CW - 3.0 * 12.0) / 4.0;
         for (i, hz) in RATES.iter().enumerate() {
-            let r = Rect::new(X0 + i as f32 * (w + 12.0), TOP, w, 60.0);
+            let r = Rect::new(X0 + i as f32 * (w + 12.0), TILE_Y, w, TILE_H);
             f.choice(Act::Polling(i), r, &format!("{hz} Hz"), &format!("{} ms", 1000 / hz), v.polling == i);
         }
     } else {
@@ -744,17 +1075,17 @@ fn performance(f: &mut Frame, v: &View) {
         let n = v.basic.rates.len().max(1) as f32;
         let w = (CW - (n - 1.0) * 12.0) / n;
         for (i, hz) in v.basic.rates.iter().enumerate() {
-            let r = Rect::new(X0 + i as f32 * (w + 12.0), TOP, w, 60.0);
+            let r = Rect::new(X0 + i as f32 * (w + 12.0), TILE_Y, w, TILE_H);
             let ms = format!("{:.1} ms", 1000.0 / *hz as f32).replace(".0 ", " ");
             f.choice(Act::BasicRate(*hz), r, &format!("{hz} Hz"), &ms, v.basic.rate == Some(*hz));
         }
     }
 
-    let card = Rect::new(X0, TOP + 60.0 + GAP, CW, 88.0);
-    f.card(card);
-    f.caption(tr(T::Measured), card.x + 20.0, card.y + 16.0);
-    f.g.text(&v.measured, Rect::new(card.x + 20.0, card.y + 34.0, 200.0, 42.0), 30.0, Weight::Bold, Align::Left, th().text);
-    let hint = Rect::new(card.x + 230.0, card.y + 14.0, card.w - 250.0, 66.0);
+    // Measured rate: one line, then how to measure it.
+    let y = TILE_Y + TILE_H + 10.0;
+    let line = fill(tr(T::MeasuredValue), &[&measured(v)]);
+    f.g.text(&line, Rect::new(X0, y, CW, 20.0), 13.5, Weight::Semibold, Align::Left, th().text);
+    let hint = Rect::new(X0, y + 22.0, CW, 32.0);
     f.g.text(tr(T::PollingHelp), hint, 12.0, Weight::Normal, Align::Wrap, th().muted);
 
     if !v.caps.extras {
@@ -762,7 +1093,7 @@ fn performance(f: &mut Frame, v: &View) {
     }
 
     // Debounce.
-    let card = Rect::new(X0, card.y + card.h + GAP, CW, 112.0);
+    let card = Rect::new(X0, hint.y + hint.h + GAP, CW, 112.0);
     f.card(card);
     f.caption(tr(T::Debounce), card.x + 20.0, card.y + 16.0);
     let help = Rect::new(card.x + 20.0, card.y + 34.0, card.w - 40.0, 32.0);
@@ -880,11 +1211,11 @@ fn stats(f: &mut Frame, v: &View) {
 
     let card = Rect::new(X0, TOP + 48.0 + 2.0 * 90.0, CW, HEIGHT - (TOP + 48.0 + 180.0) - 24.0);
     f.card(card);
-    f.caption(tr(T::ChartTitle), card.x + 16.0, card.y + 14.0);
-    let cap = Rect::new(card.x + card.w - 216.0, card.y + 12.0, 200.0, 18.0);
-    f.g.text(&v.chart_caption, cap, 12.0, Weight::Normal, Align::Right, th().faint);
+    // The chart follows the selected period.
+    let title = [T::ChartToday, T::ChartTitle, T::ChartAll][v.period.min(PERIODS.len() - 1)];
+    f.caption(tr(title), card.x + 16.0, card.y + 14.0);
 
-    let plot = Rect::new(card.x + 16.0, card.y + 40.0, card.w - 64.0, card.h - 56.0);
+    let plot = Rect::new(card.x + 16.0, card.y + 40.0, card.w - 64.0, card.h - 72.0);
     if v.chart.len() < 2 {
         let msg = tr(T::ChartEmpty);
         f.g.text(msg, plot, 13.0, Weight::Normal, Align::Center, th().faint);
@@ -898,12 +1229,22 @@ fn stats(f: &mut Frame, v: &View) {
         f.g.text(label, r, 10.5, Weight::Normal, Align::Left, th().faint);
     }
 
+    // Time axis: a tick and a label per day (hours for "today").
+    const LABEL_W: f32 = 60.0;
+    for (t, label) in &v.chart_ticks {
+        let x = plot.x + t * plot.w;
+        f.g.line(x, plot.y + plot.h, x, plot.y + plot.h + 4.0, 1.0, th().border);
+        let lx = (x - LABEL_W / 2.0).clamp(plot.x - 8.0, plot.x + plot.w + 8.0 - LABEL_W);
+        let r = Rect::new(lx, plot.y + plot.h + 6.0, LABEL_W, 16.0);
+        f.g.text(label, r, 10.5, Weight::Normal, Align::Center, th().faint);
+    }
+
     let pts: Vec<(f32, f32)> = v.chart.iter().map(|&(t, pct)| (plot.x + t * plot.w, plot.y + plot.h * (1.0 - pct / 100.0))).collect();
     f.g.polyline(&pts, 2.0, th().accent);
 }
 
 fn settings(f: &mut Frame, v: &View) {
-    let card = Rect::new(X0, TOP, CW, 104.0);
+    let card = Rect::new(X0, BODY, CW, 104.0);
     f.card(card);
     let title = if v.installed { tr(T::Installed) } else { tr(T::NotInstalled) };
     f.g.text(title, Rect::new(card.x + 18.0, card.y + 16.0, 380.0, 22.0), 15.0, Weight::Semibold, Align::Left, th().text);
@@ -919,7 +1260,7 @@ fn settings(f: &mut Frame, v: &View) {
         f.push_button(Act::Install, btn, tr(T::Install), true);
     }
 
-    let card = Rect::new(X0, TOP + 104.0 + GAP, CW, 76.0);
+    let card = Rect::new(X0, card.y + card.h + GAP, CW, 76.0);
     f.card(card);
     let title = Rect::new(card.x + 18.0, card.y + 16.0, 400.0, 22.0);
     f.g.text(tr(T::Autostart), title, 15.0, Weight::Semibold, Align::Left, th().text);
@@ -929,15 +1270,12 @@ fn settings(f: &mut Frame, v: &View) {
     let act = v.installed.then_some(Act::Autostart);
     f.toggle(act, card.x + card.w - 58.0, card.y + 27.0, v.autostart);
 
-    let card = Rect::new(X0, TOP + 194.0 + GAP, CW, 152.0);
+    // Tray behaviour and where data lives (About has its own dialog).
+    let card = Rect::new(X0, card.y + card.h + GAP, CW, 88.0);
     f.card(card);
-    f.g.text(tr(T::About), Rect::new(card.x + 18.0, card.y + 14.0, 400.0, 22.0), 15.0, Weight::Semibold, Align::Left, th().text);
-    let lines = [tr(T::AboutTray)];
-    for (i, l) in lines.iter().enumerate() {
-        let r = Rect::new(card.x + 18.0, card.y + 44.0 + i as f32 * 36.0, card.w - 36.0, 34.0);
-        f.g.text(l, r, 12.0, Weight::Normal, Align::Wrap, th().muted);
-    }
-    let r = Rect::new(card.x + 18.0, card.y + 122.0, card.w - 36.0, 18.0);
+    let r = Rect::new(card.x + 18.0, card.y + 14.0, card.w - 36.0, 34.0);
+    f.g.text(tr(T::AboutTray), r, 12.0, Weight::Normal, Align::Wrap, th().muted);
+    let r = Rect::new(card.x + 18.0, card.y + 58.0, card.w - 36.0, 18.0);
     f.g.text(&fill(tr(T::DataDir), &[&v.data_dir]), r, 12.0, Weight::Normal, Align::Left, th().faint);
 }
 
@@ -961,6 +1299,38 @@ fn setup_dialog(f: &mut Frame, v: &View) {
     let by = d.y + d.h - 24.0 - 36.0;
     f.push_button(Act::SetupSkip, Rect::new(d.x + d.w - 24.0 - 128.0 - 10.0 - 120.0, by, 120.0, 36.0), tr(T::JustRun), false);
     f.push_button(Act::SetupInstall, Rect::new(d.x + d.w - 24.0 - 128.0, by, 128.0, 36.0), tr(T::Install), true);
+}
+
+/// About: logo, name and version, copyright, license, project links.
+fn about_dialog(f: &mut Frame) {
+    const W: f32 = 480.0;
+    const H: f32 = 244.0;
+    f.g.fill(Rect::new(0.0, 0.0, WIDTH, HEIGHT), 0.0, th().scrim);
+    let d = Rect::new((WIDTH - W) / 2.0, (HEIGHT - H) / 2.0, W, H);
+    f.g.fill(d, RADIUS, th().card_hi);
+    f.g.stroke(d, RADIUS, 1.0, th().border);
+
+    let inner = d.inset(24.0);
+    f.caption(tr(T::About), inner.x, inner.y);
+    mouse_logo(f.g, inner.x + 4.0, inner.y + 34.0);
+    let name = Rect::new(inner.x + 40.0, inner.y + 28.0, inner.w - 40.0, 30.0);
+    f.g.text(crate::APP_NAME, name, 22.0, Weight::Bold, Align::Left, th().text);
+    let ver = Rect::new(name.x + text_w(crate::APP_NAME, 22.0) + 10.0, name.y + 4.0, 120.0, 26.0);
+    f.g.text(VERSION, ver, 15.0, Weight::Normal, Align::Left, th().muted);
+    let tag = Rect::new(name.x, name.y + 30.0, name.w, 18.0);
+    f.g.text(tr(T::AboutTagline), tag, 12.5, Weight::Normal, Align::Left, th().muted);
+
+    let y = inner.y + 98.0;
+    f.g.text(COPYRIGHT, Rect::new(inner.x, y, inner.w, 18.0), 12.5, Weight::Normal, Align::Left, th().text);
+    let license = fill(tr(T::License), &[LICENSE]);
+    f.g.text(&license, Rect::new(inner.x, y + 20.0, inner.w, 18.0), 12.5, Weight::Normal, Align::Left, th().text);
+
+    let by = d.y + d.h - 24.0 - 36.0;
+    let report = tr(T::ReportMouse);
+    let report_w = text_w(report, 14.0) + 32.0;
+    f.push_button(Act::OpenWeb(Web::Repo), Rect::new(inner.x, by, 100.0, 36.0), "GitHub", false);
+    f.push_button(Act::OpenWeb(Web::NewIssue), Rect::new(inner.x + 110.0, by, report_w, 36.0), report, false);
+    f.push_button(Act::CloseDialog, Rect::new(d.x + d.w - 24.0 - 110.0, by, 110.0, 36.0), tr(T::Close), true);
 }
 
 // ---- appearance ------------------------------------------------------------
@@ -992,7 +1362,7 @@ fn appearance(f: &mut Frame, v: &View) {
     // Themes: "system" first, shown with the light/dark pair it switches between.
     const TILE_H: f32 = 58.0;
     let rows = (THEMES.len() + 1).div_ceil(COLS) as f32;
-    let card = Rect::new(X0, TOP, CW, 44.0 + rows * (TILE_H + CELL_GAP) + 6.0);
+    let card = Rect::new(X0, BODY, CW, 44.0 + rows * (TILE_H + CELL_GAP) + 6.0);
     f.card(card);
     f.caption(tr(T::Theme), card.x + PAD, card.y + 16.0);
 

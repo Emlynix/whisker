@@ -21,4 +21,4 @@ mod sys;
 mod tray;
 pub mod window;
 
-pub use sys::{config_dir, dark_mode, today, user_locale};
+pub use sys::{config_dir, dark_mode, open_url, os_version, today, user_locale};
