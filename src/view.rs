@@ -1599,7 +1599,7 @@ fn setup_dialog(f: &mut Frame, v: &View) {
 /// update check.
 fn about_dialog(f: &mut Frame, v: &View) {
     const W: f32 = 480.0;
-    const H: f32 = 316.0;
+    const H: f32 = 352.0;
     f.g.fill(Rect::new(0.0, 0.0, WIDTH, HEIGHT), 0.0, th().scrim);
     let d = Rect::new((WIDTH - W) / 2.0, (HEIGHT - H) / 2.0, W, H);
     f.g.fill(d, RADIUS, th().card_hi);
@@ -1627,6 +1627,8 @@ fn about_dialog(f: &mut Frame, v: &View) {
     f.g.text("·", Rect::new(x + 6.0, y + 42.0, 10.0, 18.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
     text_link(f, Act::OpenWeb(Web::Repo), REPO, x + 18.0, y + 42.0);
     update::about_row(f, &v.update, inner.x, y + 74.0, inner.w);
+    let privacy = Rect::new(inner.x, y + 112.0, inner.w, 34.0);
+    f.g.text(tr(T::UpdatePrivacy), privacy, Size::Caption, Weight::Normal, Align::Wrap, th().subtle);
 
     let by = d.y + d.h - 24.0 - 36.0;
     let report = tr(T::ReportMouse);
