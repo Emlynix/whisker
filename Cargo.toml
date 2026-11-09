@@ -2,6 +2,8 @@
 name = "whisker"
 version = "0.9.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/Emlynix/whisker"
 
 # Windows backend (src/platform/windows) only.
 [target.'cfg(windows)'.dependencies]
