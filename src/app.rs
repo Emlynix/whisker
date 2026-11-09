@@ -646,6 +646,12 @@ fn hook_tray(a: TrayAction) {
         TrayAction::Open => {
             with_ctrl(|c| c.show());
         }
+        TrayAction::About => {
+            with_ctrl(|c| {
+                c.show();
+                c.on_act(Act::About);
+            });
+        }
         TrayAction::Quit => window::quit(),
     }
 }

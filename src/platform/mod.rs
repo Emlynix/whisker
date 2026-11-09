@@ -35,7 +35,7 @@
 //! - `set_clipboard(text) -> bool`: replaces the clipboard with plain text
 //!   (the window owns it on Windows).
 //! - `set_tray(tray::Level, tip)`: battery glyph (`tray::glyph`) and tooltip.
-//!   Tray clicks arrive as `Hooks::tray` (left = open, menu = open/quit).
+//!   Tray clicks arrive as `Hooks::tray` (left = open, menu = open/about/quit).
 //!
 //! `gfx::Gfx` — drawing in DIPs, given to `Hooks::draw` per frame:
 //! `clear(c)`, `fill(r, radius, c)`, `stroke(r, radius, width, c)` (inside

@@ -23,6 +23,7 @@ pub const ICON_SIZE: usize = 32;
 
 pub enum TrayAction {
     Open,
+    About,
     Quit,
 }
 

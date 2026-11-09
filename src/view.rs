@@ -684,6 +684,15 @@ fn icon(g: &Gfx, page: Page, x: f32, y: f32, c: Color) {
     }
 }
 
+/// Circled "i" (About), on the same 18 px grid as `icon`.
+fn info_icon(g: &Gfx, x: f32, y: f32, c: Color) {
+    const S: f32 = 18.0 / 24.0;
+    let (cx, cy) = (x + 12.0 * S, y + 12.0 * S);
+    g.ring(cx, cy, 9.0 * S, 1.8, c);
+    g.circle(cx, cy - 4.0 * S, 1.3, c);
+    g.line(cx, cy - 1.0 * S, cx, cy + 5.0 * S, 1.8, c);
+}
+
 /// The app's mouse with whiskers, matching the exe icon.
 fn mouse_logo(g: &Gfx, x: f32, y: f32) {
     g.stroke(Rect::new(x, y, 18.0, 27.0), 9.0, 2.0, th().accent);
@@ -709,8 +718,9 @@ fn mouse_logo(g: &Gfx, x: f32, y: f32) {
 fn sidebar(f: &mut Frame, v: &View) {
     f.g.fill(Rect::new(0.0, 0.0, SIDE_W, HEIGHT), 0.0, th().side);
 
-    const VERSION_Y: f32 = HEIGHT - 26.0;
+    const BOTTOM: f32 = HEIGHT - 14.0;
     const FOOTER_H: f32 = 64.0;
+    const ITEM_H: f32 = NAV_STEP - 4.0;
 
     // Logo and name open About; the mouse name opens its details.
     let brand = Rect::new(14.0, 12.0, SIDE_W - 28.0, 28.0);
@@ -725,21 +735,17 @@ fn sidebar(f: &mut Frame, v: &View) {
 
     for (k, page) in nav_pages(&v.caps).into_iter().enumerate() {
         let r = Rect::new(14.0, NAV_TOP + k as f32 * NAV_STEP, SIDE_W - 28.0, NAV_STEP - 4.0);
-        nav_item(f, page, r, Mark::of(v.page.nav() == page));
+        nav_item(f, Nav::Page(page), r, Mark::of(v.page.nav() == page));
     }
 
-    // Settings pinned above the status card, version link at the very bottom.
-    let footer = v.caps.battery || v.has_battery;
-    let footer_y = VERSION_Y - 6.0 - FOOTER_H;
-    let settings_y = if footer { footer_y - 8.0 } else { VERSION_Y - 6.0 } - (NAV_STEP - 4.0);
-    let r = Rect::new(14.0, settings_y, SIDE_W - 28.0, NAV_STEP - 4.0);
-    nav_item(f, Page::General, r, Mark::of(v.page.nav() == Page::General));
+    // Pinned at the bottom: Settings, then About right under it.
+    let about = Rect::new(14.0, BOTTOM - ITEM_H, SIDE_W - 28.0, ITEM_H);
+    nav_item(f, Nav::About, about, Mark::of(v.dialog == Some(Dialog::About)));
+    let r = Rect::new(14.0, about.y - NAV_STEP, SIDE_W - 28.0, ITEM_H);
+    nav_item(f, Nav::Page(Page::General), r, Mark::of(v.page.nav() == Page::General));
 
-    let version = format!("{} {VERSION}", crate::APP_NAME);
-    let r = Rect::new(14.0, VERSION_Y, text_w(&version, 11.5) + 24.0, 20.0);
-    let hot = f.button(Act::About, r);
-    let label = Rect::new(r.x + 12.0, r.y, r.w - 12.0, r.h);
-    f.g.text(&version, label, 11.5, Weight::Normal, Align::Left, if hot { th().accent } else { th().faint });
+    let footer = v.caps.battery || v.has_battery;
+    let footer_y = r.y - 8.0 - FOOTER_H;
 
     // Connection + battery summary (mice with a driver or a Bluetooth battery).
     if !footer {
@@ -758,20 +764,35 @@ fn sidebar(f: &mut Frame, v: &View) {
     }
 }
 
+/// Sidebar entry: a page, or About (opens its dialog).
+#[derive(Clone, Copy)]
+enum Nav {
+    Page(Page),
+    About,
+}
+
 /// Sidebar entry: icon, name; the current one gets a tint and a left bar.
-fn nav_item(f: &mut Frame, page: Page, r: Rect, mark: Mark) {
+fn nav_item(f: &mut Frame, item: Nav, r: Rect, mark: Mark) {
+    let (act, label) = match item {
+        Nav::Page(p) => (Act::Nav(p), tr(p.title())),
+        Nav::About => (Act::About, tr(T::About)),
+    };
     let sel = mark == Mark::Current;
-    let hot = f.button(Act::Nav(page), r);
+    let hot = f.button(act, r);
     if sel || hot {
         f.g.fill(r, 8.0, if sel { th().accent_soft } else { th().hover });
     }
     if sel {
         f.g.fill(Rect::new(r.x, r.y + 7.0, 3.0, r.h - 14.0), 1.5, th().accent);
     }
-    icon(f.g, page, r.x + 12.0, r.y + 9.0, if sel { th().accent } else { th().muted });
-    let label = Rect::new(r.x + 42.0, r.y, r.w - 42.0, r.h);
+    let c = if sel { th().accent } else { th().muted };
+    match item {
+        Nav::Page(p) => icon(f.g, p, r.x + 12.0, r.y + 9.0, c),
+        Nav::About => info_icon(f.g, r.x + 12.0, r.y + 9.0, c),
+    }
+    let text_r = Rect::new(r.x + 42.0, r.y, r.w - 42.0, r.h);
     let weight = if sel { Weight::Semibold } else { Weight::Normal };
-    f.g.text(tr(page.title()), label, 14.0, weight, Align::Left, if sel { th().text } else { th().muted });
+    f.g.text(label, text_r, 14.0, weight, Align::Left, if sel { th().text } else { th().muted });
 }
 
 // ---- pages ---------------------------------------------------------------
