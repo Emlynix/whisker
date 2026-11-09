@@ -38,11 +38,15 @@ const TIMER_REFRESH: usize = 1;
 const TIMER_SAVE: usize = 2;
 const TIMER_TOAST: usize = 3;
 const TIMER_FADE: usize = 4;
+const TIMER_PULSE: usize = 5;
 const REFRESH_MS: u32 = 1000;
 const SAVE_MS: u32 = 60_000;
 /// How long a toast (and its Undo) stays.
 const TOAST_MS: u32 = 5000;
 const FADE_TICK_MS: u32 = 50;
+const PULSE_TICK_MS: u32 = 50;
+/// One breath of the recording dot.
+const PULSE_PERIOD: Duration = Duration::from_secs(1);
 /// "Saved to mouse" stays solid, then fades out.
 const SAVED_HOLD: Duration = Duration::from_millis(1500);
 const SAVED_FADE: Duration = Duration::from_millis(1000);
@@ -115,6 +119,8 @@ struct Controller {
     saved_at: Option<Instant>,
     /// Clickable acts of the last frame in order, for Tab focus.
     acts: Vec<Act>,
+    /// Start of the macro recording, for the pulsing dot.
+    rec_start: Instant,
 }
 
 /// State before a destructive action, kept while its toast shows.
@@ -183,6 +189,7 @@ pub fn run(mode: StartMode) {
         undo: None,
         saved_at: None,
         acts: Vec::new(),
+        rec_start: Instant::now(),
     };
     ctrl.stats.set_vendor(stats_vendor(ctrl.cfg.device.as_deref()));
     CTRL.with(|c| *c.borrow_mut() = Some(ctrl));
@@ -267,6 +274,7 @@ fn initial_view(cfg: &AppConfig, ask_setup: bool) -> View {
         sync: Sync::Hidden,
         dialog: None,
         diagnostics: false,
+        pulse: u8::MAX,
     }
 }
 
@@ -591,6 +599,15 @@ fn next_focus(acts: &[Act], cur: Option<Focus>, step: Step) -> Option<Focus> {
     Some(Focus { index: j, act: acts[j] })
 }
 
+/// Opacity of the recording dot `e` into the recording: full at the
+/// start of each period, down to a third halfway.
+fn pulse_alpha(e: Duration) -> u8 {
+    const LOW: f32 = 0.33;
+    let phase = (e.as_secs_f32() / PULSE_PERIOD.as_secs_f32()).fract();
+    let wave = 0.5 + 0.5 * (phase * std::f32::consts::TAU).cos();
+    ((LOW + (1.0 - LOW) * wave) * u8::MAX as f32) as u8
+}
+
 /// Opacity of "Saved to mouse" `e` after the confirmation; `None` once gone.
 fn fade_alpha(e: Duration) -> Option<u8> {
     let Some(fading) = e.checked_sub(SAVED_HOLD) else {
@@ -643,6 +660,7 @@ fn hook_timer(id: usize) {
         TIMER_SAVE if !c.removed => c.stats.save(),
         TIMER_TOAST => c.hide_toast(),
         TIMER_FADE => c.fade_sync(),
+        TIMER_PULSE => c.pulse(),
         _ => {}
     });
 }
@@ -800,6 +818,9 @@ impl Controller {
                     self.view.macros = self.cfg.macros.clone();
                     self.view.recording = true;
                     self.last_step = None;
+                    self.rec_start = Instant::now();
+                    self.view.pulse = u8::MAX;
+                    window::set_timer(TIMER_PULSE, PULSE_TICK_MS);
                 }
             }
             Act::MacroClear => self.clear_selected_macro(),
@@ -1359,6 +1380,16 @@ impl Controller {
         self.saved_at = Some(Instant::now());
         self.view.sync = Sync::Saved(u8::MAX);
         window::set_timer(TIMER_FADE, FADE_TICK_MS);
+    }
+
+    /// Recording dot breathes while recording; the timer stops with it.
+    fn pulse(&mut self) {
+        if !self.view.recording {
+            window::kill_timer(TIMER_PULSE);
+            return;
+        }
+        self.view.pulse = pulse_alpha(self.rec_start.elapsed());
+        window::invalidate();
     }
 
     fn fade_sync(&mut self) {
@@ -1949,6 +1980,13 @@ mod tests {
         // Shift+Tab walks back over the same positions.
         let back = next_focus(&acts, f, Step::Prev).unwrap();
         assert_eq!(back.index, acts.len() - 2);
+    }
+
+    #[test]
+    fn recording_dot_pulses_once_a_second() {
+        assert_eq!(pulse_alpha(Duration::ZERO), u8::MAX);
+        assert!(pulse_alpha(PULSE_PERIOD / 2) < 100);
+        assert_eq!(pulse_alpha(PULSE_PERIOD), u8::MAX);
     }
 
     #[test]

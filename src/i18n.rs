@@ -224,9 +224,10 @@ pub enum T {
     Close,
     AboutTagline,
     Disconnected,
+    RecordingSteps,
 }
 
-const COUNT: usize = T::Disconnected as usize + 1;
+const COUNT: usize = T::RecordingSteps as usize + 1;
 type Table = [&'static str; COUNT];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -606,6 +607,7 @@ const EN: Table = [
     "Close",
     "Lightweight control app for gaming mice.",
     "Disconnected",
+    "Recording… {} steps",
 ];
 
 const SK: Table = [
@@ -826,6 +828,7 @@ const SK: Table = [
     "Zavrieť",
     "Ľahká aplikácia na nastavenie herných myší.",
     "Odpojená",
+    "Nahrávam… {} krokov",
 ];
 
 const CS: Table = [
@@ -1046,6 +1049,7 @@ const CS: Table = [
     "Zavřít",
     "Lehká aplikace pro nastavení herních myší.",
     "Odpojeno",
+    "Nahrávám… {} kroků",
 ];
 
 const PL: Table = [
@@ -1266,6 +1270,7 @@ const PL: Table = [
     "Zamknij",
     "Lekka aplikacja do konfiguracji myszy gamingowych.",
     "Rozłączono",
+    "Nagrywanie… {} kroków",
 ];
 
 const DE: Table = [
@@ -1486,6 +1491,7 @@ const DE: Table = [
     "Schließen",
     "Schlanke App zum Einstellen von Gaming-Mäusen.",
     "Getrennt",
+    "Aufnahme… {} Schritte",
 ];
 
 const FR: Table = [
@@ -1706,6 +1712,7 @@ const FR: Table = [
     "Fermer",
     "Application légère pour régler les souris de jeu.",
     "Déconnectée",
+    "Enregistrement… {} étapes",
 ];
 
 const ES: Table = [
@@ -1926,6 +1933,7 @@ const ES: Table = [
     "Cerrar",
     "Aplicación ligera para configurar ratones gaming.",
     "Desconectado",
+    "Grabando… {} pasos",
 ];
 
 const PT: Table = [
@@ -2146,6 +2154,7 @@ const PT: Table = [
     "Fechar",
     "Aplicação leve para configurar ratos gaming.",
     "Desligado",
+    "A gravar… {} passos",
 ];
 
 const IT: Table = [
@@ -2366,6 +2375,7 @@ const IT: Table = [
     "Chiudi",
     "App leggera per configurare i mouse da gioco.",
     "Disconnesso",
+    "Registrazione… {} passi",
 ];
 
 const JA: Table = [
@@ -2586,6 +2596,7 @@ const JA: Table = [
     "閉じる",
     "ゲーミングマウス用の軽量設定アプリ。",
     "未接続",
+    "記録中… {} ステップ",
 ];
 
 const KO: Table = [
@@ -2806,6 +2817,7 @@ const KO: Table = [
     "닫기",
     "게이밍 마우스용 가벼운 설정 앱.",
     "연결 끊김",
+    "녹화 중… {}단계",
 ];
 
 const ZH_HANS: Table = [
@@ -3026,6 +3038,7 @@ const ZH_HANS: Table = [
     "关闭",
     "轻量的游戏鼠标设置工具。",
     "未连接",
+    "录制中… {} 步",
 ];
 
 const ZH_HANT: Table = [
@@ -3246,6 +3259,7 @@ const ZH_HANT: Table = [
     "關閉",
     "輕量的電競滑鼠設定工具。",
     "未連線",
+    "錄製中… {} 步",
 ];
 
 #[cfg(test)]

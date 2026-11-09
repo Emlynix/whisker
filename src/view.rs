@@ -367,6 +367,8 @@ pub struct View {
     pub dialog: Option<Dialog>,
     /// Diagnostics section of the Mouse tab is expanded.
     pub diagnostics: bool,
+    /// Opacity of the pulsing recording dot.
+    pub pulse: u8,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

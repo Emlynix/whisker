@@ -10,7 +10,7 @@
 //! ```
 
 use super::{Act, BODY, Frame, GAP, HEIGHT, Mark, RADIUS, View, WIDTH, X0, CW, th};
-use crate::gfx::{Align, Rect, Weight};
+use crate::gfx::{Align, Color, Rect, Weight};
 use crate::i18n::{T, fill, tr};
 use crate::keys;
 use crate::protocol::{
@@ -314,7 +314,7 @@ pub(super) fn macros_page(f: &mut Frame, v: &View) {
         f.push_button(Act::MacroClear, clear, tr(T::Clear), false);
     }
     if v.recording {
-        f.g.circle(x + 122.0, y + 8.0, 4.0, th().bad);
+        f.g.circle(x + 122.0, y + 8.0, 4.0, Color(th().bad.0, v.pulse));
     }
 
     let y = y + 52.0;
@@ -333,6 +333,18 @@ pub(super) fn macros_page(f: &mut Frame, v: &View) {
     let area = Rect::new(x, y + 70.0, w, card.y + card.h - (y + 70.0) - PAD);
     f.g.fill(area, 8.0, th().bg);
     let events = &v.macros[sel];
+    let mut inner = area.inset(12.0);
+
+    // Recording: accent border and "● Recording… N steps" with a pulsing dot.
+    if v.recording {
+        f.g.stroke(area, 8.0, 2.0, th().accent);
+        f.g.circle(inner.x + 5.0, inner.y + 9.0, 5.0, Color(th().bad.0, v.pulse));
+        let head = fill(tr(T::RecordingSteps), &[&events.len().to_string()]);
+        let r = Rect::new(inner.x + 16.0, inner.y, inner.w - 16.0, 18.0);
+        f.g.text(&head, r, 13.0, Weight::Semibold, Align::Left, th().accent);
+        inner = Rect::new(inner.x, inner.y + 26.0, inner.w, inner.h - 26.0);
+    }
+
     let text = if !events.is_empty() {
         events.iter().map(|e| format!("{} {}ms", event_label(e), e.delay_ms)).collect::<Vec<_>>().join("   ")
     } else if v.recording {
@@ -341,7 +353,6 @@ pub(super) fn macros_page(f: &mut Frame, v: &View) {
         tr(T::MacroEmpty).into()
     };
     let color = if events.is_empty() { th().faint } else { th().text };
-    let inner = area.inset(12.0);
     f.g.text(&text, Rect::new(inner.x, inner.y, inner.w, inner.h - 34.0), 13.0, Weight::Normal, Align::Wrap, color);
 
     // Macros are plain data on disk and in the mouse: warn before passwords end up there.
