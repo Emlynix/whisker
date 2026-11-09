@@ -4,7 +4,7 @@
 //! `Whisker/<version>` User-Agent, nothing about the user or the mouse.
 //!
 //! ```text
-//!   check():    latest.json (emlynix.com) ──404/error──> GitHub releases/latest
+//!   check():    latest.json (whisker.emlynix.com) ──404/error──> GitHub releases/latest
 //!                    └── newer than this build + asset for this platform? -> Newer
 //!   download(): asset url (allowlisted host) -> bytes, SHA-256 must match
 //!   install():  exe.new (verified again on disk) -> exe -> exe.old,
@@ -41,7 +41,7 @@ use json::Json;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-const MANIFEST_URL: &str = "https://www.emlynix.com/whisker/latest.json";
+const MANIFEST_URL: &str = "https://whisker.emlynix.com/latest.json";
 const GITHUB_URL: &str = "https://api.github.com/repos/Emlynix/whisker/releases/latest";
 const AGENT: &str = concat!("Whisker/", env!("CARGO_PKG_VERSION"));
 
@@ -62,12 +62,11 @@ const HTTP_OK: u16 = 200;
 const HTTP_NOT_FOUND: u16 = 404;
 const HTTP_REDIRECTS: [u16; 5] = [301, 302, 303, 307, 308];
 
-/// Hosts the manifests may come from (redirects included). The site
-/// redirects `www.emlynix.com` to `emlynix.com`.
-const MANIFEST_HOSTS: [&str; 3] = ["www.emlynix.com", "emlynix.com", "api.github.com"];
+/// Hosts the manifests may come from (redirects included).
+const MANIFEST_HOSTS: [&str; 2] = ["whisker.emlynix.com", "api.github.com"];
 /// Hosts a binary may be downloaded from (redirects included).
-const DOWNLOAD_HOSTS: [&str; 5] =
-    ["www.emlynix.com", "emlynix.com", "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"];
+const DOWNLOAD_HOSTS: [&str; 4] =
+    ["whisker.emlynix.com", "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"];
 
 /// Suffixes of the files next to the exe during a swap.
 const NEW_SUFFIX: &str = ".new";
@@ -505,11 +504,11 @@ mod tests {
 
     #[test]
     fn urls_are_https_only() {
-        let u = Url::parse("HTTPS://WWW.Emlynix.com/whisker/latest.json?x=1#frag").unwrap();
-        assert_eq!((u.host.as_str(), u.path.as_str()), ("www.emlynix.com", "/whisker/latest.json?x=1"));
+        let u = Url::parse("HTTPS://Whisker.Emlynix.com/latest.json?x=1#frag").unwrap();
+        assert_eq!((u.host.as_str(), u.path.as_str()), ("whisker.emlynix.com", "/latest.json?x=1"));
         assert_eq!(Url::parse("https://github.com").unwrap().path, "/");
         for bad in [
-            "http://www.emlynix.com/a",
+            "http://whisker.emlynix.com/a",
             "ftp://x/y",
             "https://user@github.com/a",
             "https://github.com:8443/a",
@@ -547,12 +546,12 @@ mod tests {
     fn latest_json_is_read() {
         let text = format!(
             r#"{{"version":"0.9.1","date":"2026-11-20","notes":"Fixes.\r\n- a\u0007b\u202e","assets":{{
-                "windows-x86_64":{{"url":"https://www.emlynix.com/whisker/whisker.exe","sha256":"{HEX}"}},
+                "windows-x86_64":{{"url":"https://whisker.emlynix.com/whisker.exe","sha256":"{HEX}"}},
                 "macos-universal":{{"url":"https://evil.example/w.zip","sha256":"{HEX}"}}}}}}"#
         );
         let m = parse_manifest(&text, "windows-x86_64").unwrap();
         assert_eq!((m.version, m.date.as_str(), m.notes.as_str()), (v("0.9.1"), "2026-11-20", "Fixes.\n- ab"));
-        assert_eq!(m.asset.unwrap().url.host, "www.emlynix.com");
+        assert_eq!(m.asset.unwrap().url.host, "whisker.emlynix.com");
         // A base64 signature next to the hash; unsigned when absent.
         let signed = text.replacen(r#""sha256":"#, r#""sig":"aGVsbG8=","sha256":"#, 1);
         assert_eq!(parse_manifest(&signed, "windows-x86_64").unwrap().asset.unwrap().sig, Signature::Inline(b"hello".to_vec()));

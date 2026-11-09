@@ -1677,7 +1677,7 @@ fn about_dialog(f: &mut Frame, v: &View) {
     f.g.text(&license, Rect::new(inner.x, y + 20.0, inner.w, 18.0), Size::Caption, Weight::Normal, Align::Left, th().text);
 
     // Links go to the web; buttons below are actions.
-    const SITE: &str = "www.emlynix.com/whisker";
+    const SITE: &str = "whisker.emlynix.com";
     const REPO: &str = "GitHub";
     let x = text_link(f, Act::OpenWeb(Web::Site), SITE, inner.x, y + 42.0);
     f.g.text("·", Rect::new(x + 6.0, y + 42.0, 10.0, 18.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
