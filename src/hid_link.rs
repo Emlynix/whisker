@@ -25,6 +25,13 @@ const REPLY_DELAY: Duration = Duration::from_millis(10);
 /// HID-over-GATT service UUID as it appears in HID paths.
 const HOGP_TAG: &str = "{00001812-";
 const ADDRESS_LEN: usize = 12;
+/// Generic desktop / mouse: the collection a `HidDevice` is found by.
+const MOUSE_USAGE: (u16, u16) = (0x01, 0x02);
+/// Report descriptor items (HID 1.11, 6.2.2): long-item prefix, the
+/// Report ID tag with its size bits masked off.
+const LONG_ITEM: u8 = 0xFE;
+const TAG_MASK: u8 = 0xFC;
+const TAG_REPORT_ID: u8 = 0x84;
 
 pub struct HidLink {
     dev: Option<Channel>,
@@ -56,25 +63,144 @@ pub struct Interface {
     pub feature_len: usize,
 }
 
+/// How a device is connected.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Transport {
+    Usb,
+    Bluetooth,
+    #[default]
+    Other,
+}
+
+/// Report sizes, ids and caps of one collection, for bug reports.
+/// Read from descriptors only.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReportLayout {
+    pub transport: Transport,
+    /// USB interface number (`bInterfaceNumber`), where known.
+    pub interface: Option<u8>,
+    pub input_len: usize,
+    pub output_len: usize,
+    pub feature_len: usize,
+    /// Report ids of input, output and feature reports, sorted, distinct;
+    /// empty for unnumbered reports.
+    pub report_ids: Vec<u8>,
+    /// Raw report descriptor where the OS exposes it (macOS; not Windows).
+    pub descriptor: Option<Vec<u8>>,
+    /// Short caps lines, e.g. `"input id 2: buttons 0x09:0x01-0x05"`.
+    /// Never holds paths or serials.
+    pub summary: Vec<String>,
+}
+
+/// One physical mouse: its mouse collection(s) plus the sibling
+/// collections (vendor pages etc.) of the same device, mouse first.
+#[derive(Clone, Debug)]
+pub struct HidDevice {
+    pub info: DeviceInfo,
+    #[allow(dead_code)] // used by the report wizard
+    pub collections: Vec<(Interface, ReportLayout)>,
+}
+
+/// Identity of a mouse collection, with its Bluetooth address.
+fn identify(i: &Interface) -> DeviceInfo {
+    let mut info = i.info.clone();
+    info.bt_address = bt_address(&i.path);
+    // BLE mice often have no USB product string; use the Bluetooth name.
+    if info.product.is_empty() {
+        if let Some(n) = info.bt_address.as_deref().and_then(crate::platform::bluetooth::name) {
+            info.product = n;
+        }
+    }
+    info
+}
+
 /// Connected mice (HID mouse collections), one entry per VID:PID.
 /// Only descriptors are read; nothing is sent to these devices.
 pub fn list_mice() -> Vec<DeviceInfo> {
     let mut out: Vec<DeviceInfo> = Vec::new();
     for i in crate::platform::hid::mice() {
-        let mut info = i.info;
-        if out.iter().any(|d| (d.vid, d.pid) == (info.vid, info.pid)) {
+        if out.iter().any(|d| (d.vid, d.pid) == (i.info.vid, i.info.pid)) {
             continue;
         }
-        info.bt_address = bt_address(&i.path);
-        // BLE mice often have no USB product string; use the Bluetooth name.
-        if info.product.is_empty() {
-            if let Some(n) = info.bt_address.as_deref().and_then(crate::platform::bluetooth::name) {
-                info.product = n;
-            }
-        }
-        out.push(info);
+        out.push(identify(&i));
     }
     out
+}
+
+/// Connected mice as in `list_mice`, each with every collection of the
+/// same VID:PID (and Bluetooth address) and its report layout.
+/// Descriptors only; nothing is opened for I/O or sent.
+#[allow(dead_code)] // used by the report wizard
+pub fn mouse_devices() -> Vec<HidDevice> {
+    let mut out: Vec<HidDevice> = Vec::new();
+    for m in crate::platform::hid::mice() {
+        if out.iter().any(|d| (d.info.vid, d.info.pid) == (m.info.vid, m.info.pid)) {
+            continue;
+        }
+        let info = identify(&m);
+        let collections = siblings(m, &info).into_iter().map(|i| {
+            // A collection that vanished meanwhile keeps an empty layout.
+            let layout = crate::platform::hid::layout(&i.path).unwrap_or_default();
+            (i, layout)
+        });
+        out.push(HidDevice { collections: collections.collect(), info });
+    }
+    out
+}
+
+/// `mouse` and the other collections of its device, each once (macOS
+/// shares one path per device, so usage keeps them apart), mouse first.
+fn siblings(mouse: Interface, info: &DeviceInfo) -> Vec<Interface> {
+    let same = |i: &Interface| (i.info.vid, i.info.pid) == (info.vid, info.pid) && bt_address(&i.path) == info.bt_address;
+    let key = |i: &Interface| (i.path.clone(), i.usage_page, i.usage);
+
+    let mut out = vec![mouse];
+    for i in interfaces(info.vid) {
+        if !same(&i) || out.iter().any(|o| key(o) == key(&i)) {
+            continue;
+        }
+        out.push(i);
+    }
+    // Stable sort: the found mouse stays ahead of further mouse collections.
+    out.sort_by_key(|i| (i.usage_page, i.usage) != MOUSE_USAGE);
+    out
+}
+
+/// Report ids declared in a raw report descriptor, sorted, distinct.
+/// Walks short items for Report ID (`0x85 id`); skips long items; stops
+/// at a truncated item, so garbage never panics.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // Windows reads ids from caps
+pub fn report_ids(desc: &[u8]) -> Vec<u8> {
+    let mut ids = Vec::new();
+    let mut at = 0;
+    while let Some(&prefix) = desc.get(at) {
+        // Long item: prefix, data size, tag, data.
+        if prefix == LONG_ITEM {
+            let Some(&len) = desc.get(at + 1) else {
+                break;
+            };
+            at += 3 + len as usize;
+            continue;
+        }
+
+        // Short item: size code 3 means 4 data bytes.
+        let len = match prefix & 0x03 {
+            3 => 4,
+            n => n as usize,
+        };
+        let Some(data) = desc.get(at + 1..at + 1 + len) else {
+            break;
+        };
+        if prefix & TAG_MASK == TAG_REPORT_ID {
+            if let Some(&id) = data.first().filter(|&&id| id != 0) {
+                ids.push(id);
+            }
+        }
+        at += 1 + len;
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    ids
 }
 
 /// Bluetooth address of a BLE HID device from its interface path, e.g.
@@ -171,6 +297,49 @@ mod tests {
     fn usb_path_has_no_address() {
         let p = r"\\?\hid#vid_248a&pid_5b2f&mi_00#a&2736500e&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
         assert_eq!(bt_address(p), None);
+    }
+
+    /// Mouse (id 2: 5 buttons, X/Y 16 bit) plus a vendor collection
+    /// (id 5, 32-byte feature) with a long item in between.
+    const MOUSE_DESC: [u8; 76] = [
+        0x05, 0x01, 0x09, 0x02, 0xA1, 0x01, 0x85, 0x02, 0x09, 0x01, 0xA1, 0x00, 0x05, 0x09, 0x19, 0x01, 0x29, 0x05, 0x15, 0x00,
+        0x25, 0x01, 0x95, 0x05, 0x75, 0x01, 0x81, 0x02, 0x95, 0x01, 0x75, 0x03, 0x81, 0x01, 0x05, 0x01, 0x09, 0x30, 0x09, 0x31,
+        0x16, 0x01, 0x80, 0x26, 0xFF, 0x7F, 0x75, 0x10, 0x95, 0x02, 0x81, 0x06, 0xC0, 0xC0, 0x06, 0x00, 0xFF, 0x09, 0x01, 0xA1,
+        0x01, 0xFE, 0x01, 0x10, 0x85, 0x85, 0x05, 0x95, 0x20, 0x75, 0x08, 0x09, 0x02, 0xB1, 0x02, 0xC0,
+    ];
+
+    #[test]
+    fn ids_from_mouse_descriptor() {
+        assert_eq!(report_ids(&MOUSE_DESC), vec![2, 5]);
+        assert_eq!(report_ids(&[0x05, 0x01, 0x09, 0x02, 0xA1, 0x01, 0xC0]), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn ids_from_garbage_never_panic() {
+        assert_eq!(report_ids(&[0x85]), Vec::<u8>::new());
+        assert_eq!(report_ids(&[0xFE]), Vec::<u8>::new());
+        assert_eq!(report_ids(&[0xFE, 0xFF, 0x00]), Vec::<u8>::new());
+        assert_eq!(report_ids(&[0x87, 0x01, 0x00]), Vec::<u8>::new());
+        let noise: Vec<u8> = (0..4096u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8).collect();
+        for n in 0..noise.len() {
+            report_ids(&noise[n..]);
+        }
+    }
+
+    /// Hardware probe: `cargo test -- --ignored --nocapture print_mouse_devices`.
+    #[test]
+    #[ignore]
+    fn print_mouse_devices() {
+        for d in mouse_devices() {
+            println!("{:?}", d.info);
+            for (i, l) in &d.collections {
+                let head = format!("  {:#06x}:{:#06x} {:?} if {:?}", i.usage_page, i.usage, l.transport, l.interface);
+                println!("{head} in {} out {} feat {} ids {:?}", l.input_len, l.output_len, l.feature_len, l.report_ids);
+                for s in &l.summary {
+                    println!("    {s}");
+                }
+            }
+        }
     }
 
     /// Hardware probe: `cargo test -- --ignored --nocapture print_mice`.

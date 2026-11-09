@@ -60,6 +60,12 @@
 //! `hid` — HID collections, descriptors read without sending anything:
 //! - `interfaces(vid) -> Vec<hid_link::Interface>`: collections of a vendor.
 //! - `mice() -> Vec<hid_link::Interface>`: generic desktop / mouse collections.
+//! - `layout(path) -> Option<hid_link::ReportLayout>`: transport, USB
+//!   interface number, report sizes and ids of a collection, for bug
+//!   reports; never opened for I/O. Windows: `HidP_*` caps as `summary`
+//!   lines, no raw descriptor. macOS: registry properties and the raw
+//!   `ReportDescriptor` (ids parsed by `hid_link::report_ids`), shared by
+//!   all collections of the device.
 //! - `Channel` (`Send`): `open(path) -> Option<Channel>`,
 //!   `write(report, timeout) -> bool` (output report, byte 0 = id),
 //!   `read(len, timeout) -> Option<Vec<u8>>` (next input report),

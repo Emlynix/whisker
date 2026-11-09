@@ -4,7 +4,7 @@
 //! Talks to `hid.dll` / `setupapi.dll` directly (no extra crates).
 
 use super::win::wide;
-use crate::hid_link::{DeviceInfo, Interface};
+use crate::hid_link::{DeviceInfo, Interface, ReportLayout, Transport};
 use std::time::{Duration, Instant};
 use windows_sys::Win32::Devices::DeviceAndDriverInstallation::*;
 use windows_sys::Win32::Devices::HumanInterfaceDevice::*;
@@ -116,6 +116,144 @@ fn describe(path: String) -> Option<Interface> {
         CloseHandle(raw);
     }
     out
+}
+
+/// Report sizes, ids and caps of one collection; opened for queries only
+/// (no reads or writes). Windows does not expose the raw descriptor.
+#[allow(dead_code)] // used by the report wizard
+pub fn layout(path: &str) -> Option<ReportLayout> {
+    let name = wide(path);
+    // SAFETY: a NUL-terminated path; access 0 only queries the device.
+    let raw = unsafe { CreateFileW(name.as_ptr(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, std::ptr::null(), OPEN_EXISTING, 0, std::ptr::null_mut()) };
+    if raw == INVALID_HANDLE_VALUE {
+        return None;
+    }
+
+    let mut pp: PHIDP_PREPARSED_DATA = 0;
+    // SAFETY: `raw` is an open handle; `pp` a valid out pointer.
+    let got = unsafe { HidD_GetPreparsedData(raw, &mut pp) };
+    // SAFETY: the handle is ours and no longer needed.
+    unsafe { CloseHandle(raw) };
+    if !got {
+        return None;
+    }
+
+    let out = caps_layout(pp, path);
+    // SAFETY: `pp` came from HidD_GetPreparsedData and is freed once.
+    unsafe { HidD_FreePreparsedData(pp) };
+    out
+}
+
+/// Report types in caps order, with their names for `summary`.
+const REPORT_KINDS: [(HIDP_REPORT_TYPE, &str); 3] = [(HidP_Input, "input"), (HidP_Output, "output"), (HidP_Feature, "feature")];
+/// Path tags: HID-over-GATT and classic Bluetooth HID service UUIDs.
+const BT_TAGS: [&str; 2] = ["{00001812-", "{00001124-"];
+const USB_TAG: &str = "hid#vid_";
+/// USB interface number in a composite device path, e.g. `&mi_01`.
+const INTERFACE_TAG: &str = "&mi_";
+
+fn caps_layout(pp: PHIDP_PREPARSED_DATA, path: &str) -> Option<ReportLayout> {
+    let mut caps: HIDP_CAPS = unsafe { std::mem::zeroed() };
+    // SAFETY: valid preparsed data and out pointer.
+    if unsafe { HidP_GetCaps(pp, &mut caps) } != HIDP_STATUS_SUCCESS {
+        return None;
+    }
+
+    let mut ids = Vec::new();
+    let mut summary = Vec::new();
+    for (kind, label) in REPORT_KINDS {
+        for b in button_caps(pp, kind) {
+            ids.push(b.ReportID);
+            summary.push(format!("{label} id {}: buttons {}", b.ReportID, button_usages(&b)));
+        }
+        for v in value_caps(pp, kind) {
+            ids.push(v.ReportID);
+            summary.push(format!("{label} id {}: value {}", v.ReportID, value_line(&v)));
+        }
+    }
+    // Id 0 means unnumbered reports.
+    ids.retain(|&id| id != 0);
+    ids.sort_unstable();
+    ids.dedup();
+
+    let lower = path.to_lowercase();
+    Some(ReportLayout {
+        transport: transport_of(&lower),
+        interface: interface_of(&lower),
+        input_len: caps.InputReportByteLength as usize,
+        output_len: caps.OutputReportByteLength as usize,
+        feature_len: caps.FeatureReportByteLength as usize,
+        report_ids: ids,
+        descriptor: None,
+        summary,
+    })
+}
+
+fn button_caps(pp: PHIDP_PREPARSED_DATA, kind: HIDP_REPORT_TYPE) -> Vec<HIDP_BUTTON_CAPS> {
+    // First call with length 0 reports how many caps there are.
+    let mut n = 0u16;
+    // SAFETY: a null buffer of length 0 only asks for the count.
+    unsafe { HidP_GetButtonCaps(kind, std::ptr::null_mut(), &mut n, pp) };
+    let mut out = vec![HIDP_BUTTON_CAPS::default(); n as usize];
+    // SAFETY: `out` holds `n` entries.
+    if n == 0 || unsafe { HidP_GetButtonCaps(kind, out.as_mut_ptr(), &mut n, pp) } != HIDP_STATUS_SUCCESS {
+        return Vec::new();
+    }
+    out.truncate(n as usize);
+    out
+}
+
+fn value_caps(pp: PHIDP_PREPARSED_DATA, kind: HIDP_REPORT_TYPE) -> Vec<HIDP_VALUE_CAPS> {
+    let mut n = 0u16;
+    // SAFETY: a null buffer of length 0 only asks for the count.
+    unsafe { HidP_GetValueCaps(kind, std::ptr::null_mut(), &mut n, pp) };
+    let mut out = vec![HIDP_VALUE_CAPS::default(); n as usize];
+    // SAFETY: `out` holds `n` entries.
+    if n == 0 || unsafe { HidP_GetValueCaps(kind, out.as_mut_ptr(), &mut n, pp) } != HIDP_STATUS_SUCCESS {
+        return Vec::new();
+    }
+    out.truncate(n as usize);
+    out
+}
+
+/// `0x09:0x01-0x05` for a usage range, `0x09:0x01` for one usage.
+fn button_usages(b: &HIDP_BUTTON_CAPS) -> String {
+    // SAFETY: `IsRange` says which union member the OS filled.
+    let (lo, hi) = unsafe { if b.IsRange { (b.Anonymous.Range.UsageMin, b.Anonymous.Range.UsageMax) } else { (b.Anonymous.NotRange.Usage, b.Anonymous.NotRange.Usage) } };
+    usages(b.UsagePage, lo, hi)
+}
+
+/// `0x01:0x30 16 bit -32767..32767`, with `x2` when the field repeats.
+fn value_line(v: &HIDP_VALUE_CAPS) -> String {
+    // SAFETY: `IsRange` says which union member the OS filled.
+    let (lo, hi) = unsafe { if v.IsRange { (v.Anonymous.Range.UsageMin, v.Anonymous.Range.UsageMax) } else { (v.Anonymous.NotRange.Usage, v.Anonymous.NotRange.Usage) } };
+    let count = if v.ReportCount > 1 { format!(" x{}", v.ReportCount) } else { String::new() };
+    format!("{} {} bit{count} {}..{}", usages(v.UsagePage, lo, hi), v.BitSize, v.LogicalMin, v.LogicalMax)
+}
+
+fn usages(page: u16, lo: u16, hi: u16) -> String {
+    if lo == hi {
+        return format!("{page:#04x}:{lo:#04x}");
+    }
+    format!("{page:#04x}:{lo:#04x}-{hi:#04x}")
+}
+
+/// Bluetooth by service UUID, USB by `hid#vid_`; `lower` is lowercase.
+fn transport_of(lower: &str) -> Transport {
+    if BT_TAGS.iter().any(|t| lower.contains(t)) {
+        return Transport::Bluetooth;
+    }
+    if lower.contains(USB_TAG) {
+        return Transport::Usb;
+    }
+    Transport::Other
+}
+
+/// `&mi_01` → `Some(1)`; `None` for single-interface devices.
+fn interface_of(lower: &str) -> Option<u8> {
+    let at = lower.find(INTERFACE_TAG)? + INTERFACE_TAG.len();
+    let hex = lower.get(at..at + 2)?;
+    u8::from_str_radix(hex, 16).ok()
 }
 
 /// Collections of devices with vendor id `vid` (descriptors only, nothing sent).
@@ -232,5 +370,21 @@ impl Channel {
     /// Feature report into `buf`; `buf[0]` must hold the report id.
     pub fn get_feature(&self, buf: &mut [u8]) -> bool {
         unsafe { HidD_GetFeature(self.handle, buf.as_mut_ptr().cast(), buf.len() as u32) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transport_and_interface_from_path() {
+        let usb = r"\?\hid#vid_248a&pid_5b2f&mi_01&col02#a&2736500e&0&0001#{4d1e55b2-f16f-11cf-88cb-001111000030}";
+        let ble = r"\?\hid#{00001812-0000-1000-8000-00805f9b34fb}_dev_vid&02045e_pid&0040_rev&0300_b66b18d71e00&col01#a&1&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
+        assert_eq!(transport_of(usb), Transport::Usb);
+        assert_eq!(interface_of(usb), Some(1));
+        assert_eq!(transport_of(ble), Transport::Bluetooth);
+        assert_eq!(interface_of(ble), None);
+        assert_eq!(transport_of(r"\?\hid#converteddevice&col01#1&2d595ca7&0&0000#{x}"), Transport::Other);
     }
 }

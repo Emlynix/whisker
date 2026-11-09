@@ -9,7 +9,8 @@
 //!   kill_timer, set_title_colors, modifiers, set_tray (StatusNotifierItem),
 //!   notify (org.freedesktop.Notifications).
 //! - `gfx::Gfx`: clear, fill, stroke, circle, ring, line, polyline, text.
-//! - `hid`: interfaces, mice, `Channel` over `/dev/hidraw*` (read, write,
+//! - `hid`: interfaces, mice, layout (sysfs `report_descriptor`,
+//!   `HIDIOCGRAWINFO` bus type), `Channel` over `/dev/hidraw*` (read, write,
 //!   read_until, get_feature, set_feature via `HIDIOC*` ioctls).
 //! - `bluetooth`: battery, name (BlueZ). `input`: start, has_vendor
 //!   (evdev). `autostart` (XDG autostart .desktop), `install`, `single`.
