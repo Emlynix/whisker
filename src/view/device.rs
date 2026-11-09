@@ -1,7 +1,7 @@
 //! Settings › Mouse tab (hardware info, diagnostics), the "which mouse
 //! do you use?" dialog and the new-mouse banner.
 
-use super::{Act, BODY, CW, Frame, GAP, Glyph, HEIGHT, Page, Place, R_CTRL, RADIUS, View, WIDTH, X0, icon, text_w, th};
+use super::{Act, BODY, CW, Frame, GAP, Glyph, HEIGHT, Mark, Page, Place, R_CTRL, RADIUS, View, WIDTH, X0, glyph, icon, text_w, th};
 use crate::gfx::{Align, Color, Rect, Size, Weight};
 use crate::i18n::{T, fill, tr};
 
@@ -28,10 +28,12 @@ pub struct DetectRow {
     pub choice: String,
 }
 
-/// A connected mouse in the dialog's "Detected" row.
+/// A connected mouse on step 1 of the dialog.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Found {
     pub title: String,
+    /// Support level as text, e.g. "Supported".
+    pub badge: String,
     pub kind: Badge,
     /// The mouse in use now.
     pub current: bool,
@@ -55,9 +57,17 @@ pub enum Pane {
     Models,
 }
 
+/// Step of the dialog: the detected mice, or the whole catalogue.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DetectStep {
+    Found,
+    List,
+}
+
 /// The "which mouse" dialog: detected mice, brands, models of one brand.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Detect {
+    pub step: DetectStep,
     pub found: Vec<Found>,
     pub brands: Vec<BrandRow>,
     /// Models of the selected brand.
@@ -66,6 +76,8 @@ pub struct Detect {
     pub model: usize,
     /// The detected mouse the selection came from, if any.
     pub chip: Option<usize>,
+    /// Step 1 pick when the lists opened; "Back" restores it.
+    pub kept: Option<usize>,
     pub pane: Pane,
     /// First visible row of each list.
     pub brand_top: usize,
@@ -153,31 +165,50 @@ fn diagnostics(f: &mut Frame, d: &DeviceView, y: f32) {
 
 // ---- "which mouse" dialog ----------------------------------------------------
 //
-//  +-----------------------------------------------------------+
-//  | Which mouse do you use?                                   |
-//  | DETECTED  (● White Shark Lionel · current) (● Corsair …)  |
-//  | BRAND               MODEL                                 |
-//  | ● White Shark    |  Lionel                     Supported  |
-//  | ● Logitech       |  Other White Shark mouse  Experimental |
-//  | …  (scrolls)     |  …  (scrolls)                          |
-//  | ● Supported ● Experimental ● Partial ● Statistics only    |
-//  | [‹ Back to detected]                     [Cancel] [Use]   |
-//  +-----------------------------------------------------------+
+//  Step 1: detected mice                  Step 2: catalogue
+//  +--------------------------------+     +--------------------------------+
+//  | Which mouse do you use?        |     | Which mouse do you use?        |
+//  | DETECTED                       |     | (No mouse detected. …)         |
+//  | (o) White Shark Lionel         |     | BRAND        MODEL             |
+//  |     ● Supported · in use       |     | +--------+  +----------------+ |
+//  | ( ) Corsair Katar Pro          |     | |● White |  | Lionel        #| |
+//  |     ● Experimental             |     | |● Logi… |  | Other …   v   #| |
+//  | My mouse isn't listed ›        |     | +--------+  +----------------+ |
+//  |                                |     | ● Experimental   Help add …    |
+//  |              [Cancel] [Use]    |     | [‹ Back]       [Cancel] [Use]  |
+//  +--------------------------------+     +--------------------------------+
 
 const DLG_W: f32 = 700.0;
 const DLG_H: f32 = 520.0;
 const DLG_PAD: f32 = 24.0;
-const CHIP_H: f32 = 32.0;
-const LIST_ROW: f32 = 28.0;
+const BTN_H: f32 = 36.0;
+const USE_W: f32 = 170.0;
+const CANCEL_W: f32 = 120.0;
+/// Room for the chevron and padding of "‹ Back".
+const BACK_PAD: f32 = 56.0;
+/// Step 1: one detected mouse per two-line row.
+const FOUND_TOP: f32 = 68.0;
+const FOUND_H: f32 = 56.0;
+const FOUND_GAP: f32 = 8.0;
+/// Detected rows that fit; any more are in the lists.
+const FOUND_ROWS: usize = 5;
+const RADIO_R: f32 = 9.0;
+/// Step 2: lists inside framed boxes.
+const LIST_TOP: f32 = 84.0;
+const LIST_ROW: f32 = 30.0;
 /// Rows each list shows; longer lists scroll.
-pub const LIST_ROWS: usize = 8;
-/// "Mouse missing or experimental? Help add your mouse" under the models.
-const HINT_H: f32 = 26.0;
+pub const LIST_ROWS: usize = 9;
+const FRAME_PAD: f32 = 6.0;
+const SCROLL_W: f32 = 6.0;
+const THUMB_MIN: f32 = 24.0;
+/// "More below" fade over the last visible row, in bands.
+const FADE_H: f32 = 28.0;
+const FADE_STEPS: usize = 7;
 const BRAND_W: f32 = 220.0;
 const PANE_GAP: f32 = 16.0;
-const BADGE_W: f32 = 170.0;
+const SUPPORT_H: f32 = 24.0;
 
-/// Dialog frame and the two list areas (brands, models).
+/// Dialog frame and the two list boxes (brands, models).
 struct Layout {
     dlg: Rect,
     inner: Rect,
@@ -188,8 +219,8 @@ struct Layout {
 fn layout() -> Layout {
     let dlg = Rect::new((WIDTH - DLG_W) / 2.0, (HEIGHT - DLG_H) / 2.0, DLG_W, DLG_H);
     let inner = dlg.inset(DLG_PAD);
-    let top = inner.y + 130.0;
-    let h = LIST_ROWS as f32 * LIST_ROW;
+    let top = inner.y + LIST_TOP;
+    let h = LIST_ROWS as f32 * LIST_ROW + 2.0 * FRAME_PAD;
     let brands = Rect::new(inner.x, top, BRAND_W, h);
     let models = Rect::new(inner.x + BRAND_W + PANE_GAP, top, inner.w - BRAND_W - PANE_GAP, h);
     Layout { dlg, inner, brands, models }
@@ -212,56 +243,99 @@ pub(super) fn detect_dialog(f: &mut Frame, d: &Detect) {
 
     let inner = l.inner;
     f.g.text(tr(T::DetectTitle), Rect::new(inner.x, inner.y, inner.w, 28.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
-    f.caption_in(tr(T::DetectedCaption), inner.x, inner.y + 42.0, inner.w);
-    found_chips(f, d, Rect::new(inner.x, inner.y + 62.0, inner.w, CHIP_H));
+    match d.step {
+        DetectStep::Found => found_step(f, d, inner),
+        DetectStep::List => list_step(f, d, &l),
+    }
 
+    // Buttons: "‹ Back" on step 2 when step 1 exists; Cancel, Use.
+    let by = inner.y + inner.h - BTN_H;
+    if d.step == DetectStep::List && !d.found.is_empty() {
+        let label = tr(T::BackToDetected);
+        let back = Rect::new(inner.x, by, text_w(label, Size::Body) + BACK_PAD, BTN_H);
+        f.glyph_button(Act::DetectBack, back, label, Glyph::ChevronLeft, Place::Lead);
+    }
+    let use_btn = Rect::new(inner.x + inner.w - USE_W, by, USE_W, BTN_H);
+    f.push_button(Act::DetectCancel, Rect::new(use_btn.x - 10.0 - CANCEL_W, by, CANCEL_W, BTN_H), tr(T::Cancel), false);
+    // Step 1 needs a pick first.
+    if d.step == DetectStep::Found && d.chip.is_none() {
+        f.dead_button(use_btn, tr(T::UseMouse));
+        return;
+    }
+    f.push_button(Act::DetectUse, use_btn, tr(T::UseMouse), true);
+}
+
+/// Step 1: the detected mice as large rows, then the way to the lists.
+fn found_step(f: &mut Frame, d: &Detect, inner: Rect) {
+    f.caption_in(tr(T::DetectedCaption), inner.x, inner.y + 44.0, inner.w);
+    let mut y = inner.y + FOUND_TOP;
+    for (i, m) in d.found.iter().enumerate().take(FOUND_ROWS) {
+        let r = Rect::new(inner.x, y, inner.w, FOUND_H);
+        found_row(f, m, Act::DetectFound(i), r, Mark::of(d.chip == Some(i)));
+        y += FOUND_H + FOUND_GAP;
+    }
+    more_link(f, Act::DetectList, tr(T::NotListed), inner.x, y);
+}
+
+/// Detected mouse: radio marker, name, support level ("· in use" on the
+/// mouse in use). Picked = accent border and soft fill, like tiles.
+fn found_row(f: &mut Frame, m: &Found, act: Act, r: Rect, mark: Mark) {
+    let sel = mark == Mark::Current;
+    let hot = f.button(act, r);
+    let bg = if sel { th().accent_soft } else if hot { th().hover } else { th().card };
+    f.g.fill(r, R_CTRL, th().card);
+    f.g.fill(r, R_CTRL, bg);
+    let (bw, bc) = if sel { (2.0, th().accent) } else { (1.0, th().border) };
+    f.g.stroke(r, R_CTRL, bw, bc);
+
+    // Radio marker: a ring, filled with a dot when picked.
+    let (cx, cy) = (r.x + 26.0, r.y + r.h / 2.0);
+    f.g.ring(cx, cy, RADIO_R, 1.5, if sel { th().accent } else { th().subtle });
+    if sel {
+        f.g.circle(cx, cy, RADIO_R / 2.0, th().accent);
+    }
+
+    // Name on top; support dot and level below.
+    let (x, w) = (r.x + 50.0, r.w - 66.0);
+    f.g.text(&m.title, Rect::new(x, r.y + 8.0, w, 20.0), Size::Body, Weight::Semibold, Align::Left, th().text);
+    let sub = if m.current { format!("{} · {}", m.badge, tr(T::CurrentTag)) } else { m.badge.clone() };
+    f.g.circle(x + 4.0, r.y + 39.0, 3.5, badge_color(m.kind));
+    f.g.text(&sub, Rect::new(x + 14.0, r.y + 30.0, w - 14.0, 18.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
+}
+
+/// Accent link with a trailing chevron, e.g. "My mouse isn't listed ›".
+fn more_link(f: &mut Frame, act: Act, label: &str, x: f32, y: f32) {
+    const H: f32 = 32.0;
+    const GLYPH_W: f32 = 16.0;
+    // Width is an estimate: the label gets slack, the chevron sits at the estimate.
+    let label_w = text_w(label, Size::Body);
+    let r = Rect::new(x, y, label_w + GLYPH_W, H);
+    let hot = f.button(act, r);
+    let c = if hot { th().text } else { th().accent };
+    f.g.text(label, Rect::new(r.x, r.y, label_w + GLYPH_W, H), Size::Body, Weight::Semibold, Align::Left, c);
+    glyph(f.g, Glyph::ChevronRight, r.x + label_w + GLYPH_W / 2.0, r.y + H / 2.0, c);
+}
+
+/// Step 2: brand and model lists, the picked model's support below.
+fn list_step(f: &mut Frame, d: &Detect, l: &Layout) {
+    let inner = l.inner;
+    if d.found.is_empty() {
+        let r = Rect::new(inner.x, inner.y + 36.0, inner.w, 18.0);
+        f.g.text(tr(T::NoMouse), r, Size::Caption, Weight::Normal, Align::Left, th().muted);
+    }
     f.caption_in(tr(T::BrandCaption), l.brands.x, l.brands.y - 22.0, l.brands.w);
     f.caption_in(tr(T::ModelCaption), l.models.x, l.models.y - 22.0, l.models.w);
     brand_list(f, d, l.brands);
     model_list(f, d, l.models);
-    report_hint(f, Rect::new(l.models.x, l.models.y + l.models.h + 4.0, l.models.w, HINT_H));
     if d.keys {
         // Which list the arrow keys move in.
+        const OFF: f32 = 3.0;
         let r = if d.pane == Pane::Brands { l.brands } else { l.models };
-        f.g.stroke(Rect::new(r.x - 4.0, r.y - 4.0, r.w + 8.0, r.h + 8.0), R_CTRL + 4.0, 2.0, th().accent);
+        let ring = Rect::new(r.x - OFF, r.y - OFF, r.w + 2.0 * OFF, r.h + 2.0 * OFF);
+        f.g.stroke(ring, R_CTRL + OFF, 2.0, th().accent);
     }
-
-    let by = l.dlg.y + l.dlg.h - DLG_PAD - 36.0;
-    legend(f, inner.x, by - 32.0);
-    if !d.found.is_empty() {
-        f.glyph_button(Act::DetectBack, Rect::new(inner.x, by, 200.0, 36.0), tr(T::BackToDetected), Glyph::ChevronLeft, Place::Lead);
-    }
-    let use_btn = Rect::new(inner.x + inner.w - 170.0, by, 170.0, 36.0);
-    f.push_button(Act::DetectUse, use_btn, tr(T::UseMouse), true);
-    f.push_button(Act::DetectCancel, Rect::new(use_btn.x - 10.0 - 120.0, by, 120.0, 36.0), tr(T::Cancel), false);
-}
-
-/// Detected mice as chips: support dot, name, "· current" on the one in use.
-fn found_chips(f: &mut Frame, d: &Detect, row: Rect) {
-    if d.found.is_empty() {
-        f.g.text(tr(T::NoMouse), row, Size::Body, Weight::Normal, Align::Left, th().muted);
-        return;
-    }
-    let mut x = row.x;
-    for (i, m) in d.found.iter().enumerate() {
-        let tag = if m.current { format!("{} · {}", m.title, tr(T::CurrentTag)) } else { m.title.clone() };
-        let w = (text_w(&tag, Size::Body) + 40.0).min(row.x + row.w - x);
-        if w < 80.0 {
-            break;
-        }
-        let r = Rect::new(x, row.y, w, row.h);
-        let selected = d.chip == Some(i);
-        let hot = f.button(Act::DetectFound(i), r);
-        let bg = if selected { th().accent_soft } else if hot { th().hover } else { th().card };
-        f.g.fill(r, r.h / 2.0, th().card);
-        f.g.fill(r, r.h / 2.0, bg);
-        let (bw, bc) = if selected { (2.0, th().accent) } else { (1.0, th().border) };
-        f.g.stroke(r, r.h / 2.0, bw, bc);
-        f.g.circle(r.x + 16.0, r.y + r.h / 2.0, 4.0, badge_color(m.kind));
-        let label = Rect::new(r.x + 26.0, r.y, r.w - 34.0, r.h);
-        f.g.text(&tag, label, Size::Body, Weight::Semibold, Align::Left, th().text);
-        x += w + 8.0;
-    }
+    let y = l.models.y + l.models.h + 10.0;
+    support_line(f, d, Rect::new(inner.x, y, inner.w, SUPPORT_H));
 }
 
 /// One list row: selected = soft fill and a left bar; hover = hover fill.
@@ -275,22 +349,67 @@ fn list_row(f: &mut Frame, act: Act, r: Rect, selected: bool) {
     }
 }
 
-/// Thin scroll bar on the right of a list longer than `LIST_ROWS`.
-fn scroll_bar(f: &mut Frame, area: Rect, top: usize, count: usize) {
+/// List box: card fill and border, so it reads as a scrollable field.
+fn list_frame(f: &Frame, r: Rect) {
+    f.g.fill(r, R_CTRL, th().card);
+    f.g.stroke(r, R_CTRL, 1.0, th().border);
+}
+
+/// Row `k` of a list box scrolled to `top`; keeps the scroll bar clear.
+fn row_rect(area: Rect, k: usize, top: usize, count: usize) -> Rect {
+    let bar = if count > LIST_ROWS { SCROLL_W + FRAME_PAD } else { 0.0 };
+    let y = area.y + FRAME_PAD + (k - top) as f32 * LIST_ROW;
+    Rect::new(area.x + FRAME_PAD, y, area.w - 2.0 * FRAME_PAD - bar, LIST_ROW - 2.0)
+}
+
+/// Rows follow below the visible ones.
+fn more_below(top: usize, count: usize) -> bool {
+    top + LIST_ROWS < count
+}
+
+/// Scroll thumb in `track`: as long as the visible share, at least
+/// `THUMB_MIN`, placed by `top`.
+fn thumb(track: Rect, top: usize, count: usize) -> Rect {
+    let hidden = count.saturating_sub(LIST_ROWS);
+    if hidden == 0 {
+        return track;
+    }
+    let h = (track.h * LIST_ROWS as f32 / count as f32).max(THUMB_MIN);
+    let y = track.y + (track.h - h) * top.min(hidden) as f32 / hidden as f32;
+    Rect::new(track.x, y, track.w, h)
+}
+
+/// Scroll bar with a track on a list longer than `LIST_ROWS`; a fade and
+/// a chevron over the last row while more rows follow.
+fn scroll_cue(f: &mut Frame, area: Rect, top: usize, count: usize) {
     if count <= LIST_ROWS {
         return;
     }
-    let track = Rect::new(area.x + area.w - 3.0, area.y, 3.0, area.h);
-    f.g.fill(track, 1.5, th().border);
-    let h = track.h * LIST_ROWS as f32 / count as f32;
-    let y = track.y + (track.h - h) * top as f32 / (count - LIST_ROWS) as f32;
-    f.g.fill(Rect::new(track.x, y, track.w, h), 1.5, th().subtle);
+    let track = Rect::new(area.x + area.w - FRAME_PAD - SCROLL_W, area.y + FRAME_PAD, SCROLL_W, area.h - 2.0 * FRAME_PAD);
+    f.g.fill(track, SCROLL_W / 2.0, th().border);
+    f.g.fill(thumb(track, top, count), SCROLL_W / 2.0, th().subtle);
+    if !more_below(top, count) {
+        return;
+    }
+
+    // Bands of the box colour, more opaque towards the bottom edge.
+    let (x, bottom) = (area.x + FRAME_PAD, track.y + track.h);
+    let w = track.x - FRAME_PAD - x;
+    let band = FADE_H / FADE_STEPS as f32;
+    for i in 0..FADE_STEPS {
+        let alpha = (255 * (i + 1) / (FADE_STEPS + 1)) as u8;
+        let r = Rect::new(x, bottom - FADE_H + i as f32 * band, w, band);
+        f.g.fill(r, 0.0, Color(th().card.0, alpha));
+    }
+    glyph(f.g, Glyph::ChevronDown, x + w / 2.0, bottom - 8.0, th().muted);
 }
 
 /// Brands with a dot for the best support among their models.
 fn brand_list(f: &mut Frame, d: &Detect, area: Rect) {
+    list_frame(f, area);
+    let count = d.brands.len();
     for (k, b) in d.brands.iter().enumerate().skip(d.brand_top).take(LIST_ROWS) {
-        let r = Rect::new(area.x, area.y + (k - d.brand_top) as f32 * LIST_ROW, area.w - 8.0, LIST_ROW - 2.0);
+        let r = row_rect(area, k, d.brand_top, count);
         let sel = k == d.brand;
         list_row(f, Act::DetectBrand(k), r, sel);
         f.g.circle(r.x + 16.0, r.y + r.h / 2.0, 4.0, badge_color(b.kind));
@@ -298,54 +417,61 @@ fn brand_list(f: &mut Frame, d: &Detect, area: Rect) {
         let label = Rect::new(r.x + 28.0, r.y, r.w - 34.0, r.h);
         f.g.text(&b.name, label, Size::Body, weight, Align::Left, if sel { th().text } else { th().muted });
     }
-    scroll_bar(f, area, d.brand_top, d.brands.len());
+    scroll_cue(f, area, d.brand_top, count);
 }
 
-/// Models of the selected brand with their support badge.
+/// Models of the selected brand, names only; support shows below.
 fn model_list(f: &mut Frame, d: &Detect, area: Rect) {
+    list_frame(f, area);
+    let count = d.models.len();
     for (k, m) in d.models.iter().enumerate().skip(d.model_top).take(LIST_ROWS) {
-        let r = Rect::new(area.x, area.y + (k - d.model_top) as f32 * LIST_ROW, area.w - 8.0, LIST_ROW - 2.0);
+        let r = row_rect(area, k, d.model_top, count);
         let sel = k == d.model;
         list_row(f, Act::DetectSel(k), r, sel);
         let weight = if sel { Weight::Semibold } else { Weight::Normal };
-        // The badge takes what it needs, the name the rest.
-        let badge_w = (text_w(&m.badge, Size::Caption) + 8.0).min(BADGE_W);
-        let name = Rect::new(r.x + 14.0, r.y, r.w - badge_w - 34.0, r.h);
+        let name = Rect::new(r.x + 14.0, r.y, r.w - 20.0, r.h);
         f.g.text(&m.title, name, Size::Body, weight, Align::Left, if sel { th().text } else { th().muted });
-        let badge = Rect::new(r.x + r.w - badge_w - 10.0, r.y, badge_w, r.h);
-        f.g.text(&m.badge, badge, Size::Caption, Weight::Semibold, Align::Right, badge_color(m.kind));
     }
-    scroll_bar(f, area, d.model_top, d.models.len());
+    scroll_cue(f, area, d.model_top, count);
 }
 
-/// Next to the auto-detect and "other" entries: a way to get a missing
-/// or experimental mouse supported.
+/// The picked model's support level; for auto-detect, experimental and
+/// "other" entries also a way to get the mouse supported.
+fn support_line(f: &mut Frame, d: &Detect, r: Rect) {
+    const SIZE: Size = Size::Caption;
+    let Some(m) = d.models.get(d.model) else {
+        return;
+    };
+    let color = badge_color(m.kind);
+    f.g.circle(r.x + 4.0, r.y + r.h / 2.0, 4.0, color);
+    let badge_w = text_w(&m.badge, SIZE) + 12.0;
+    f.g.text(&m.badge, Rect::new(r.x + 14.0, r.y, badge_w, r.h), SIZE, Weight::Semibold, Align::Left, color);
+    if !matches!(m.kind, Badge::Warn | Badge::Muted) {
+        return;
+    }
+    let x = r.x + 14.0 + badge_w + 12.0;
+    report_hint(f, Rect::new(x, r.y, r.x + r.w - x, r.h));
+}
+
+/// "Mouse missing or experimental? Help add your mouse", right-aligned;
+/// the question is left out when it does not fit.
 fn report_hint(f: &mut Frame, r: Rect) {
     const SIZE: Size = Size::Caption;
     let link = tr(T::HelpAddMouse);
-    let link_w = (text_w(link, SIZE) + 20.0).min(r.w / 2.0);
+    let link_w = (text_w(link, SIZE) + 20.0).min(r.w);
     let lr = Rect::new(r.x + r.w - link_w, r.y, link_w, r.h);
     let hot = f.button(Act::ReportOpen, lr);
     if hot {
         f.g.fill(lr, R_CTRL, th().hover);
     }
     f.g.text(link, Rect::new(lr.x + 8.0, lr.y, lr.w - 16.0, lr.h), SIZE, Weight::Semibold, Align::Right, th().accent);
-    let hint = Rect::new(r.x + 14.0, r.y, r.w - link_w - 18.0, r.h);
-    f.g.text(tr(T::MissingMouse), hint, SIZE, Weight::Normal, Align::Right, th().muted);
-}
 
-/// What the support dots mean.
-fn legend(f: &mut Frame, x: f32, y: f32) {
-    const SIZE: Size = Size::Caption;
-    let items = [(Badge::Good, T::BadgeFull), (Badge::Warn, T::BadgeExperimental), (Badge::Partial, T::BadgePartial), (Badge::Muted, T::LegendStats)];
-    let mut x = x;
-    for (kind, key) in items {
-        let label = tr(key);
-        f.g.circle(x + 4.0, y + 9.0, 4.0, badge_color(kind));
-        let w = text_w(label, SIZE) + 8.0;
-        f.g.text(label, Rect::new(x + 14.0, y, w, 18.0), SIZE, Weight::Normal, Align::Left, th().muted);
-        x += 14.0 + w + 18.0;
+    let hint = tr(T::MissingMouse);
+    let room = r.w - link_w;
+    if text_w(hint, SIZE) > room {
+        return;
     }
+    f.g.text(hint, Rect::new(r.x, r.y, room, r.h), SIZE, Weight::Normal, Align::Right, th().muted);
 }
 
 /// New-mouse offer over the title row: mouse icon, name with its support
@@ -398,4 +524,25 @@ pub(super) fn access_banner(f: &mut Frame) {
     let room = btn.x - 12.0 - text_x;
     f.g.text(tr(T::AccessNeeded), Rect::new(text_x, r.y + 5.0, room, 20.0), Size::Body, Weight::Semibold, Align::Left, th().text);
     f.g.text(tr(T::AccessSteps), Rect::new(text_x, r.y + 25.0, room, 18.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scroll_cue_follows_hidden_rows() {
+        assert!(!more_below(0, LIST_ROWS));
+        assert!(more_below(0, LIST_ROWS + 1));
+        assert!(!more_below(1, LIST_ROWS + 1));
+
+        // Thumb at the top, at the bottom, never shorter than THUMB_MIN.
+        let track = Rect::new(0.0, 10.0, SCROLL_W, 200.0);
+        let count = LIST_ROWS * 10;
+        let t = thumb(track, 0, count);
+        assert_eq!((t.y, t.h), (10.0, THUMB_MIN));
+        let t = thumb(track, count - LIST_ROWS, count);
+        assert_eq!(t.y + t.h, 210.0);
+        assert_eq!(thumb(track, 0, LIST_ROWS).h, 200.0, "nothing hidden: full track");
+    }
 }

@@ -288,9 +288,11 @@ pub enum T {
     /// What to do with the copied command.
     AccessSteps,
     CopyCommand,
+    /// Detect dialog: from the detected mice to the lists.
+    NotListed,
 }
 
-const COUNT: usize = T::CopyCommand as usize + 1;
+const COUNT: usize = T::NotListed as usize + 1;
 type Table = [&'static str; COUNT];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -695,8 +697,8 @@ const EN: Table = [
     "Other {} mouse (auto-detect)",
     "Partial (read-only)",
     "DETECTED",
-    "current",
-    "Back to detected",
+    "in use",
+    "Back",
     "BRAND",
     "MODEL",
     "Help add your mouse",
@@ -746,6 +748,7 @@ const EN: Table = [
     "Whisker needs permission to access the mouse",
     "Run the command in a terminal.",
     "Copy command",
+    "My mouse isn't listed",
 ];
 
 const SK: Table = [
@@ -976,8 +979,8 @@ const SK: Table = [
     "Iná myš {} (automaticky)",
     "Čiastočná (len čítanie)",
     "NÁJDENÉ",
-    "aktuálna",
-    "Späť na nájdené",
+    "používaná",
+    "Späť",
     "ZNAČKA",
     "MODEL",
     "Pomôžte pridať vašu myš",
@@ -1027,6 +1030,7 @@ const SK: Table = [
     "Whisker potrebuje prístup k myši",
     "Príkaz spustite v termináli.",
     "Kopírovať príkaz",
+    "Moja myš tu nie je",
 ];
 
 const CS: Table = [
@@ -1257,8 +1261,8 @@ const CS: Table = [
     "Jiná myš {} (automaticky)",
     "Částečná (jen čtení)",
     "NALEZENO",
-    "aktuální",
-    "Zpět na nalezené",
+    "používaná",
+    "Zpět",
     "ZNAČKA",
     "MODEL",
     "Pomozte přidat vaši myš",
@@ -1308,6 +1312,7 @@ const CS: Table = [
     "Whisker potřebuje přístup k myši",
     "Příkaz spusťte v terminálu.",
     "Kopírovat příkaz",
+    "Moje myš tu není",
 ];
 
 const PL: Table = [
@@ -1538,8 +1543,8 @@ const PL: Table = [
     "Inna mysz {} (automatycznie)",
     "Częściowa (tylko odczyt)",
     "WYKRYTE",
-    "bieżąca",
-    "Wróć do wykrytych",
+    "używana",
+    "Wstecz",
     "MARKA",
     "MODEL",
     "Pomoc w dodaniu myszy",
@@ -1589,6 +1594,7 @@ const PL: Table = [
     "Whisker potrzebuje dostępu do myszy",
     "Polecenie należy uruchomić w terminalu.",
     "Kopiuj polecenie",
+    "Mojej myszy nie ma na liście",
 ];
 
 const DE: Table = [
@@ -1819,8 +1825,8 @@ const DE: Table = [
     "Andere {}-Maus (automatisch)",
     "Teilweise (nur lesen)",
     "ERKANNT",
-    "aktuell",
-    "Zurück zu erkannten",
+    "in Verwendung",
+    "Zurück",
     "MARKE",
     "MODELL",
     "Maus hinzufügen",
@@ -1870,6 +1876,7 @@ const DE: Table = [
     "Whisker benötigt Zugriffsrechte für die Maus",
     "Führen Sie den Befehl im Terminal aus.",
     "Befehl kopieren",
+    "Meine Maus ist nicht dabei",
 ];
 
 const FR: Table = [
@@ -2100,8 +2107,8 @@ const FR: Table = [
     "Autre souris {} (auto)",
     "Partielle (lecture seule)",
     "DÉTECTÉES",
-    "actuelle",
-    "Retour aux détectées",
+    "utilisée",
+    "Retour",
     "MARQUE",
     "MODÈLE",
     "Ajouter votre souris",
@@ -2151,6 +2158,7 @@ const FR: Table = [
     "Whisker a besoin d'un accès à la souris",
     "Exécutez la commande dans un terminal.",
     "Copier la commande",
+    "Ma souris n'est pas dans la liste",
 ];
 
 const ES: Table = [
@@ -2381,8 +2389,8 @@ const ES: Table = [
     "Otro ratón {} (automático)",
     "Parcial (solo lectura)",
     "DETECTADOS",
-    "actual",
-    "Volver a detectados",
+    "en uso",
+    "Atrás",
     "MARCA",
     "MODELO",
     "Añadir su ratón",
@@ -2432,6 +2440,7 @@ const ES: Table = [
     "Whisker necesita acceso al ratón",
     "Ejecute el comando en una terminal.",
     "Copiar comando",
+    "Mi ratón no aparece",
 ];
 
 const PT: Table = [
@@ -2662,8 +2671,8 @@ const PT: Table = [
     "Outro rato {} (automático)",
     "Parcial (só leitura)",
     "DETETADOS",
-    "atual",
-    "Voltar aos detetados",
+    "em uso",
+    "Voltar",
     "MARCA",
     "MODELO",
     "Adicionar o seu rato",
@@ -2713,6 +2722,7 @@ const PT: Table = [
     "O Whisker precisa de acesso ao rato",
     "Execute o comando num terminal.",
     "Copiar comando",
+    "O meu rato não está na lista",
 ];
 
 const IT: Table = [
@@ -2943,8 +2953,8 @@ const IT: Table = [
     "Altro mouse {} (automatico)",
     "Parziale (sola lettura)",
     "RILEVATI",
-    "attuale",
-    "Torna ai rilevati",
+    "in uso",
+    "Indietro",
     "MARCA",
     "MODELLO",
     "Aggiungere il proprio mouse",
@@ -2994,6 +3004,7 @@ const IT: Table = [
     "Whisker richiede l'autorizzazione per il mouse",
     "Eseguire il comando in un terminale.",
     "Copia comando",
+    "Il mio mouse non è nell'elenco",
 ];
 
 const JA: Table = [
@@ -3225,7 +3236,7 @@ const JA: Table = [
     "一部 (読み取りのみ)",
     "検出済み",
     "使用中",
-    "検出済みに戻る",
+    "戻る",
     "ブランド",
     "モデル",
     "マウスの追加に協力",
@@ -3275,6 +3286,7 @@ const JA: Table = [
     "Whisker にはマウスへのアクセス許可が必要です",
     "コマンドをターミナルで実行してください。",
     "コマンドをコピー",
+    "マウスが一覧にありません",
 ];
 
 const KO: Table = [
@@ -3505,8 +3517,8 @@ const KO: Table = [
     "기타 {} 마우스 (자동 감지)",
     "부분 (읽기 전용)",
     "감지됨",
-    "현재",
-    "감지된 항목으로",
+    "사용 중",
+    "뒤로",
     "브랜드",
     "모델",
     "마우스 추가 돕기",
@@ -3556,6 +3568,7 @@ const KO: Table = [
     "Whisker에 마우스 접근 권한이 필요합니다",
     "터미널에서 명령을 실행하십시오.",
     "명령 복사",
+    "내 마우스가 목록에 없습니다",
 ];
 
 const ZH_HANS: Table = [
@@ -3786,8 +3799,8 @@ const ZH_HANS: Table = [
     "其他 {} 鼠标（自动识别）",
     "部分（只读）",
     "已检测到",
-    "当前",
-    "返回已检测",
+    "使用中",
+    "返回",
     "品牌",
     "型号",
     "帮助添加您的鼠标",
@@ -3837,6 +3850,7 @@ const ZH_HANS: Table = [
     "Whisker 需要访问鼠标的权限",
     "请您在终端中运行该命令。",
     "复制命令",
+    "我的鼠标不在列表中",
 ];
 
 const ZH_HANT: Table = [
@@ -4067,8 +4081,8 @@ const ZH_HANT: Table = [
     "其他 {} 滑鼠（自動偵測）",
     "部分（唯讀）",
     "已偵測到",
-    "目前",
-    "返回已偵測",
+    "使用中",
+    "返回",
     "品牌",
     "型號",
     "協助新增您的滑鼠",
@@ -4118,6 +4132,7 @@ const ZH_HANT: Table = [
     "Whisker 需要存取滑鼠的權限",
     "請您在終端機中執行該命令。",
     "複製命令",
+    "我的滑鼠不在清單中",
 ];
 
 #[cfg(test)]

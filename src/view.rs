@@ -29,7 +29,7 @@ mod device;
 mod report;
 mod update;
 pub use buttons::{DelayMode, Picker, Tab, button_name};
-pub use device::{Badge, Banner, BrandRow, Detect, DetectRow, DeviceView, Found, LIST_ROWS, Pane, detect_pane_at};
+pub use device::{Badge, Banner, BrandRow, Detect, DetectRow, DetectStep, DeviceView, Found, LIST_ROWS, Pane, detect_pane_at};
 pub use report::{Answer, Ask, CheckView, PickRow, REPORT_ROWS, ReportView, Step as ReportStep, report_at};
 pub use update::{Install, Offer, Probe, Step as UpdateStep, UpdateView, note_lines};
 use crate::devices::{Caps, DpiUi};
@@ -216,8 +216,10 @@ pub enum Act {
     DetectUse,
     /// Closes the dialog; the current mouse stays.
     DetectCancel,
-    /// Selects the detected mouse again (preselected one).
+    /// From the lists back to the detected mice.
     DetectBack,
+    /// From the detected mice to the brand and model lists.
+    DetectList,
     /// Reverts the last destructive action (toast button, Ctrl+Z).
     Undo,
     About,

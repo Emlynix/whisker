@@ -32,7 +32,7 @@ use crate::theme::{self, THEMES};
 use crate::store::{self, AppConfig};
 use crate::tray::{Level, TrayAction};
 use crate::view::{
-    self, Act, Answer, Ask, Badge, Banner, BasicView, BrandRow, Charge, CheckView, DelayMode, Detect, DetectRow, DeviceView, Dialog,
+    self, Act, Answer, Ask, Badge, Banner, BasicView, BrandRow, Charge, CheckView, DelayMode, Detect, DetectRow, DetectStep, DeviceView, Dialog,
     Focus, Found, Hit, Page, Pane, PickRow, Picker, ReportStep, ReportView, StageView, Sync, Toast, UpdateView, View, Web,
 };
 use updater::{Trigger, Updates};
@@ -544,7 +544,8 @@ fn detect_state(mice: &[DeviceInfo], device: Option<&str>, usb: Option<(u16, u16
             let (brand, model) = locate(&m.id).unwrap_or((0, 0));
             let usb_here = (d.vid, d.pid);
             let is_current = current == Some(m.id.as_str()) && usb.is_none_or(|u| u == usb_here);
-            Found { title, kind: support_badge(m.support).1, current: is_current, brand, model, usb: usb_here }
+            let (badge, kind) = support_badge(m.support);
+            Found { title, badge: badge.into(), kind, current: is_current, brand, model, usb: usb_here }
         })
         .collect();
 
@@ -555,7 +556,10 @@ fn detect_state(mice: &[DeviceInfo], device: Option<&str>, usb: Option<(u16, u16
         (None, Some(id)) => locate(id).unwrap_or((0, 0)),
         (None, None) => (0, 0),
     };
-    let mut d = Detect { found, brands, models: model_rows(brand), brand, model, chip, pane: Pane::Models, brand_top: 0, model_top: 0, keys: false };
+    // Step 1 lists the detected mice; with none, the catalogue right away.
+    let step = if found.is_empty() { DetectStep::List } else { DetectStep::Found };
+    let models = model_rows(brand);
+    let mut d = Detect { step, found, brands, models, brand, model, chip, kept: None, pane: Pane::Models, brand_top: 0, model_top: 0, keys: false };
     reveal(&mut d);
     d
 }
@@ -603,17 +607,38 @@ fn pick_found(d: &mut Detect, i: usize) {
     reveal(d);
 }
 
-/// "Back to detected": the current mouse among the detected, else the first.
-fn back_to_detected(d: &mut Detect) {
-    let i = d.found.iter().position(|f| f.current).unwrap_or(0);
-    pick_found(d, i);
+/// "My mouse isn't listed": step 2, remembering the step 1 pick.
+fn show_list(d: &mut Detect) {
+    (d.step, d.kept, d.keys) = (DetectStep::List, d.chip, false);
 }
 
-/// Arrow keys in the dialog: Up/Down move in the list, Left/Right (and
-/// Tab) switch lists.
+/// "Back" (or Esc) on step 2: step 1 as it was left. False when nothing
+/// was detected, so there is no step 1.
+fn step_back(d: &mut Detect) -> bool {
+    if d.step == DetectStep::Found || d.found.is_empty() {
+        return false;
+    }
+    d.step = DetectStep::Found;
+    if let Some(i) = d.kept.filter(|_| d.chip.is_none()) {
+        pick_found(d, i);
+    }
+    true
+}
+
+/// Arrow keys in the dialog. Step 1: Up/Down move among the detected
+/// mice. Step 2: Up/Down move in the list, Left/Right (and Tab) switch lists.
 fn detect_key(d: &mut Detect, vk: u16) -> bool {
-    d.keys = true;
     let step = |i: usize, n: usize, down: bool| if down { (i + 1).min(n.saturating_sub(1)) } else { i.saturating_sub(1) };
+    if d.step == DetectStep::Found {
+        if !matches!(vk, VK_UP | VK_DOWN) {
+            return false;
+        }
+        // Nothing picked yet: either key picks the first.
+        let i = d.chip.map_or(0, |c| step(c, d.found.len(), vk == VK_DOWN));
+        pick_found(d, i);
+        return true;
+    }
+    d.keys = true;
     match (vk, d.pane) {
         (VK_UP | VK_DOWN, Pane::Brands) => pick_brand(d, step(d.brand, d.brands.len(), vk == VK_DOWN)),
         (VK_UP | VK_DOWN, Pane::Models) => pick_model(d, step(d.model, d.models.len(), vk == VK_DOWN)),
@@ -636,8 +661,11 @@ fn detect_wheel(d: &mut Detect, pane: Pane, notches: i32) {
     *top = (*top as i32 - notches).clamp(0, max) as usize;
 }
 
-/// Model id and detected USB ids "Use" stores.
+/// Model id and detected USB ids "Use" stores; none until step 1 has a pick.
 fn detect_choice(d: &Detect) -> Option<(String, Option<(u16, u16)>)> {
+    if d.step == DetectStep::Found && d.chip.is_none() {
+        return None;
+    }
     let row = d.models.get(d.model)?;
     Some((row.choice.clone(), d.chip.map(|c| d.found[c].usb)))
 }
@@ -1060,7 +1088,8 @@ fn hook_wheel(x: f32, y: f32, notches: i32) {
             window::invalidate();
             return;
         }
-        let Some(d) = c.view.detect.as_mut() else {
+        // Only step 2 has lists.
+        let Some(d) = c.view.detect.as_mut().filter(|d| d.step == DetectStep::List) else {
             return;
         };
         if let Some(pane) = view::detect_pane_at(x, y) {
@@ -1277,7 +1306,7 @@ impl Controller {
                 self.view.basic.rate = Some(hz);
                 self.send_setting(Command::SetBasicRate(hz));
             }
-            Act::DetectSel(_) | Act::DetectBrand(_) | Act::DetectFound(_) | Act::DetectBack => self.detect_pick(a),
+            Act::DetectSel(_) | Act::DetectBrand(_) | Act::DetectFound(_) | Act::DetectBack | Act::DetectList => self.detect_pick(a),
             Act::DetectUse => self.choose_device(),
             Act::DetectCancel => self.cancel_detect(),
             Act::Lod(lod) => {
@@ -1608,6 +1637,40 @@ impl Controller {
         if self.cfg.device.is_none() {
             self.open_detect(mice);
         }
+        #[cfg(debug_assertions)]
+        self.debug_open();
+    }
+
+    /// Debug builds: `WHISKER_OPEN=detect | detect-pick | detect-list | detect-none`
+    /// opens the "which mouse" dialog at start with sample mice, for
+    /// screenshots without clicking.
+    #[cfg(debug_assertions)]
+    fn debug_open(&mut self) {
+        const OPEN_VAR: &str = "WHISKER_OPEN";
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        let Ok(what) = std::env::var(OPEN_VAR) else {
+            return;
+        };
+        let sample = |m: &Model, product: &str| DeviceInfo { vid: m.vid, pid: m.pids[0].0, product: product.into(), ..DeviceInfo::default() };
+        let unknown = DeviceInfo { vid: 0x1234, pid: 1, product: "USB Optical Mouse".into(), ..DeviceInfo::default() };
+        let mut mice = vec![sample(devices::default_model(), "Lionel"), unknown];
+        if let Some(katar) = devices::by_id("corsair/katar-pro") {
+            mice.insert(1, sample(katar, ""));
+        }
+        if what == "detect-none" {
+            mice.clear();
+        }
+        ONCE.call_once(|| {
+            self.open_detect(mice);
+            let Some(d) = self.view.detect.as_mut() else {
+                return;
+            };
+            match what.as_str() {
+                "detect-list" => show_list(d),
+                "detect-pick" => pick_found(d, 0),
+                _ => {}
+            }
+        });
     }
 
     // ---- new mouse ----
@@ -1694,7 +1757,8 @@ impl Controller {
         window::invalidate();
     }
 
-    /// A click in the detect dialog: model, brand, detected chip, "Back to detected".
+    /// A click in the detect dialog: model, brand, detected mouse, or a
+    /// step change ("My mouse isn't listed", "Back").
     fn detect_pick(&mut self, a: Act) {
         let Some(d) = self.view.detect.as_mut() else {
             return;
@@ -1704,14 +1768,23 @@ impl Controller {
             Act::DetectSel(k) => pick_model(d, k),
             Act::DetectBrand(b) => pick_brand(d, b),
             Act::DetectFound(i) => pick_found(d, i),
-            _ => back_to_detected(d),
+            Act::DetectList => show_list(d),
+            _ => {
+                step_back(d);
+            }
+        }
+        // A step change drops the focused element with its step.
+        if matches!(a, Act::DetectList | Act::DetectBack) {
+            self.view.focus = None;
         }
     }
 
+    /// "Use": stays open while step 1 has no pick (Enter).
     fn choose_device(&mut self) {
-        let Some((choice, usb)) = self.view.detect.take().as_ref().and_then(detect_choice) else {
+        let Some((choice, usb)) = self.view.detect.as_ref().and_then(detect_choice) else {
             return;
         };
+        self.view.detect = None;
         self.apply_device(choice, usb);
     }
 
@@ -2263,8 +2336,8 @@ impl Controller {
         }
         // The detect dialog's lists take the arrow keys and Tab.
         if let Some(d) = self.view.detect.as_mut().filter(|_| !self.view.ask_setup) {
-            if matches!(vk, VK_UP | VK_DOWN | VK_LEFT | VK_RIGHT | VK_TAB) {
-                return detect_key(d, vk);
+            if matches!(vk, VK_UP | VK_DOWN | VK_LEFT | VK_RIGHT | VK_TAB) && detect_key(d, vk) {
+                return true;
             }
         }
         let cover = if self.modal() { Cover::Modal } else { Cover::Free };
@@ -2308,8 +2381,11 @@ impl Controller {
             // On top of the detect dialog when opened from it.
             self.close_report();
             true
-        } else if self.view.detect.is_some() {
-            self.cancel_detect();
+        } else if let Some(d) = self.view.detect.as_mut() {
+            // Step 2 goes back to the detected mice first.
+            if !step_back(d) {
+                self.cancel_detect();
+            }
             true
         } else {
             self.view.picker.take().is_some() || self.view.dialog.take().is_some()
@@ -2744,6 +2820,7 @@ mod tests {
     #[test]
     fn detect_lists_scroll_with_the_selection() {
         let mut d = detect_state(&[], Some("steelseries/auto"), None);
+        assert_eq!(d.step, DetectStep::List);
         assert!(d.models.len() > view::LIST_ROWS, "SteelSeries lists more models than fit");
         assert!(d.model >= d.model_top && d.model < d.model_top + view::LIST_ROWS);
         detect_wheel(&mut d, Pane::Models, 100);
@@ -2769,11 +2846,55 @@ mod tests {
         assert_eq!(detect_choice(&d), Some(("corsair/katar-pro".into(), Some(usb))));
 
         // Another model of the brand: no longer that device.
+        show_list(&mut d);
         let other = d.models.iter().position(|m| m.choice == "corsair/auto").unwrap();
         pick_model(&mut d, other);
         assert_eq!(detect_choice(&d), Some(("corsair/auto".into(), None)));
-        back_to_detected(&mut d);
+    }
+
+    #[test]
+    fn detect_starts_on_the_detected_mice() {
+        let d = detect_state(&[lionel()], None, None);
+        assert_eq!(d.step, DetectStep::Found);
+
+        // Nothing detected: the lists, with no step to go back to.
+        let mut d = detect_state(&[], Some("corsair/katar-pro"), None);
+        assert_eq!(d.step, DetectStep::List);
+        assert!(!step_back(&mut d));
+        assert_eq!(d.step, DetectStep::List);
+    }
+
+    #[test]
+    fn detect_back_restores_the_detected_pick() {
+        let mice = [lionel(), device_of("corsair/katar-pro")];
+        let usb = (mice[1].vid, mice[1].pid);
+        let mut d = detect_state(&mice, None, None);
+        pick_found(&mut d, 1);
+        show_list(&mut d);
+        assert_eq!(d.step, DetectStep::List);
+
+        // Browsing another brand leaves the detected mouse; Back returns to it.
+        pick_brand(&mut d, 0);
+        assert_eq!(d.chip, None);
+        assert!(step_back(&mut d));
+        assert_eq!((d.step, d.chip), (DetectStep::Found, Some(1)));
+        assert_eq!(detect_choice(&d), Some(("corsair/katar-pro".into(), Some(usb))));
+    }
+
+    #[test]
+    fn detect_use_needs_a_detected_pick() {
+        // The current mouse is not connected: nothing picked on step 1 yet.
+        let mut d = detect_state(&[lionel(), device_of("corsair/katar-pro")], Some("roccat/auto"), None);
+        assert_eq!((d.step, d.chip), (DetectStep::Found, None));
+        assert_eq!(detect_choice(&d), None);
+
+        // Up / Down move among the detected mice; Tab is left to the focus.
+        assert!(detect_key(&mut d, VK_DOWN));
         assert_eq!(d.chip, Some(0));
+        assert!(detect_key(&mut d, VK_DOWN) && detect_key(&mut d, VK_DOWN));
+        assert_eq!(d.chip, Some(1));
+        assert!(!detect_key(&mut d, VK_TAB));
+        assert!(!d.keys, "no list outline on step 1");
     }
 
     #[test]
