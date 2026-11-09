@@ -654,12 +654,14 @@ fn mouse_key(d: &DeviceInfo) -> String {
 /// chosen, the first-run dialog asks anyway.
 fn new_mouse<'a>(mice: &'a [DeviceInfo], seen: &[String], device: Option<&str>, ignored: &[String]) -> Option<&'a DeviceInfo> {
     let current = devices::migrate_id(device?);
+    // The chosen model's own shared receiver (Bolt for an MX Master) is no news.
+    let paired = |d: &DeviceInfo| devices::by_id(current).is_some_and(|c| c.on_receiver(d));
     mice.iter().find(|d| {
         let key = mouse_key(d);
         let Match::Known(m) = devices::match_device(d) else {
             return false;
         };
-        m.support != Support::StatsOnly && m.id != current && !seen.contains(&key) && !ignored.contains(&key)
+        m.support != Support::StatsOnly && m.id != current && !paired(d) && !seen.contains(&key) && !ignored.contains(&key)
     })
 }
 
@@ -2919,6 +2921,11 @@ mod tests {
         let unknown = DeviceInfo { vid: 0x1234, pid: 0x5678, product: "Office mouse".into(), ..DeviceInfo::default() };
         assert_eq!(new_mouse(std::slice::from_ref(&unknown), &[], Some(LIONEL), &[]), None);
         assert_eq!(new_mouse(&[unknown], &[], Some(store::GENERIC_DEVICE), &[]), None);
+
+        // A receiver the chosen model pairs through is that mouse.
+        let bolt = DeviceInfo { vid: 0x046D, pid: 0xC548, ..DeviceInfo::default() };
+        assert_eq!(new_mouse(std::slice::from_ref(&bolt), &[], Some("logitech/mx-master-3"), &[]), None);
+        assert_eq!(new_mouse(std::slice::from_ref(&bolt), &[], Some(LIONEL), &[]), Some(&bolt));
     }
 
     #[test]
