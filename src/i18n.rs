@@ -213,7 +213,6 @@ pub enum T {
     ChartToday,
     ChartAll,
     License,
-    ReportMouse,
     Close,
     AboutTagline,
     Disconnected,
@@ -297,9 +296,13 @@ pub enum T {
     MoveMouse,
     /// Overview: the last report rate measured, kept when the mouse rests.
     MeasuredMoving,
+    /// Settings › General: start at sign-in needs the installed copy.
+    AutostartLater,
+    /// Update dialog: the changelog was cut; opens the release page.
+    FullNotes,
 }
 
-const COUNT: usize = T::MeasuredMoving as usize + 1;
+const COUNT: usize = T::FullNotes as usize + 1;
 type Table = [&'static str; COUNT];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -657,7 +660,7 @@ const EN: Table = [
     "USB ID",
     "MANUFACTURER (USB)",
     "PRODUCT (USB)",
-    "RECEIVER FIRMWARE",
+    "FIRMWARE",
     "SENSOR",
     "PROTOCOL",
     "SERIAL NUMBER",
@@ -683,7 +686,6 @@ const EN: Table = [
     "BATTERY · LAST 24 HOURS",
     "BATTERY · ALL HISTORY",
     "License: {}",
-    "Report a mouse",
     "Close",
     "Lightweight control app for gaming mice.",
     "Disconnected",
@@ -746,8 +748,8 @@ const EN: Table = [
     "The update could not be installed. Download it from the release page.",
     "Open release page",
     "Check for updates",
-    "Check for updates",
-    "Once a day. Whisker's only internet connection; nothing about you is sent.",
+    "Daily update check",
+    "Whisker's only internet connection. Only your IP address and the app version are sent; you can turn it off at any time.",
     "Checking…",
     "Whisker is up to date.",
     "Could not check for updates.",
@@ -759,6 +761,8 @@ const EN: Table = [
     "{} (receiver)",
     "Move the mouse",
     "Measured while moving",
+    "Available after installing",
+    "Full release notes",
 ];
 
 const SK: Table = [
@@ -942,7 +946,7 @@ const SK: Table = [
     "USB ID",
     "VÝROBCA (USB)",
     "PRODUKT (USB)",
-    "FIRMVÉR PRIJÍMAČA",
+    "FIRMVÉR",
     "SENZOR",
     "PROTOKOL",
     "SÉRIOVÉ ČÍSLO",
@@ -968,7 +972,6 @@ const SK: Table = [
     "BATÉRIA · POSLEDNÝCH 24 HODÍN",
     "BATÉRIA · CELÁ HISTÓRIA",
     "Licencia: {}",
-    "Nahlásiť myš",
     "Zavrieť",
     "Ľahká aplikácia na nastavenie herných myší.",
     "Odpojená",
@@ -1031,8 +1034,8 @@ const SK: Table = [
     "Aktualizáciu sa nepodarilo nainštalovať. Stiahnite si ju zo stránky vydania.",
     "Otvoriť stránku vydania",
     "Skontrolovať aktualizácie",
-    "Kontrolovať aktualizácie",
-    "Raz denne. Jediné pripojenie Whiskeru na internet; neodosiela nič o vás.",
+    "Denná kontrola aktualizácií",
+    "Jediné pripojenie Whiskeru na internet. Odosiela sa len vaša IP adresa a verzia aplikácie; kedykoľvek ho môžete vypnúť.",
     "Kontroluje sa…",
     "Whisker je aktuálny.",
     "Aktualizácie sa nepodarilo skontrolovať.",
@@ -1044,6 +1047,8 @@ const SK: Table = [
     "{} (prijímač)",
     "Pohnite myšou",
     "Namerané pri pohybe",
+    "Dostupné po inštalácii",
+    "Celé poznámky k vydaniu",
 ];
 
 const CS: Table = [
@@ -1227,7 +1232,7 @@ const CS: Table = [
     "USB ID",
     "VÝROBCE (USB)",
     "PRODUKT (USB)",
-    "FIRMWARE PŘIJÍMAČE",
+    "FIRMWARE",
     "SENZOR",
     "PROTOKOL",
     "SÉRIOVÉ ČÍSLO",
@@ -1253,7 +1258,6 @@ const CS: Table = [
     "BATERIE · POSLEDNÍCH 24 HODIN",
     "BATERIE · CELÁ HISTORIE",
     "Licence: {}",
-    "Nahlásit myš",
     "Zavřít",
     "Lehká aplikace pro nastavení herních myší.",
     "Odpojeno",
@@ -1316,8 +1320,8 @@ const CS: Table = [
     "Aktualizaci se nepodařilo nainstalovat. Stáhněte si ji ze stránky vydání.",
     "Otevřít stránku vydání",
     "Zkontrolovat aktualizace",
-    "Kontrolovat aktualizace",
-    "Jednou denně. Jediné připojení Whiskeru k internetu; neodesílá nic o vás.",
+    "Denní kontrola aktualizací",
+    "Jediné připojení Whiskeru k internetu. Odesílá se jen vaše IP adresa a verze aplikace; kdykoli ho můžete vypnout.",
     "Probíhá kontrola…",
     "Whisker je aktuální.",
     "Aktualizace se nepodařilo zkontrolovat.",
@@ -1329,6 +1333,8 @@ const CS: Table = [
     "{} (přijímač)",
     "Pohněte myší",
     "Naměřeno při pohybu",
+    "Dostupné po instalaci",
+    "Úplné poznámky k vydání",
 ];
 
 const PL: Table = [
@@ -1512,7 +1518,7 @@ const PL: Table = [
     "USB ID",
     "PRODUCENT (USB)",
     "PRODUKT (USB)",
-    "FIRMWARE ODBIORNIKA",
+    "FIRMWARE",
     "SENSOR",
     "PROTOKÓŁ",
     "NUMER SERYJNY",
@@ -1538,7 +1544,6 @@ const PL: Table = [
     "BATERIA · OSTATNIE 24 GODZINY",
     "BATERIA · CAŁA HISTORIA",
     "Licencja: {}",
-    "Zgłoś mysz",
     "Zamknij",
     "Lekka aplikacja do konfiguracji myszy gamingowych.",
     "Rozłączono",
@@ -1601,8 +1606,8 @@ const PL: Table = [
     "Nie udało się zainstalować aktualizacji. Należy ją pobrać ze strony wydania.",
     "Otwórz stronę wydania",
     "Sprawdź aktualizacje",
-    "Sprawdzaj aktualizacje",
-    "Raz dziennie. Jedyne połączenie Whiskera z internetem; nie wysyła nic o użytkowniku.",
+    "Codzienne sprawdzanie aktualizacji",
+    "Jedyne połączenie Whiskera z internetem. Wysyłany jest tylko adres IP i wersja aplikacji; można je wyłączyć w każdej chwili.",
     "Sprawdzanie…",
     "Whisker jest aktualny.",
     "Nie udało się sprawdzić aktualizacji.",
@@ -1614,6 +1619,8 @@ const PL: Table = [
     "{} (odbiornik)",
     "Proszę poruszyć myszą",
     "Zmierzono podczas ruchu",
+    "Dostępne po instalacji",
+    "Pełne informacje o wydaniu",
 ];
 
 const DE: Table = [
@@ -1797,7 +1804,7 @@ const DE: Table = [
     "USB-ID",
     "HERSTELLER (USB)",
     "PRODUKT (USB)",
-    "EMPFÄNGER-FIRMWARE",
+    "FIRMWARE",
     "SENSOR",
     "PROTOKOLL",
     "SERIENNUMMER",
@@ -1823,7 +1830,6 @@ const DE: Table = [
     "AKKU · LETZTE 24 STUNDEN",
     "AKKU · GESAMTER VERLAUF",
     "Lizenz: {}",
-    "Maus melden",
     "Schließen",
     "Schlanke App zum Einstellen von Gaming-Mäusen.",
     "Getrennt",
@@ -1886,8 +1892,8 @@ const DE: Table = [
     "Das Update konnte nicht installiert werden. Laden Sie es von der Release-Seite herunter.",
     "Release-Seite öffnen",
     "Nach Updates suchen",
-    "Nach Updates suchen",
-    "Einmal täglich. Die einzige Internetverbindung von Whisker; nichts über Sie wird gesendet.",
+    "Tägliche Update-Prüfung",
+    "Einzige Internetverbindung von Whisker. Gesendet werden nur Ihre IP-Adresse und die App-Version; jederzeit abschaltbar.",
     "Wird geprüft…",
     "Whisker ist auf dem neuesten Stand.",
     "Updates konnten nicht geprüft werden.",
@@ -1899,6 +1905,8 @@ const DE: Table = [
     "{} (Empfänger)",
     "Bewegen Sie die Maus",
     "Gemessen bei Bewegung",
+    "Nach der Installation verfügbar",
+    "Vollständige Versionshinweise",
 ];
 
 const FR: Table = [
@@ -2082,7 +2090,7 @@ const FR: Table = [
     "ID USB",
     "FABRICANT (USB)",
     "PRODUIT (USB)",
-    "FIRMWARE DU RÉCEPTEUR",
+    "FIRMWARE",
     "CAPTEUR",
     "PROTOCOLE",
     "NUMÉRO DE SÉRIE",
@@ -2108,7 +2116,6 @@ const FR: Table = [
     "BATTERIE · DERNIÈRES 24 HEURES",
     "BATTERIE · TOUT L'HISTORIQUE",
     "Licence : {}",
-    "Signaler une souris",
     "Fermer",
     "Application légère pour régler les souris de jeu.",
     "Déconnectée",
@@ -2171,8 +2178,8 @@ const FR: Table = [
     "La mise à jour n'a pas pu être installée. Téléchargez-la depuis la page de version.",
     "Ouvrir la page de version",
     "Rechercher des mises à jour",
-    "Rechercher des mises à jour",
-    "Une fois par jour. Seule connexion Internet de Whisker ; rien vous concernant n'est envoyé.",
+    "Vérification quotidienne des mises à jour",
+    "Seule connexion Internet de Whisker. N'envoie que votre adresse IP et la version de l'app ; désactivable à tout moment.",
     "Vérification…",
     "Whisker est à jour.",
     "Impossible de rechercher des mises à jour.",
@@ -2184,6 +2191,8 @@ const FR: Table = [
     "{} (récepteur)",
     "Bougez la souris",
     "Mesuré en mouvement",
+    "Disponible après l'installation",
+    "Notes de version complètes",
 ];
 
 const ES: Table = [
@@ -2367,7 +2376,7 @@ const ES: Table = [
     "ID USB",
     "FABRICANTE (USB)",
     "PRODUCTO (USB)",
-    "FIRMWARE DEL RECEPTOR",
+    "FIRMWARE",
     "SENSOR",
     "PROTOCOLO",
     "NÚMERO DE SERIE",
@@ -2393,7 +2402,6 @@ const ES: Table = [
     "BATERÍA · ÚLTIMAS 24 HORAS",
     "BATERÍA · TODO EL HISTORIAL",
     "Licencia: {}",
-    "Informar de un ratón",
     "Cerrar",
     "Aplicación ligera para configurar ratones gaming.",
     "Desconectado",
@@ -2456,8 +2464,8 @@ const ES: Table = [
     "No se pudo instalar la actualización. Descárguela desde la página de la versión.",
     "Abrir página de la versión",
     "Buscar actualizaciones",
-    "Buscar actualizaciones",
-    "Una vez al día. Única conexión a internet de Whisker; no se envía nada sobre usted.",
+    "Comprobación diaria de actualizaciones",
+    "Única conexión a internet de Whisker. Solo envía su dirección IP y la versión de la aplicación; puede desactivarla cuando quiera.",
     "Comprobando…",
     "Whisker está actualizado.",
     "No se pudieron buscar actualizaciones.",
@@ -2469,6 +2477,8 @@ const ES: Table = [
     "{} (receptor)",
     "Mueva el ratón",
     "Medido en movimiento",
+    "Disponible tras la instalación",
+    "Notas de la versión completas",
 ];
 
 const PT: Table = [
@@ -2652,7 +2662,7 @@ const PT: Table = [
     "ID USB",
     "FABRICANTE (USB)",
     "PRODUTO (USB)",
-    "FIRMWARE DO RECETOR",
+    "FIRMWARE",
     "SENSOR",
     "PROTOCOLO",
     "NÚMERO DE SÉRIE",
@@ -2678,7 +2688,6 @@ const PT: Table = [
     "BATERIA · ÚLTIMAS 24 HORAS",
     "BATERIA · TODO O HISTÓRICO",
     "Licença: {}",
-    "Reportar um rato",
     "Fechar",
     "Aplicação leve para configurar ratos gaming.",
     "Desligado",
@@ -2741,8 +2750,8 @@ const PT: Table = [
     "Não foi possível instalar a atualização. Transfira-a a partir da página da versão.",
     "Abrir página da versão",
     "Procurar atualizações",
-    "Procurar atualizações",
-    "Uma vez por dia. A única ligação à Internet do Whisker; nada sobre si é enviado.",
+    "Verificação diária de atualizações",
+    "A única ligação à Internet do Whisker. Envia apenas o seu endereço IP e a versão da aplicação; pode desativá-la a qualquer momento.",
     "A verificar…",
     "O Whisker está atualizado.",
     "Não foi possível procurar atualizações.",
@@ -2754,6 +2763,8 @@ const PT: Table = [
     "{} (recetor)",
     "Mova o rato",
     "Medido em movimento",
+    "Disponível após a instalação",
+    "Notas de versão completas",
 ];
 
 const IT: Table = [
@@ -2937,7 +2948,7 @@ const IT: Table = [
     "ID USB",
     "PRODUTTORE (USB)",
     "PRODOTTO (USB)",
-    "FIRMWARE RICEVITORE",
+    "FIRMWARE",
     "SENSORE",
     "PROTOCOLLO",
     "NUMERO DI SERIE",
@@ -2963,7 +2974,6 @@ const IT: Table = [
     "BATTERIA · ULTIME 24 ORE",
     "BATTERIA · TUTTA LA CRONOLOGIA",
     "Licenza: {}",
-    "Segnala un mouse",
     "Chiudi",
     "App leggera per configurare i mouse da gioco.",
     "Disconnesso",
@@ -3026,8 +3036,8 @@ const IT: Table = [
     "Impossibile installare l'aggiornamento. Lo scarichi dalla pagina della versione.",
     "Apri pagina della versione",
     "Cerca aggiornamenti",
-    "Cerca aggiornamenti",
-    "Una volta al giorno. Unica connessione Internet di Whisker; non viene inviato nulla su di Lei.",
+    "Controllo giornaliero degli aggiornamenti",
+    "Unica connessione Internet di Whisker. Invia solo il Suo indirizzo IP e la versione dell'app; disattivabile in qualsiasi momento.",
     "Verifica in corso…",
     "Whisker è aggiornato.",
     "Impossibile cercare aggiornamenti.",
@@ -3039,6 +3049,8 @@ const IT: Table = [
     "{} (ricevitore)",
     "Muova il mouse",
     "Misurato in movimento",
+    "Disponibile dopo l'installazione",
+    "Note di rilascio complete",
 ];
 
 const JA: Table = [
@@ -3222,7 +3234,7 @@ const JA: Table = [
     "USB ID",
     "製造元 (USB)",
     "製品 (USB)",
-    "レシーバーのファームウェア",
+    "ファームウェア",
     "センサー",
     "プロトコル",
     "シリアル番号",
@@ -3248,7 +3260,6 @@ const JA: Table = [
     "バッテリー · 過去 24 時間",
     "バッテリー · 全履歴",
     "ライセンス: {}",
-    "マウスを報告",
     "閉じる",
     "ゲーミングマウス用の軽量設定アプリ。",
     "未接続",
@@ -3311,8 +3322,8 @@ const JA: Table = [
     "アップデートをインストールできませんでした。リリースページからダウンロードしてください。",
     "リリースページを開く",
     "アップデートを確認",
-    "アップデートを確認",
-    "1日1回。Whisker の唯一のインターネット接続です。お客様に関する情報は送信されません。",
+    "毎日のアップデート確認",
+    "Whisker の唯一のインターネット接続です。送信するのは IP アドレスとアプリのバージョンのみです。いつでもオフにできます。",
     "確認しています…",
     "Whisker は最新です。",
     "アップデートを確認できませんでした。",
@@ -3324,6 +3335,8 @@ const JA: Table = [
     "{}（レシーバー）",
     "マウスを動かしてください",
     "動かしている間に測定",
+    "インストール後に利用できます",
+    "リリースノート全文",
 ];
 
 const KO: Table = [
@@ -3507,7 +3520,7 @@ const KO: Table = [
     "USB ID",
     "제조업체 (USB)",
     "제품 (USB)",
-    "수신기 펌웨어",
+    "펌웨어",
     "센서",
     "프로토콜",
     "일련 번호",
@@ -3533,7 +3546,6 @@ const KO: Table = [
     "배터리 · 최근 24시간",
     "배터리 · 전체 기록",
     "라이선스: {}",
-    "마우스 제보",
     "닫기",
     "게이밍 마우스용 가벼운 설정 앱.",
     "연결 끊김",
@@ -3596,8 +3608,8 @@ const KO: Table = [
     "업데이트를 설치하지 못했습니다. 릴리스 페이지에서 다운로드하십시오.",
     "릴리스 페이지 열기",
     "업데이트 확인",
-    "업데이트 확인",
-    "하루 한 번. Whisker의 유일한 인터넷 연결이며 사용자에 관한 정보는 전송되지 않습니다.",
+    "매일 업데이트 확인",
+    "Whisker의 유일한 인터넷 연결입니다. IP 주소와 앱 버전만 전송하며 언제든지 끌 수 있습니다.",
     "확인 중…",
     "Whisker가 최신 상태입니다.",
     "업데이트를 확인하지 못했습니다.",
@@ -3609,6 +3621,8 @@ const KO: Table = [
     "{} (수신기)",
     "마우스를 움직여 주십시오",
     "움직이는 동안 측정",
+    "설치 후 사용할 수 있습니다",
+    "전체 릴리스 노트",
 ];
 
 const ZH_HANS: Table = [
@@ -3792,7 +3806,7 @@ const ZH_HANS: Table = [
     "USB ID",
     "制造商 (USB)",
     "产品 (USB)",
-    "接收器固件",
+    "固件",
     "传感器",
     "协议",
     "序列号",
@@ -3818,7 +3832,6 @@ const ZH_HANS: Table = [
     "电池 · 最近 24 小时",
     "电池 · 全部记录",
     "许可证：{}",
-    "报告鼠标",
     "关闭",
     "轻量的游戏鼠标设置工具。",
     "未连接",
@@ -3881,8 +3894,8 @@ const ZH_HANS: Table = [
     "无法安装更新。请从发布页面下载。",
     "打开发布页面",
     "检查更新",
-    "检查更新",
-    "每天一次。这是 Whisker 唯一的网络连接，不会发送任何关于您的信息。",
+    "每日检查更新",
+    "这是 Whisker 唯一的网络连接，仅发送您的 IP 地址和应用版本，可随时关闭。",
     "正在检查…",
     "Whisker 已是最新版本。",
     "无法检查更新。",
@@ -3894,6 +3907,8 @@ const ZH_HANS: Table = [
     "{}（接收器）",
     "请移动鼠标",
     "移动时测得",
+    "安装后可用",
+    "完整发布说明",
 ];
 
 const ZH_HANT: Table = [
@@ -4077,7 +4092,7 @@ const ZH_HANT: Table = [
     "USB ID",
     "製造商 (USB)",
     "產品 (USB)",
-    "接收器韌體",
+    "韌體",
     "感應器",
     "通訊協定",
     "序號",
@@ -4103,7 +4118,6 @@ const ZH_HANT: Table = [
     "電池 · 最近 24 小時",
     "電池 · 全部記錄",
     "授權條款：{}",
-    "回報滑鼠",
     "關閉",
     "輕量的電競滑鼠設定工具。",
     "未連線",
@@ -4166,8 +4180,8 @@ const ZH_HANT: Table = [
     "無法安裝更新。請從發行頁面下載。",
     "開啟發行頁面",
     "檢查更新",
-    "檢查更新",
-    "每天一次。這是 Whisker 唯一的網路連線，不會傳送任何關於您的資訊。",
+    "每日檢查更新",
+    "這是 Whisker 唯一的網路連線，只會傳送您的 IP 位址和應用程式版本，可隨時關閉。",
     "正在檢查…",
     "Whisker 已是最新版本。",
     "無法檢查更新。",
@@ -4179,6 +4193,8 @@ const ZH_HANT: Table = [
     "{}（接收器）",
     "請移動滑鼠",
     "移動時測得",
+    "安裝後可用",
+    "完整發行說明",
 ];
 
 #[cfg(test)]

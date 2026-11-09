@@ -1370,7 +1370,6 @@ impl Controller {
                 let url = match w {
                     Web::Site => SITE_URL,
                     Web::Repo => REPO_URL,
-                    Web::NewIssue => NEW_ISSUE_URL,
                 };
                 platform::open_url(url);
             }

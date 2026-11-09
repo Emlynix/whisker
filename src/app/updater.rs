@@ -13,7 +13,7 @@ use crate::platform::{self, UpdateKind, window};
 use crate::stats;
 use crate::store::{self, AppConfig};
 use crate::update::{self, Check, Fail, Release};
-use crate::view::{Dialog, Install, Offer, Probe, UpdateStep, note_lines};
+use crate::view::{Dialog, Install, Offer, Probe, UpdateStep, note_lines, notes_cut};
 
 /// How often the timer asks whether a daily check is due.
 pub(super) const POLL_MS: u32 = 3_600_000;
@@ -98,7 +98,7 @@ impl Controller {
     fn offer_update(&mut self, rel: Release, t: Trigger) {
         let version = rel.version.to_string();
         let skipped = self.cfg.update_skip.as_deref() == Some(version.as_str());
-        let offer = Offer { version: version.clone(), date: rel.date.clone(), notes: note_lines(&rel.notes) };
+        let offer = Offer { version: version.clone(), date: rel.date.clone(), notes: note_lines(&rel.notes), cut: notes_cut(&rel.notes) };
         if self.view.update.offer.as_ref() != Some(&offer) && !self.updates.downloading {
             self.view.update.step = UpdateStep::Ready;
         }

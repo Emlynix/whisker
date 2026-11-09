@@ -31,7 +31,7 @@ mod update;
 pub use buttons::{DelayMode, Picker, Tab, button_name};
 pub use device::{Badge, Banner, BrandRow, Detect, DetectRow, DetectStep, DeviceView, Found, LIST_ROWS, Pane, detect_pane_at};
 pub use report::{Answer, Ask, CheckView, PickRow, REPORT_ROWS, ReportView, Step as ReportStep, report_at};
-pub use update::{Install, Offer, Probe, Step as UpdateStep, UpdateView, note_lines};
+pub use update::{Install, Offer, Probe, Step as UpdateStep, UpdateView, note_lines, notes_cut};
 use crate::devices::{Caps, DpiUi};
 use crate::platform::Access;
 use crate::store::{DEBOUNCE_CHOICES, SLEEP_CHOICES};
@@ -272,7 +272,6 @@ pub enum Act {
 pub enum Web {
     Site,
     Repo,
-    NewIssue,
 }
 
 /// Small modal dialogs (the bigger ones have their own state).
@@ -508,9 +507,11 @@ impl Frame<'_> {
             self.g.fill(r, 11.0, c);
             self.g.circle(x + 29.0, y + 11.0, 7.0, th().on_accent);
         } else {
+            // Disabled: fainter outline and knob.
+            let (edge, knob) = if dim { (th().border, th().faint) } else { (th().faint, th().muted) };
             self.g.fill(r, 11.0, if hot { th().hover } else { th().card });
-            self.g.stroke(r, 11.0, 1.5, th().faint);
-            self.g.circle(x + 11.0, y + 11.0, 6.0, th().muted);
+            self.g.stroke(r, 11.0, 1.5, edge);
+            self.g.circle(x + 11.0, y + 11.0, 6.0, knob);
         }
     }
 
@@ -1593,25 +1594,32 @@ fn settings(f: &mut Frame, v: &View) {
         f.push_button(Act::Install, btn, tr(T::Install), true);
     }
 
-    let card = Rect::new(X0, card.y + card.h + GAP, CW, 76.0);
+    // Autostart only points at the installed copy: disabled, and why.
+    const LATER_H: f32 = 14.0;
+    let later = if v.installed { 0.0 } else { LATER_H };
+    let card = Rect::new(X0, card.y + card.h + GAP, CW, 76.0 + later);
     f.card(card);
     let title = Rect::new(card.x + 18.0, card.y + 16.0, 400.0, 22.0);
     f.g.text(tr(T::Autostart), title, Size::Large, Weight::Semibold, Align::Left, th().text);
     let desc = Rect::new(card.x + 18.0, card.y + 40.0, 420.0, 20.0);
     f.g.text(tr(T::AutostartDesc), desc, Size::Caption, Weight::Normal, Align::Left, th().muted);
-    // Autostart only points at the installed copy.
+    if !v.installed {
+        let r = Rect::new(desc.x, desc.y + 18.0, desc.w, 18.0);
+        f.g.text(tr(T::AutostartLater), r, Size::Caption, Weight::Normal, Align::Left, th().subtle);
+    }
     let act = v.installed.then_some(Act::Autostart);
-    f.toggle(act, card.x + card.w - 58.0, card.y + 27.0, v.autostart);
+    f.toggle(act, card.x + card.w - 58.0, card.y + (card.h - 22.0) / 2.0, v.autostart);
 
     let card = Rect::new(X0, card.y + card.h + GAP, CW, 88.0);
     update::settings_card(f, &v.update, card);
 
-    // Tray behaviour and where data lives (About has its own dialog).
-    let card = Rect::new(X0, card.y + card.h + GAP, CW, 88.0);
+    // Tray behaviour and where data lives (About has its own dialog); the
+    // folder sits right below room for two lines of tray text.
+    let card = Rect::new(X0, card.y + card.h + GAP, CW, 76.0);
     f.card(card);
     let r = Rect::new(card.x + 18.0, card.y + 14.0, card.w - 36.0, 34.0);
     f.g.text(tr(T::AboutTray), r, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
-    let r = Rect::new(card.x + 18.0, card.y + 58.0, card.w - 36.0, 18.0);
+    let r = Rect::new(card.x + 18.0, card.y + 50.0, card.w - 36.0, 18.0);
     f.g.text(&fill(tr(T::DataDir), &[&v.data_dir]), r, Size::Caption, Weight::Normal, Align::Left, th().subtle);
 }
 
@@ -1641,14 +1649,14 @@ fn setup_dialog(f: &mut Frame, v: &View) {
 /// update check.
 fn about_dialog(f: &mut Frame, v: &View) {
     const W: f32 = 480.0;
-    const H: f32 = 352.0;
+    const H: f32 = 376.0;
     f.g.fill(Rect::new(0.0, 0.0, WIDTH, HEIGHT), 0.0, th().scrim);
     let d = Rect::new((WIDTH - W) / 2.0, (HEIGHT - H) / 2.0, W, H);
     f.g.fill(d, RADIUS, th().card_hi);
     f.g.stroke(d, RADIUS, 1.0, th().border);
 
     let inner = d.inset(24.0);
-    f.caption(tr(T::About), inner.x, inner.y);
+    f.caption(&tr(T::About).to_uppercase(), inner.x, inner.y);
     mouse_logo(f.g, inner.x + 4.0, inner.y + 34.0);
     let name = Rect::new(inner.x + 40.0, inner.y + 28.0, inner.w - 40.0, 30.0);
     f.g.text(crate::APP_NAME, name, Size::Subtitle, Weight::Bold, Align::Left, th().text);
@@ -1669,13 +1677,13 @@ fn about_dialog(f: &mut Frame, v: &View) {
     f.g.text("·", Rect::new(x + 6.0, y + 42.0, 10.0, 18.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
     text_link(f, Act::OpenWeb(Web::Repo), REPO, x + 18.0, y + 42.0);
     update::about_row(f, &v.update, inner.x, y + 74.0, inner.w);
-    let privacy = Rect::new(inner.x, y + 112.0, inner.w, 34.0);
+    let privacy = Rect::new(inner.x, y + 136.0, inner.w, 34.0);
     f.g.text(tr(T::UpdatePrivacy), privacy, Size::Caption, Weight::Normal, Align::Wrap, th().subtle);
 
     let by = d.y + d.h - 24.0 - 36.0;
-    let report = tr(T::ReportMouse);
+    let report = tr(T::HelpAddMouse);
     let report_w = text_w(report, Size::Body) + 32.0;
-    f.push_button(Act::OpenWeb(Web::NewIssue), Rect::new(inner.x, by, report_w, 36.0), report, false);
+    f.push_button(Act::ReportOpen, Rect::new(inner.x, by, report_w, 36.0), report, false);
     f.push_button(Act::CloseDialog, Rect::new(d.x + d.w - 24.0 - 110.0, by, 110.0, 36.0), tr(T::Close), true);
 }
 

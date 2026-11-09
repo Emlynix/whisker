@@ -7,7 +7,7 @@
 //!  | Update available                                 |
 //!  | [logo] Whisker 0.9.1                 2026-11-20  |
 //!  |        Installed: 0.9.0                          |
-//!  | What's new                                       |
+//!  | What's new                    Full release notes |
 //!  | +----------------------------------------------+ |
 //!  | | notes, plain text, at most NOTE_ROWS lines   | |
 //!  | +----------------------------------------------+ |
@@ -66,6 +66,8 @@ pub struct Offer {
     pub date: String,
     /// Changelog wrapped to the dialog (`note_lines`).
     pub notes: Vec<String>,
+    /// The changelog is longer than shown: link the release page.
+    pub cut: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -86,9 +88,27 @@ impl UpdateView {
     }
 }
 
-/// Changelog wrapped at the dialog width, at most `NOTE_ROWS` lines; runs
-/// of blank lines collapse to one, overlong words break anywhere.
+/// Changelog wrapped at the dialog width, at most `NOTE_ROWS` lines, the
+/// last one ending in "…" when cut.
 pub fn note_lines(notes: &str) -> Vec<String> {
+    let mut lines = wrap_notes(notes);
+    if lines.len() > NOTE_ROWS {
+        lines.truncate(NOTE_ROWS);
+        if let Some(last) = lines.last_mut() {
+            last.push_str(ELLIPSIS);
+        }
+    }
+    lines
+}
+
+/// The changelog does not fit in `NOTE_ROWS` lines.
+pub fn notes_cut(notes: &str) -> bool {
+    wrap_notes(notes).len() > NOTE_ROWS
+}
+
+/// Changelog wrapped at the dialog width; runs of blank lines collapse
+/// to one, overlong words break anywhere.
+fn wrap_notes(notes: &str) -> Vec<String> {
     let fits = |s: &str| text_w(s, Size::Caption) <= NOTE_W;
     let mut lines: Vec<String> = Vec::new();
     for para in notes.trim().split('\n') {
@@ -119,12 +139,6 @@ pub fn note_lines(notes: &str) -> Vec<String> {
         }
         lines.push(line);
     }
-    if lines.len() > NOTE_ROWS {
-        lines.truncate(NOTE_ROWS);
-        if let Some(last) = lines.last_mut() {
-            last.push_str(ELLIPSIS);
-        }
-    }
     lines
 }
 
@@ -147,9 +161,12 @@ pub(super) fn status_notice(f: &mut Frame, u: &UpdateView) {
     f.g.text(&text, label, Size::Caption, Weight::Semibold, Align::Left, th().accent);
 }
 
-/// About: "Check for updates" and what the last check found.
+/// About: "Check for updates" and, on its own line below, what the last
+/// check found (long translations need the full width).
 pub(super) fn about_row(f: &mut Frame, u: &UpdateView, x: f32, y: f32, w: f32) {
     const H: f32 = 32.0;
+    const GAP: f32 = 6.0;
+    const RESULT_H: f32 = 18.0;
     let label = tr(T::UpdateCheck);
     let bw = text_w(label, Size::Body) + 36.0;
     let b = Rect::new(x, y, bw, H);
@@ -159,7 +176,7 @@ pub(super) fn about_row(f: &mut Frame, u: &UpdateView, x: f32, y: f32, w: f32) {
         f.push_button(Act::UpdateCheck, b, label, false);
     }
 
-    let r = Rect::new(x + bw + 12.0, y, w - bw - 12.0, H);
+    let r = Rect::new(x, y + H + GAP, w, RESULT_H);
     let (text, color) = match u.probe {
         Probe::Idle => return,
         Probe::Checking => (tr(T::UpdateChecking).to_string(), th().muted),
@@ -189,6 +206,16 @@ pub(super) fn settings_card(f: &mut Frame, u: &UpdateView, card: Rect) {
     let desc = Rect::new(card.x + 18.0, card.y + 40.0, card.w - 100.0, 34.0);
     f.g.text(tr(T::UpdateAutoDesc), desc, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
     f.toggle(Some(Act::UpdateAuto), card.x + card.w - 58.0, card.y + (card.h - 22.0) / 2.0, u.auto);
+}
+
+/// "Full release notes", right-aligned in `r`; opens the release page.
+fn full_notes(f: &mut Frame, r: Rect) {
+    let label = tr(T::FullNotes);
+    let w = (text_w(label, Size::Caption) + 8.0).min(r.w);
+    let link = Rect::new(r.x + r.w - w, r.y, w, r.h);
+    let hot = f.button(Act::UpdatePage, link);
+    let c = if hot { th().text } else { th().accent };
+    f.g.text(label, link, Size::Caption, Weight::Semibold, Align::Right, c);
 }
 
 /// Buttons right-aligned from `right`; the last one is primary.
@@ -222,8 +249,11 @@ pub(super) fn update_dialog(f: &mut Frame, u: &UpdateView) {
     let installed = fill(tr(T::UpdateInstalled), &[VERSION]);
     f.g.text(&installed, Rect::new(name_r.x, inner.y + 56.0, name_r.w, 18.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
 
-    // Changelog: plain text, pre-wrapped.
+    // Changelog: plain text, pre-wrapped; the rest on the release page.
     f.caption_in(tr(T::UpdateNotes), inner.x, inner.y + 92.0, inner.w);
+    if o.cut {
+        full_notes(f, Rect::new(inner.x, inner.y + 88.0, inner.w, 22.0));
+    }
     let area = Rect::new(inner.x, inner.y + 114.0, inner.w, NOTE_ROWS as f32 * LINE_H + 16.0);
     f.g.fill(area, R_CTRL, th().card);
     f.g.stroke(area, R_CTRL, 1.0, th().border);
@@ -283,5 +313,12 @@ mod tests {
         let lines = note_lines(&"字".repeat(100));
         assert!(lines.len() > 1 && lines.iter().all(|l| text_w(l, Size::Caption) <= NOTE_W));
         assert!(note_lines("").is_empty());
+    }
+
+    #[test]
+    fn cut_notes_are_flagged() {
+        assert!(!notes_cut("Short line.\n\n- second"));
+        assert!(notes_cut(&"word ".repeat(200)));
+        assert!(!notes_cut(&"line\n".repeat(NOTE_ROWS)), "exactly full: nothing cut");
     }
 }

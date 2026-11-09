@@ -1,7 +1,7 @@
 //! Settings › Mouse tab (hardware info, diagnostics), the "which mouse
 //! do you use?" dialog and the new-mouse banner.
 
-use super::{Act, BODY, CW, Frame, GAP, Glyph, HEIGHT, Mark, Page, Place, R_CTRL, RADIUS, View, WIDTH, X0, glyph, icon, text_w, th};
+use super::{Act, BODY, CW, Frame, GAP, Glyph, HEIGHT, Mark, Page, Place, R_CTRL, RADIUS, View, WIDTH, X0, glyph, icon, name_lines, text_w, th};
 use crate::devices::Support;
 use crate::gfx::{Align, Color, Rect, Size, Weight};
 use crate::i18n::{T, fill, tr};
@@ -124,16 +124,32 @@ fn badge_color(k: Badge) -> Color {
 }
 
 pub(super) fn device_page(f: &mut Frame, v: &View) {
+    // Second line of a long model name.
+    const WRAP_H: f32 = 18.0;
     let d = &v.device;
-    let card = Rect::new(X0, BODY, CW, ROW * d.rows.len() as f32 + 16.0);
+    let value_w = CW - 250.0;
+    // A long model name takes two lines, like in the sidebar.
+    let model = d.rows.iter().find(|(c, _)| *c == T::DevModel).map(|(_, s)| name_lines(s, value_w, Size::Body));
+    let extra = if model.as_ref().is_some_and(|(_, second)| second.is_some()) { WRAP_H } else { 0.0 };
+    let card = Rect::new(X0, BODY, CW, ROW * d.rows.len() as f32 + 16.0 + extra);
     f.card(card);
 
-    for (i, (caption, value)) in d.rows.iter().enumerate() {
-        let y = card.y + 8.0 + i as f32 * ROW;
+    let mut y = card.y + 8.0;
+    for (caption, value) in &d.rows {
         f.caption_in(tr(*caption), card.x + PAD, y + 6.0, 190.0);
-        let (text, color) = if value.is_empty() { (tr(T::NotReported).to_string(), th().subtle) } else { (value.clone(), th().text) };
-        let r = Rect::new(card.x + 230.0, y, card.w - 250.0, ROW);
-        f.g.text(&text, r, Size::Body, Weight::Normal, Align::Left, color);
+        let r = Rect::new(card.x + 230.0, y, value_w, ROW);
+        y += ROW;
+        if value.is_empty() {
+            f.g.text(tr(T::NotReported), r, Size::Body, Weight::Normal, Align::Left, th().subtle);
+            continue;
+        }
+        if let (T::DevModel, Some((first, Some(second)))) = (*caption, &model) {
+            f.g.text(first, r, Size::Body, Weight::Normal, Align::Left, th().text);
+            f.g.text(second, Rect::new(r.x, r.y + WRAP_H, r.w, ROW), Size::Body, Weight::Normal, Align::Left, th().text);
+            y += WRAP_H;
+            continue;
+        }
+        f.g.text(value, r, Size::Body, Weight::Normal, Align::Left, th().text);
     }
 
     let mut y = card.y + card.h + GAP;
