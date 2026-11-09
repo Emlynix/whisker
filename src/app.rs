@@ -75,6 +75,8 @@ const VK_LEFT: u16 = 0x25;
 const VK_UP: u16 = 0x26;
 const VK_RIGHT: u16 = 0x27;
 const VK_DOWN: u16 = 0x28;
+const VK_PRIOR: u16 = 0x21;
+const VK_NEXT: u16 = 0x22;
 const VK_1: u16 = 0x31;
 const VK_Z: u16 = 0x5A;
 const VK_COMMA: u16 = 0xBC;
@@ -143,6 +145,37 @@ struct Controller {
     offer: Option<DeviceInfo>,
     /// "Help add your mouse" while open.
     wizard: Option<Wizard>,
+    /// Values the guided checks must see back on the mouse.
+    restore: Option<Restore>,
+}
+
+/// DPI and rate to put back after the checks, re-sent while a reading
+/// still differs (a command is lost while the driver reopens).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Restore {
+    dpi: Option<u32>,
+    rate: Option<u32>,
+    /// Readings left to wait for the old values.
+    tries: u8,
+}
+
+/// Readings (about 2 s apart) a restore is re-sent for.
+const RESTORE_TRIES: u8 = 10;
+
+/// Commands still needed to put `r` back, given a reading.
+fn restore_cmds(r: &Restore, dpi: Option<u32>, rate: Option<u32>) -> Vec<Command> {
+    let mut out = Vec::new();
+    if let (Some(want), Some(now)) = (r.dpi, dpi) {
+        if want != now {
+            out.push(Command::SetBasicDpi(want));
+        }
+    }
+    if let (Some(want), Some(now)) = (r.rate, rate) {
+        if want != now {
+            out.push(Command::SetBasicRate(want));
+        }
+    }
+    out
 }
 
 /// State of the report wizard behind `View::report`.
@@ -243,6 +276,7 @@ pub fn run(mode: StartMode) {
         scanning: false,
         offer: None,
         wizard: None,
+        restore: None,
     };
     ctrl.stats.set_vendor(stats_vendor(ctrl.cfg.device.as_deref()));
     CTRL.with(|c| *c.borrow_mut() = Some(ctrl));
@@ -382,7 +416,7 @@ fn belongs_to(ev: &Event, t: &Target) -> bool {
         Event::Basic(_) => driver || matches!(t, Target::Bluetooth(_)),
         Event::Offline | Event::Absent => *t != Target::Nothing,
         // Asked for by the report wizard, whatever the driver.
-        Event::Probe(_) => true,
+        Event::Probe(..) => true,
     }
 }
 
@@ -827,11 +861,37 @@ fn probe_targets(vid: u16) -> Vec<Target> {
     drivers.map(Family::target).collect()
 }
 
-/// Wheel over the report: three lines a notch, within the text.
+/// Wheel over the wizard: the pick list moves the selection, the
+/// report scrolls three lines a notch.
 fn report_wheel(r: &mut ReportView, notches: i32) {
     const LINES_PER_NOTCH: i32 = 3;
+    if r.step == ReportStep::Pick {
+        let last = r.rows.len().saturating_sub(1) as i32;
+        r.sel = (r.sel as i32 - notches).clamp(0, last.max(0)) as usize;
+        return;
+    }
+    scroll_report(r, -notches * LINES_PER_NOTCH);
+}
+
+/// Moves the report text by `lines`, within the text.
+fn scroll_report(r: &mut ReportView, lines: i32) {
     let max = r.lines.len().saturating_sub(view::REPORT_ROWS) as i32;
-    r.top = (r.top as i32 - notches * LINES_PER_NOTCH).clamp(0, max.max(0)) as usize;
+    r.top = (r.top as i32 + lines).clamp(0, max.max(0)) as usize;
+}
+
+/// Up / Down pick a mouse; on the report they scroll, Page Up / Down by a page.
+fn report_key(r: &mut ReportView, vk: u16) -> bool {
+    let page = view::REPORT_ROWS as i32;
+    match (r.step, vk) {
+        (ReportStep::Pick, VK_UP) => r.sel = r.sel.saturating_sub(1),
+        (ReportStep::Pick, VK_DOWN) => r.sel = (r.sel + 1).min(r.rows.len().saturating_sub(1)),
+        (ReportStep::Result, VK_UP) => scroll_report(r, -1),
+        (ReportStep::Result, VK_DOWN) => scroll_report(r, 1),
+        (ReportStep::Result, VK_PRIOR) => scroll_report(r, -page),
+        (ReportStep::Result, VK_NEXT) => scroll_report(r, page),
+        _ => return false,
+    }
+    true
 }
 
 /// Title, question, live value and answers of the open check.
@@ -1241,12 +1301,13 @@ impl Controller {
                 self.on_ident(ident, ability);
                 return;
             }
-            Event::Probe(p) => {
-                self.on_probe(p);
+            Event::Probe(pick, p) => {
+                self.on_probe(&pick, p);
                 return;
             }
             Event::Basic(r) => {
                 self.basic_online = true;
+                self.check_restore(r.dpi, r.rate_hz);
                 self.view.basic.rate = r.rate_hz;
                 self.view.basic.dpi = r.dpi;
                 if let Some(s) = r.stage.filter(|s| Some(*s) != self.cfg.last_stage) {
@@ -1694,11 +1755,19 @@ impl Controller {
         self.mouse.send(Command::Probe(probe_targets(d.vid), pick));
     }
 
-    fn on_probe(&mut self, probes: Vec<Probe>) {
-        let reading = self.view.report.as_ref().is_some_and(|r| r.step == ReportStep::Reading);
-        let Some(w) = self.wizard.as_mut().filter(|_| reading) else {
+    /// Probe results; a late answer for an earlier pick is dropped.
+    fn on_probe(&mut self, pick: &Pick, probes: Vec<Probe>) {
+        let Some(r) = self.view.report.as_ref().filter(|r| r.step == ReportStep::Reading) else {
             return;
         };
+        let sel = r.sel;
+        let Some(w) = self.wizard.as_mut() else {
+            return;
+        };
+        let asked = w.devices.get(sel).is_some_and(|d| pick.vid == Some(d.info.vid) && pick.pids == [d.info.pid]);
+        if !asked {
+            return;
+        }
         w.probes = probes;
         self.render_report();
         window::invalidate();
@@ -1729,13 +1798,22 @@ impl Controller {
         (r.lines, r.top, r.step, r.can_check, r.check) = (lines, 0, ReportStep::Result, checkable, None);
     }
 
-    /// Guided checks: the mouse in use, driven by a driver not yet verified.
+    /// Guided checks: the mouse in use, driven by a driver not yet
+    /// verified, with at least one value that can be checked.
     fn can_check(&self, d: &DeviceInfo) -> bool {
         let Some(m) = self.cfg.device.as_deref().and_then(devices::by_id) else {
             return false;
         };
         let same = self.device_info.as_ref().is_some_and(|i| (i.vid, i.pid) == (d.vid, d.pid));
-        m.family.has_driver() && m.support != Support::Full && self.basic_online && same
+        let drivable = m.family.has_driver() && m.support != Support::Full && self.basic_online && same;
+        drivable && Verify::new(self.check_start()).is_some()
+    }
+
+    /// What the checks start from: the last reading and abilities.
+    fn check_start(&self) -> Start {
+        let b = &self.view.basic;
+        let battery = self.view.has_battery.then_some(self.view.battery);
+        Start { dpi: b.dpi, values: b.values.clone(), rate: b.rate, rates: b.rates.clone(), battery }
     }
 
     fn copy_report(&mut self) {
@@ -1760,6 +1838,7 @@ impl Controller {
         match report::issue(NEW_ISSUE_URL, &report::title(&dev.info), &text) {
             report::Issue::Prefilled(url) => {
                 platform::open_url(&url);
+                self.report_note(tr(T::OpenedInBrowser));
             }
             report::Issue::Paste(url) => {
                 window::set_clipboard(&text);
@@ -1777,9 +1856,7 @@ impl Controller {
 
     /// First check: its setting is changed now.
     fn start_checks(&mut self) {
-        let b = &self.view.basic;
-        let battery = self.view.has_battery.then_some(self.view.battery);
-        let start = Start { dpi: b.dpi, values: b.values.clone(), rate: b.rate, rates: b.rates.clone(), battery };
+        let start = self.check_start();
         let (Some(w), Some(mut v)) = (self.wizard.as_mut(), Verify::new(start)) else {
             return;
         };
@@ -1822,8 +1899,25 @@ impl Controller {
             return;
         };
         w.checks = v.lines().to_vec();
+        let s = v.start();
+        self.restore = Some(Restore { dpi: s.dpi, rate: s.rate, tries: RESTORE_TRIES });
         self.render_report();
         self.report_note(tr(T::ChecksDone));
+    }
+
+    /// Re-sends what the checks changed until the mouse reports it back.
+    fn check_restore(&mut self, dpi: Option<u32>, rate: Option<u32>) {
+        let Some(r) = self.restore.as_mut() else {
+            return;
+        };
+        let cmds = restore_cmds(r, dpi, rate);
+        r.tries = r.tries.saturating_sub(1);
+        if cmds.is_empty() || r.tries == 0 {
+            self.restore = None;
+        }
+        for c in cmds {
+            self.mouse.send(c);
+        }
     }
 
     fn close_report(&mut self) {
@@ -2085,6 +2179,12 @@ impl Controller {
     }
 
     fn on_key_down(&mut self, vk: u16, m: Mods) -> bool {
+        // The report's pick list and text take the arrow keys.
+        if let Some(r) = self.view.report.as_mut() {
+            if matches!(vk, VK_UP | VK_DOWN | VK_PRIOR | VK_NEXT) {
+                return report_key(r, vk);
+            }
+        }
         // The detect dialog's lists take the arrow keys and Tab.
         if let Some(d) = self.view.detect.as_mut().filter(|_| !self.view.ask_setup) {
             if matches!(vk, VK_UP | VK_DOWN | VK_LEFT | VK_RIGHT | VK_TAB) {
@@ -2123,7 +2223,12 @@ impl Controller {
         if self.view.ask_setup {
             return false;
         }
-        let closed = if self.view.report.is_some() {
+        let checking = self.wizard.as_ref().is_some_and(|w| w.verify.is_some());
+        let closed = if checking {
+            // Esc during the checks ends them; the report and its results stay.
+            self.cancel_checks();
+            true
+        } else if self.view.report.is_some() {
             // On top of the detect dialog when opened from it.
             self.close_report();
             true
@@ -2779,6 +2884,17 @@ mod tests {
         assert_eq!(pts[0].0, 0.0);
         assert_eq!(ticks.len(), 4);
         assert_eq!(since, None);
+    }
+
+    #[test]
+    fn lost_restore_is_sent_again() {
+        let r = Restore { dpi: Some(1600), rate: Some(1000), tries: RESTORE_TRIES };
+        // The mouse still runs at the test values: both go out again.
+        let cmds = restore_cmds(&r, Some(550), Some(125));
+        assert!(matches!(cmds[..], [Command::SetBasicDpi(1600), Command::SetBasicRate(1000)]));
+        // Back to normal, or not reported: nothing to send.
+        assert!(restore_cmds(&r, Some(1600), Some(1000)).is_empty());
+        assert!(restore_cmds(&r, None, None).is_empty());
     }
 
     #[test]

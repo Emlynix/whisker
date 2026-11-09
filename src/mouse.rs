@@ -88,8 +88,8 @@ pub enum Event {
     Offline,
     /// No receiver or cable found.
     Absent,
-    /// Results of `Command::Probe`, one per driver.
-    Probe(Vec<Probe>),
+    /// Results of `Command::Probe` for that pick, one per driver.
+    Probe(Pick, Vec<Probe>),
 }
 
 /// What one driver learned in a read-only probe.
@@ -435,7 +435,10 @@ fn run(target: Target, pick: Pick, rx: Receiver<Command>, on_event: impl Fn(Even
             }
             Command::Visible(v) => period = if v { POLL_VISIBLE } else { POLL_HIDDEN },
             Command::RefreshNow => {}
-            Command::Probe(targets, pick) => on_event(Event::Probe(probe(&targets, &pick))),
+            Command::Probe(targets, pick) => {
+                let found = probe(&targets, &pick);
+                on_event(Event::Probe(pick, found));
+            }
             Command::Flush(done) => {
                 let _ = done.send(());
             }

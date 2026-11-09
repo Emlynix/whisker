@@ -262,9 +262,12 @@ pub enum T {
     CheckBattery,
     Measuring,
     ChecksDone,
+    ReportNoMouse,
+    SearchAgain,
+    OpenedInBrowser,
 }
 
-const COUNT: usize = T::ChecksDone as usize + 1;
+const COUNT: usize = T::OpenedInBrowser as usize + 1;
 type Table = [&'static str; COUNT];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -697,6 +700,9 @@ const EN: Table = [
     "Whisker reads {} % battery. Does it match the mouse or its vendor app?",
     "Measuring… keep moving the mouse",
     "Checks done, settings restored. Results are in the report.",
+    "No mouse found. Connect it and search again.",
+    "Search again",
+    "Opened in your browser.",
 ];
 
 const SK: Table = [
@@ -955,6 +961,9 @@ const SK: Table = [
     "Whisker číta batériu {} %. Zodpovedá to myši alebo aplikácii výrobcu?",
     "Meriam… stále hýbte myšou",
     "Kontroly sú hotové, nastavenia vrátené. Výsledky sú v hlásení.",
+    "Nenašla sa žiadna myš. Pripojte ju a hľadajte znova.",
+    "Hľadať znova",
+    "Otvorené v prehliadači.",
 ];
 
 const CS: Table = [
@@ -1213,6 +1222,9 @@ const CS: Table = [
     "Whisker čte baterii {} %. Odpovídá to myši nebo aplikaci výrobce?",
     "Měřím… stále hýbejte myší",
     "Kontroly jsou hotové, nastavení vrácena. Výsledky jsou v hlášení.",
+    "Nenašla se žádná myš. Připojte ji a hledejte znovu.",
+    "Hledat znovu",
+    "Otevřeno v prohlížeči.",
 ];
 
 const PL: Table = [
@@ -1471,6 +1483,9 @@ const PL: Table = [
     "Whisker odczytuje baterię {} %. Czy zgadza się z myszą lub aplikacją producenta?",
     "Mierzę… poruszaj myszą",
     "Testy zakończone, ustawienia przywrócone. Wyniki są w raporcie.",
+    "Nie znaleziono myszy. Podłącz ją i wyszukaj ponownie.",
+    "Szukaj ponownie",
+    "Otwarto w przeglądarce.",
 ];
 
 const DE: Table = [
@@ -1705,7 +1720,7 @@ const DE: Table = [
     "Zurück zu erkannten",
     "MARKE",
     "MODELL",
-    "Hilf mit, deine Maus hinzuzufügen",
+    "Maus hinzufügen",
     "Schritt {} von {}",
     "Suche Mäuse…",
     "Lese die Maus aus…",
@@ -1729,6 +1744,9 @@ const DE: Table = [
     "Whisker liest {} % Akku. Stimmt das mit der Maus oder der Hersteller-App überein?",
     "Messe… Maus weiter bewegen",
     "Prüfungen fertig, Einstellungen zurückgesetzt. Ergebnisse stehen im Bericht.",
+    "Keine Maus gefunden. Schließe sie an und suche erneut.",
+    "Erneut suchen",
+    "Im Browser geöffnet.",
 ];
 
 const FR: Table = [
@@ -1963,7 +1981,7 @@ const FR: Table = [
     "Retour aux détectées",
     "MARQUE",
     "MODÈLE",
-    "Aidez à ajouter votre souris",
+    "Ajouter ma souris",
     "Étape {} sur {}",
     "Recherche des souris…",
     "Lecture de la souris…",
@@ -1987,6 +2005,9 @@ const FR: Table = [
     "Whisker lit {} % de batterie. Est-ce conforme à la souris ou à l’app du fabricant ?",
     "Mesure… continuez à bouger la souris",
     "Tests terminés, réglages rétablis. Les résultats sont dans le rapport.",
+    "Aucune souris trouvée. Branchez-la et relancez la recherche.",
+    "Rechercher",
+    "Ouvert dans le navigateur.",
 ];
 
 const ES: Table = [
@@ -2221,7 +2242,7 @@ const ES: Table = [
     "Volver a detectados",
     "MARCA",
     "MODELO",
-    "Ayuda a añadir tu ratón",
+    "Añadir mi ratón",
     "Paso {} de {}",
     "Buscando ratones…",
     "Leyendo el ratón…",
@@ -2245,6 +2266,9 @@ const ES: Table = [
     "Whisker lee {} % de batería. ¿Coincide con el ratón o la app del fabricante?",
     "Midiendo… sigue moviendo el ratón",
     "Pruebas hechas, ajustes restablecidos. Los resultados están en el informe.",
+    "No se encontró ningún ratón. Conéctalo y busca de nuevo.",
+    "Buscar de nuevo",
+    "Abierto en el navegador.",
 ];
 
 const PT: Table = [
@@ -2479,7 +2503,7 @@ const PT: Table = [
     "Voltar aos detetados",
     "MARCA",
     "MODELO",
-    "Ajude a adicionar o seu rato",
+    "Adicionar o meu rato",
     "Passo {} de {}",
     "A procurar ratos…",
     "A ler o rato…",
@@ -2503,6 +2527,9 @@ const PT: Table = [
     "O Whisker lê {} % de bateria. Corresponde ao rato ou à app do fabricante?",
     "A medir… continue a mover o rato",
     "Testes concluídos, definições repostas. Os resultados estão no relatório.",
+    "Nenhum rato encontrado. Ligue-o e procure de novo.",
+    "Procurar de novo",
+    "Aberto no navegador.",
 ];
 
 const IT: Table = [
@@ -2737,7 +2764,7 @@ const IT: Table = [
     "Torna ai rilevati",
     "MARCA",
     "MODELLO",
-    "Aiutaci ad aggiungere il tuo mouse",
+    "Aggiungi il mio mouse",
     "Passo {} di {}",
     "Ricerca dei mouse…",
     "Lettura del mouse…",
@@ -2761,6 +2788,9 @@ const IT: Table = [
     "Whisker legge {} % di batteria. Corrisponde al mouse o all’app del produttore?",
     "Misurazione… continua a muovere il mouse",
     "Verifiche concluse, impostazioni ripristinate. I risultati sono nel rapporto.",
+    "Nessun mouse trovato. Collegalo e cerca di nuovo.",
+    "Cerca di nuovo",
+    "Aperto nel browser.",
 ];
 
 const JA: Table = [
@@ -3019,6 +3049,9 @@ const JA: Table = [
     "Whisker が読み取ったバッテリーは {} %。マウスやメーカーアプリと一致しますか？",
     "測定中… マウスを動かし続けてください",
     "チェック完了、設定を元に戻しました。結果はレポートにあります。",
+    "マウスが見つかりません。接続してから再検索してください。",
+    "再検索",
+    "ブラウザーで開きました。",
 ];
 
 const KO: Table = [
@@ -3277,6 +3310,9 @@ const KO: Table = [
     "Whisker가 읽은 배터리는 {}%입니다. 마우스나 제조사 앱과 일치하나요?",
     "측정 중… 마우스를 계속 움직이세요",
     "검사 완료, 설정을 되돌렸습니다. 결과는 보고서에 있습니다.",
+    "마우스를 찾지 못했습니다. 연결한 뒤 다시 찾으세요.",
+    "다시 찾기",
+    "브라우저에서 열었습니다.",
 ];
 
 const ZH_HANS: Table = [
@@ -3535,6 +3571,9 @@ const ZH_HANS: Table = [
     "Whisker 读取的电量为 {}%。与鼠标或厂商应用一致吗？",
     "正在测量… 请继续移动鼠标",
     "检查完成，设置已恢复。结果已写入报告。",
+    "未找到鼠标。请连接后重新查找。",
+    "重新查找",
+    "已在浏览器中打开。",
 ];
 
 const ZH_HANT: Table = [
@@ -3793,6 +3832,9 @@ const ZH_HANT: Table = [
     "Whisker 讀取的電量為 {}%。與滑鼠或廠商應用程式一致嗎？",
     "正在測量… 請繼續移動滑鼠",
     "檢查完成，設定已還原。結果已寫入報告。",
+    "找不到滑鼠。請連接後重新尋找。",
+    "重新尋找",
+    "已在瀏覽器中開啟。",
 ];
 
 #[cfg(test)]

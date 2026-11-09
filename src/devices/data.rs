@@ -327,6 +327,9 @@ fn pid(v: &str) -> Result<(u16, Option<Link>), String> {
 }
 
 /// `100..26000 step 50`, or a list `400, 800, 1600`.
+/// More slider positions than any mouse has: a typo, not a range.
+const MAX_DPI_VALUES: u32 = 10_000;
+
 fn dpi(v: &str) -> Result<DpiRange, String> {
     let Some((min, rest)) = v.split_once(RANGE_SEP) else {
         return Ok(DpiRange::List(list(v, int)?));
@@ -338,6 +341,9 @@ fn dpi(v: &str) -> Result<DpiRange, String> {
     let (min, max, step) = (int(min.trim())?, int(max)?, int(step)?);
     if min > max || step == 0 {
         return Err(format!("empty range {v}"));
+    }
+    if (max - min) / step > MAX_DPI_VALUES {
+        return Err(format!("too many DPI values in {v}"));
     }
     Ok(DpiRange::Steps { min, max, step })
 }

@@ -87,7 +87,7 @@ const PAD: f32 = 24.0;
 const BTN_H: f32 = 36.0;
 const ROW_H: f32 = 40.0;
 /// Pick list rows shown at once.
-const PICK_ROWS: usize = 6;
+pub const PICK_ROWS: usize = 6;
 const LINE_H: f32 = 17.0;
 /// Report lines shown at once; the rest scrolls.
 pub const REPORT_ROWS: usize = 17;
@@ -151,12 +151,14 @@ fn pick(f: &mut Frame, r: &ReportView, body: Rect, right: f32, by: f32) {
 
     let top = body.y + 78.0;
     if r.rows.is_empty() {
-        f.g.text(tr(T::NoMouse), Rect::new(body.x, top, body.w, 40.0), Size::Body, Weight::Normal, Align::Wrap, th().muted);
-        button_row(f, right, by, &[(Act::ReportClose, tr(T::Cancel))]);
+        f.g.text(tr(T::ReportNoMouse), Rect::new(body.x, top, body.w, 40.0), Size::Body, Weight::Normal, Align::Wrap, th().muted);
+        button_row(f, right, by, &[(Act::ReportClose, tr(T::Cancel)), (Act::ReportOpen, tr(T::SearchAgain))]);
         return;
     }
-    for (k, row) in r.rows.iter().enumerate().take(PICK_ROWS) {
-        let rr = Rect::new(body.x, top + k as f32 * ROW_H, body.w, ROW_H - 4.0);
+    // Longer lists follow the selection (arrow keys, wheel).
+    let first = r.sel.saturating_sub(PICK_ROWS - 1);
+    for (k, row) in r.rows.iter().enumerate().skip(first).take(PICK_ROWS) {
+        let rr = Rect::new(body.x, top + (k - first) as f32 * ROW_H, body.w, ROW_H - 4.0);
         let sel = k == r.sel;
         let hot = f.button(Act::ReportSel(k), rr);
         if sel || hot {
@@ -215,12 +217,12 @@ fn check(f: &mut Frame, r: &ReportView, body: Rect, right: f32, by: f32) {
         return;
     };
     f.g.text(tr(T::CheckIntro), Rect::new(body.x, body.y, body.w, 40.0), Size::Body, Weight::Normal, Align::Wrap, th().muted);
-    let card = Rect::new(body.x, body.y + 56.0, body.w, 150.0);
+    let card = Rect::new(body.x, body.y + 56.0, body.w, 176.0);
     f.card(card);
     let inner = card.inset(20.0);
     f.caption_in(&c.title, inner.x, inner.y, inner.w);
-    f.g.text(&c.question, Rect::new(inner.x, inner.y + 24.0, inner.w, 48.0), Size::Large, Weight::Semibold, Align::Wrap, th().text);
-    f.g.text(&c.value, Rect::new(inner.x, inner.y + 80.0, inner.w, 22.0), Size::Body, Weight::Normal, Align::Left, th().accent);
+    f.g.text(&c.question, Rect::new(inner.x, inner.y + 24.0, inner.w, 74.0), Size::Large, Weight::Semibold, Align::Wrap, th().text);
+    f.g.text(&c.value, Rect::new(inner.x, inner.y + 106.0, inner.w, 22.0), Size::Body, Weight::Normal, Align::Left, th().accent);
 
     let cancel = tr(T::CheckCancel);
     f.push_button(Act::ReportCancelChecks, Rect::new(body.x, by, btn_w(cancel), BTN_H), cancel, false);

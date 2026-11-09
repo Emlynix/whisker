@@ -43,9 +43,15 @@ pub enum Issue {
     Paste(String),
 }
 
+/// A string the device reports, safe in Markdown and TOML: no control
+/// characters, table bars, code fences, quotes or @mentions.
+fn clean(s: &str) -> String {
+    s.chars().map(|c| if c.is_control() || matches!(c, '|' | '`' | '@' | '"' | '<' | '>') { ' ' } else { c }).collect::<String>().trim().to_string()
+}
+
 /// "Logitech G305", else the vendor and product ids.
 pub fn product(d: &DeviceInfo) -> String {
-    let name = format!("{} {}", d.manufacturer, d.product);
+    let name = format!("{} {}", clean(&d.manufacturer), clean(&d.product));
     let name = name.trim();
     if name.is_empty() { usb_id(d) } else { name.to_string() }
 }
@@ -77,8 +83,12 @@ pub fn text(i: &Input) -> String {
     let d = &i.dev.info;
     let mut out = vec![format!("### {}", title(d)), String::new()];
     out.push(format!("- {} {} on {}", crate::APP_NAME, env!("CARGO_PKG_VERSION"), i.os));
-    out.push(format!("- Manufacturer: {}", or_none(&d.manufacturer)));
-    out.push(format!("- Product: {}", or_none(&d.product)));
+    out.push(format!("- Manufacturer: {}", or_none(&clean(&d.manufacturer))));
+    out.push(format!("- Product: {}", or_none(&clean(&d.product))));
+    if d.bt_address.is_some() {
+        // Windows may show the name the user gave the mouse.
+        out.push("- Note: Bluetooth name as set in the OS; remove it if it is personal.".into());
+    }
     out.push(format!("- USB ID: {}, release {}", usb_id(d), devices::bcd_version(d.version)));
     let link = d.bt_address.as_deref().map_or_else(|| link_of(i.dev).to_string(), bt_line);
     out.push(format!("- Connection: {link}"));
@@ -223,7 +233,7 @@ fn probed(p: &Probed) -> String {
 
 /// Name, firmware and protocol; the serial number stays out.
 fn ident_text(i: &Ident) -> String {
-    format!("name \"{}\", firmware \"{}\", protocol \"{}\"", i.name, i.firmware, i.protocol)
+    format!("name \"{}\", firmware \"{}\", protocol \"{}\"", clean(&i.name), clean(&i.firmware), clean(&i.protocol))
 }
 
 fn ability_text(a: &Ability) -> String {
@@ -269,14 +279,14 @@ fn data_block(d: &DeviceInfo, list: &[Probe]) -> Vec<String> {
         Match::Known(m) | Match::Guess(m) => m.brand.to_string(),
         Match::Unknown => {
             let id = slug(&d.manufacturer);
-            let name = if d.manufacturer.is_empty() { id.clone() } else { d.manufacturer.replace('"', "'") };
+            let name = if d.manufacturer.is_empty() { id.clone() } else { clean(&d.manufacturer) };
             out.extend(["[[brand]]".to_string(), format!("id = {id}"), format!("name = \"{name}\""), format!("family = {family}"), String::new()]);
             id
         }
     };
     out.push("[[mouse]]".into());
     out.push(format!("brand = {brand}"));
-    out.push(format!("model = \"{}\"", d.product.replace('"', "'")));
+    out.push(format!("model = \"{}\"", clean(&d.product)));
     out.push(format!("vid = 0x{:04X}", d.vid));
     out.push(format!("pids = 0x{:04X}", d.pid));
     out.push(format!("family = {family}"));
@@ -401,7 +411,8 @@ mod tests {
             Probe { target: Target::Razer, got: Probed::Driver(dev.info.clone(), Ident::default(), a, None) },
         ];
         let t = report(&dev, &probes);
-        assert!(t.starts_with("### Mouse report: Acme Glide \"Pro\" (1234:5678)"), "{t}");
+        assert!(t.starts_with("### Mouse report: Acme Glide  Pro (1234:5678)"), "{t}");
+        assert_eq!(clean("a@b|c`d\ne"), "a b c d e", "device strings are cleaned");
         assert!(t.contains("- Whisker ") && t.contains("on Windows 11 26300"));
         assert!(t.contains("| 0x0001:0x0002 (mouse) | 1 | USB | 8 / 0 / 33 | 0x02 |"), "{t}");
         assert!(t.contains("| 0xFF00:0x0001 | 1 | USB | 8 / 0 / 33 | none |"), "{t}");
@@ -412,7 +423,7 @@ mod tests {
         assert!(t.contains("not available on this OS"));
         let toml = block.split("```").next().unwrap();
         assert_eq!(devices::check_data(toml), Ok(1), "the block pastes into data/mice.toml");
-        assert!(block.starts_with("[[brand]]\nid = acme\nname = \"Acme\"\nfamily = razer\n\n[[mouse]]\nbrand = acme\nmodel = \"Glide 'Pro'\"\nvid = 0x1234\npids = 0x5678\nfamily = razer\nsupport = experimental\ndpi = 100..8000 step 50\nrates = 125, 1000\n```"), "{block}");
+        assert!(block.starts_with("[[brand]]\nid = acme\nname = \"Acme\"\nfamily = razer\n\n[[mouse]]\nbrand = acme\nmodel = \"Glide  Pro\"\nvid = 0x1234\npids = 0x5678\nfamily = razer\nsupport = experimental\ndpi = 100..8000 step 50\nrates = 125, 1000\n```"), "{block}");
     }
 
     #[test]
