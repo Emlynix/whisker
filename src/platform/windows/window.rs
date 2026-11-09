@@ -105,23 +105,31 @@ pub fn set_clipboard(text: &str) -> bool {
 
     let data = super::win::wide(text);
     let bytes = data.len() * size_of::<u16>();
+    // No owner window: EmptyClipboard would leave the clipboard ownerless
+    // and SetClipboardData would fail after the user's content is gone.
+    if hwnd().is_null() {
+        return false;
+    }
     unsafe {
-        if OpenClipboard(hwnd()) == 0 {
+        // Prepare the text first, so a failed allocation never empties the
+        // user's clipboard.
+        let mem = GlobalAlloc(GMEM_MOVEABLE, bytes);
+        if mem.is_null() {
             return false;
         }
-        EmptyClipboard();
-        let mem = GlobalAlloc(GMEM_MOVEABLE, bytes);
-        let dst = if mem.is_null() { std::ptr::null_mut() } else { GlobalLock(mem) as *mut u16 };
+        let dst = GlobalLock(mem) as *mut u16;
         if dst.is_null() {
-            if !mem.is_null() {
-                GlobalFree(mem);
-            }
-            CloseClipboard();
+            GlobalFree(mem);
             return false;
         }
         std::ptr::copy_nonoverlapping(data.as_ptr(), dst, data.len());
         GlobalUnlock(mem);
 
+        if OpenClipboard(hwnd()) == 0 {
+            GlobalFree(mem);
+            return false;
+        }
+        EmptyClipboard();
         // On success the clipboard owns the memory; free it only on failure.
         let ok = !SetClipboardData(CF_UNICODETEXT, mem).is_null();
         if !ok {

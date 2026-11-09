@@ -131,8 +131,14 @@ enum Resend {
     Macros,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum Layout {
+    Stored,
+    Refused,
+}
+
 /// Direction of Tab focus.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Step {
     Next,
     Prev,
@@ -441,6 +447,105 @@ fn apply_undo(cfg: &mut AppConfig, u: Undo) -> Resend {
     }
 }
 
+/// Whether a dialog or picker covers the page.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Cover {
+    Modal,
+    Free,
+}
+
+/// Stores a button layout; refused if no button would stay a left click.
+/// A pending undo is stale after any other edit, so it is dropped.
+fn store_layout(cfg: &mut AppConfig, undo: &mut Option<Undo>, buttons: [Action; protocol::BUTTON_COUNT]) -> Layout {
+    if !buttons.contains(&Action::Mouse(MB_LEFT)) {
+        return Layout::Refused;
+    }
+    *undo = None;
+    cfg.buttons = buttons;
+    Layout::Stored
+}
+
+/// Another mouse is chosen: an undo for the previous one must not reach it.
+fn switch_device(cfg: &mut AppConfig, undo: &mut Option<Undo>, choice: String) {
+    *undo = None;
+    cfg.device = Some(choice);
+}
+
+/// Ctrl+Z: puts back the pending undo; waits while a dialog is open.
+fn ctrl_z(cfg: &mut AppConfig, undo: &mut Option<Undo>, cover: Cover) -> Option<Resend> {
+    if cover == Cover::Modal {
+        return None;
+    }
+    Some(apply_undo(cfg, undo.take()?))
+}
+
+/// What a pressed key does, given the focus and the acts of the last frame.
+#[derive(Debug, PartialEq, Eq)]
+enum Key {
+    Close,
+    Focus(Step),
+    /// Activate this element.
+    Press(Act),
+    /// Enter with nothing focused: the dialog's default button.
+    Default,
+    Nudge(Step),
+    Undo,
+    Page(Page),
+    Ignore,
+}
+
+fn key_action(vk: u16, m: Mods, focus: Option<Act>, acts: &[Act], caps: &Caps, cover: Cover) -> Key {
+    // A focus left over from another page or dialog is no focus.
+    let focus = focus.filter(|a| acts.contains(a));
+    match vk {
+        VK_ESCAPE => Key::Close,
+        VK_TAB => Key::Focus(if m.shift { Step::Prev } else { Step::Next }),
+        VK_RETURN | VK_SPACE => match focus {
+            // Sliders move with the arrow keys instead.
+            Some(Act::Slider(_) | Act::BasicDpi) => Key::Ignore,
+            Some(a) => Key::Press(a),
+            None if vk == VK_RETURN => Key::Default,
+            None => Key::Ignore,
+        },
+        VK_LEFT => Key::Nudge(Step::Prev),
+        VK_RIGHT => Key::Nudge(Step::Next),
+        VK_Z if command_key(m) => Key::Undo,
+        _ => match page_shortcut(vk, m, caps) {
+            Some(p) if cover == Cover::Free => Key::Page(p),
+            _ => Key::Ignore,
+        },
+    }
+}
+
+/// Text for "Copy for support": version, the Mouse tab's rows and the
+/// raw status. Pasted into public issues, so the serial number is left
+/// out and a Bluetooth address keeps only its last two bytes.
+fn support_text(rows: &[(T, String)], status: &str) -> String {
+    let mut lines = vec![format!("{} {}", crate::APP_NAME, env!("CARGO_PKG_VERSION"))];
+    let shared = rows.iter().filter(|(k, _)| *k != T::DevSerial);
+    lines.extend(shared.map(|(k, v)| format!("{}: {}", tr(*k), mask_address(v))));
+    if !status.is_empty() {
+        lines.push(format!("{}: {status}", tr(T::DevStatus)));
+    }
+    lines.join("\n")
+}
+
+/// "Bluetooth LE · B6:6B:18:D7:1E:00" -> "Bluetooth LE · XX:XX:XX:XX:1E:00";
+/// other values unchanged.
+fn mask_address(value: &str) -> String {
+    const PARTS: usize = 6;
+    const KEEP: usize = 2;
+    let (head, addr) = value.rsplit_once(' ').unwrap_or(("", value));
+    let parts: Vec<&str> = addr.split(':').collect();
+    let is_mac = parts.len() == PARTS && parts.iter().all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit()));
+    if !is_mac {
+        return value.to_string();
+    }
+    let masked: Vec<&str> = (0..PARTS).map(|i| if i < PARTS - KEEP { "XX" } else { parts[i] }).collect();
+    let sep = if head.is_empty() { "" } else { " " };
+    format!("{head}{sep}{}", masked.join(":"))
+}
+
 /// Ctrl (Cmd on macOS) is the shortcut modifier.
 fn command_key(m: Mods) -> bool {
     m.ctrl || (cfg!(target_os = "macos") && m.win)
@@ -606,6 +711,21 @@ impl Controller {
     }
 
     fn on_act(&mut self, a: Act) {
+        let before = self.overlay();
+        self.act(a);
+        // Page or dialog changed: the focused element is gone.
+        if matches!(a, Act::Nav(_)) || self.overlay() != before {
+            self.view.focus = None;
+        }
+        window::invalidate();
+    }
+
+    /// Which dialogs are open, to notice one opening or closing.
+    fn overlay(&self) -> (bool, bool, bool, Option<Dialog>) {
+        (self.view.ask_setup, self.view.detect.is_some(), self.view.picker.is_some(), self.view.dialog)
+    }
+
+    fn act(&mut self, a: Act) {
         match a {
             Act::Nav(p) => {
                 self.stop_recording();
@@ -663,6 +783,7 @@ impl Controller {
                 if self.view.recording {
                     self.stop_recording();
                 } else {
+                    self.drop_undo();
                     self.cfg.macros[self.view.macro_sel].clear();
                     self.view.macros = self.cfg.macros.clone();
                     self.view.recording = true;
@@ -724,7 +845,6 @@ impl Controller {
             Act::Diagnostics => self.view.diagnostics = !self.view.diagnostics,
             Act::CopyDiagnostics => self.copy_diagnostics(),
         }
-        window::invalidate();
     }
 
     // ---- device status ----
@@ -972,6 +1092,7 @@ impl Controller {
         let rows = if empty { model_rows() } else { detect_rows(&mice) };
         let sel = preselect(&rows);
         self.view.detect = Some(Detect { rows, sel, manual: empty, empty });
+        self.view.focus = None;
         window::invalidate();
     }
 
@@ -998,7 +1119,8 @@ impl Controller {
 
     /// Stores the chosen mouse and points the driver at it.
     fn apply_device(&mut self, choice: String) {
-        self.cfg.device = Some(choice);
+        switch_device(&mut self.cfg, &mut self.undo, choice);
+        self.hide_toast();
         store::save_config(&self.cfg);
 
         // New driver: forget what the previous one reported.
@@ -1088,12 +1210,15 @@ impl Controller {
 
     /// Applies a new layout; refused if no button would stay a left click.
     fn set_buttons(&mut self, buttons: [Action; protocol::BUTTON_COUNT]) {
-        if !buttons.contains(&Action::Mouse(MB_LEFT)) {
+        let pending = self.undo.is_some();
+        if store_layout(&mut self.cfg, &mut self.undo, buttons) == Layout::Refused {
             self.view.notice = tr(T::NeedLeft).into();
             return;
         }
+        if pending {
+            self.hide_toast();
+        }
         self.view.notice.clear();
-        self.cfg.buttons = buttons;
         self.view.buttons = buttons;
         self.send_setting(Command::SetButtons(self.cfg.buttons, self.cfg.macros.clone()));
         store::save_config(&self.cfg);
@@ -1156,15 +1281,23 @@ impl Controller {
 
     /// Reverts the last destructive action while its toast shows.
     fn undo(&mut self) -> bool {
-        let Some(u) = self.undo.take() else {
+        let cover = if self.modal() { Cover::Modal } else { Cover::Free };
+        let Some(resend) = ctrl_z(&mut self.cfg, &mut self.undo, cover) else {
             return false;
         };
-        match apply_undo(&mut self.cfg, u) {
+        match resend {
             Resend::Buttons => self.set_buttons(self.cfg.buttons),
             Resend::Macros => self.macros_changed(),
         }
         self.hide_toast();
         true
+    }
+
+    /// A later edit makes the pending undo stale: drop it with its toast.
+    fn drop_undo(&mut self) {
+        if self.undo.is_some() {
+            self.hide_toast();
+        }
     }
 
     fn show_toast(&mut self, text: String, undo: Option<Undo>) {
@@ -1184,12 +1317,7 @@ impl Controller {
     /// Puts the Mouse tab's facts on the clipboard for a bug report.
     fn copy_diagnostics(&mut self) {
         let d = &self.view.device;
-        let mut lines = vec![format!("{} {}", crate::APP_NAME, env!("CARGO_PKG_VERSION"))];
-        lines.extend(d.rows.iter().map(|(k, v)| format!("{}: {v}", tr(*k))));
-        if !d.status.is_empty() {
-            lines.push(format!("{}: {}", tr(T::DevStatus), d.status));
-        }
-        if window::set_clipboard(&lines.join("\n")) {
+        if window::set_clipboard(&support_text(&d.rows, &d.status)) {
             self.show_toast(tr(T::Copied).into(), None);
         }
     }
@@ -1301,23 +1429,25 @@ impl Controller {
     }
 
     fn on_key_down(&mut self, vk: u16, m: Mods) -> bool {
-        match vk {
-            VK_ESCAPE => self.close_top(),
-            VK_TAB => {
-                let step = if m.shift { Step::Prev } else { Step::Next };
+        let cover = if self.modal() { Cover::Modal } else { Cover::Free };
+        match key_action(vk, m, self.view.focus, &self.acts, &self.view.caps, cover) {
+            Key::Close => self.close_top(),
+            Key::Focus(step) => {
                 self.view.focus = next_focus(&self.acts, self.view.focus, step);
                 true
             }
-            VK_RETURN | VK_SPACE => self.press(vk),
-            VK_LEFT | VK_RIGHT => self.nudge(if vk == VK_LEFT { Step::Prev } else { Step::Next }),
-            VK_Z if command_key(m) => self.undo(),
-            _ => {
-                let Some(page) = page_shortcut(vk, m, &self.view.caps).filter(|_| !self.modal()) else {
-                    return false;
-                };
-                self.on_act(Act::Nav(page));
+            Key::Press(a) => {
+                self.on_act(a);
                 true
             }
+            Key::Default => self.press_default(),
+            Key::Nudge(step) => self.nudge(step),
+            Key::Undo => self.undo(),
+            Key::Page(p) => {
+                self.on_act(Act::Nav(p));
+                true
+            }
+            Key::Ignore => false,
         }
     }
 
@@ -1331,33 +1461,27 @@ impl Controller {
         if self.view.ask_setup {
             return false;
         }
-        if self.view.detect.is_some() {
+        let closed = if self.view.detect.is_some() {
             self.cancel_detect();
-            return true;
-        }
-        if self.view.picker.take().is_some() || self.view.dialog.take().is_some() {
-            return true;
-        }
-        self.view.focus.take().is_some()
+            true
+        } else {
+            self.view.picker.take().is_some() || self.view.dialog.take().is_some()
+        };
+        // Whatever closed, its focused element went with it.
+        self.view.focus.take().is_some() || closed
     }
 
-    /// Enter / Space: the focused element; with none, the dialog's default.
-    fn press(&mut self, vk: u16) -> bool {
-        let act = match self.view.focus {
-            Some(a) => Some(a),
-            None if vk != VK_RETURN => None,
-            None if self.view.detect.is_some() && !self.view.ask_setup => Some(Act::DetectUse),
-            None if self.view.picker.is_some_and(|p| p.built().is_some()) => Some(Act::PickApply),
-            None => None,
+    /// Enter with nothing focused: the open dialog's main button.
+    fn press_default(&mut self) -> bool {
+        let act = if self.view.detect.is_some() && !self.view.ask_setup {
+            Act::DetectUse
+        } else if self.view.picker.is_some_and(|p| p.built().is_some()) {
+            Act::PickApply
+        } else {
+            return false;
         };
-        match act {
-            // Sliders move with the arrow keys instead.
-            Some(Act::Slider(_) | Act::BasicDpi) | None => false,
-            Some(a) => {
-                self.on_act(a);
-                true
-            }
-        }
+        self.on_act(act);
+        true
     }
 
     /// Left / Right on a focused slider: one step.
@@ -1366,7 +1490,7 @@ impl Controller {
             Step::Next => (i + 1).min(n.saturating_sub(1)),
             Step::Prev => i.saturating_sub(1),
         };
-        match self.view.focus {
+        match self.view.focus.filter(|a| self.acts.contains(a)) {
             Some(Act::Slider(i)) => {
                 let Some(s) = self.view.stages.get(i) else {
                     return false;
@@ -1429,6 +1553,7 @@ impl Controller {
 
     /// Saves macros and re-sends the buttons when a macro is in use.
     fn macros_changed(&mut self) {
+        self.drop_undo();
         self.view.macros = self.cfg.macros.clone();
         store::save_config(&self.cfg);
         if self.cfg.buttons.iter().any(|a| matches!(a, Action::Macro { .. })) {
@@ -1809,6 +1934,67 @@ mod tests {
         let (pts, ticks) = chart(&samples, now, Period::All);
         assert_eq!(pts[0].0, 0.0);
         assert_eq!(ticks.len(), 4);
+    }
+
+    #[test]
+    fn support_text_hides_serial_and_bluetooth_address() {
+        let rows = vec![
+            (T::DevModel, "Lionel".to_string()),
+            (T::DevConnection, "Bluetooth LE · B6:6B:18:D7:1E:00".to_string()),
+            (T::DevSerial, "SN12345678".to_string()),
+        ];
+        let text = support_text(&rows, "01 10");
+        assert!(!text.contains("SN12345678"));
+        assert!(text.contains("Bluetooth LE · XX:XX:XX:XX:1E:00"));
+        assert!(!text.contains("B6:6B"));
+        assert!(text.contains("Lionel") && text.contains("01 10"));
+    }
+
+    #[test]
+    fn enter_ignores_focus_from_another_page() {
+        // Tab to "Reset all buttons", Ctrl+1, Enter: must not reset.
+        let ctrl = Mods { ctrl: true, ..Mods::default() };
+        let caps = devices::MODELS[0].caps;
+        let focus = Some(Act::ResetButtons);
+        let buttons_acts = [Act::Nav(Page::Overview), Act::ResetButtons];
+        assert_eq!(key_action(VK_1, ctrl, focus, &buttons_acts, &caps, Cover::Free), Key::Page(Page::Overview));
+
+        let overview_acts = [Act::Nav(Page::Overview), Act::Activate(0)];
+        let enter = key_action(VK_RETURN, Mods::default(), focus, &overview_acts, &caps, Cover::Free);
+        assert_ne!(enter, Key::Press(Act::ResetButtons));
+    }
+
+    #[test]
+    fn later_button_edit_drops_undo() {
+        let mut cfg = AppConfig::default();
+        cfg.buttons[2] = Action::Disable;
+        let mut undo = reset_layout(&mut cfg);
+
+        let mut edited = cfg.buttons;
+        edited[3] = Action::Disable;
+        assert_eq!(store_layout(&mut cfg, &mut undo, edited), Layout::Stored);
+        assert_eq!(ctrl_z(&mut cfg, &mut undo, Cover::Free), None);
+        assert_eq!(cfg.buttons, edited);
+    }
+
+    #[test]
+    fn mouse_switch_drops_undo() {
+        let mut cfg = AppConfig::default();
+        cfg.buttons[2] = Action::Disable;
+        let mut undo = reset_layout(&mut cfg);
+        switch_device(&mut cfg, &mut undo, store::GENERIC_DEVICE.into());
+        assert_eq!(ctrl_z(&mut cfg, &mut undo, Cover::Free), None);
+        assert_eq!(cfg.buttons, DEFAULT_ACTIONS);
+    }
+
+    #[test]
+    fn ctrl_z_waits_while_a_dialog_is_open() {
+        let mut cfg = AppConfig::default();
+        cfg.buttons[2] = Action::Disable;
+        let mut undo = reset_layout(&mut cfg);
+        assert_eq!(ctrl_z(&mut cfg, &mut undo, Cover::Modal), None);
+        assert!(undo.is_some(), "kept for after the dialog");
+        assert_eq!(ctrl_z(&mut cfg, &mut undo, Cover::Free), Some(Resend::Buttons));
     }
 
     #[test]
