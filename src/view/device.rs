@@ -1,10 +1,11 @@
-//! Device page (hardware info) and the "which mouse do you use?" dialog.
+//! Settings › Mouse tab (hardware info, diagnostics) and the "which mouse
+//! do you use?" dialog.
 
-use super::{Act, CW, Frame, HEIGHT, RADIUS, TOP, View, WIDTH, X0, th};
+use super::{Act, BODY, CW, Frame, GAP, HEIGHT, RADIUS, View, WIDTH, X0, th};
 use crate::gfx::{Align, Color, Rect, Weight};
 use crate::i18n::{T, tr};
 
-const ROW: f32 = 30.0;
+const ROW: f32 = 26.0;
 const PAD: f32 = 20.0;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -39,6 +40,10 @@ pub struct Detect {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DeviceView {
     pub rows: Vec<(T, String)>,
+    /// Firmware version for the Overview line; empty if unknown.
+    pub firmware: String,
+    /// Raw status bytes as hex, for bug reports; empty if none.
+    pub status: String,
     pub offline: bool,
     /// Driver not yet verified on hardware: ask for reports.
     pub experimental: bool,
@@ -54,32 +59,53 @@ fn badge_color(k: Badge) -> Color {
 
 pub(super) fn device_page(f: &mut Frame, v: &View) {
     let d = &v.device;
-    let card = Rect::new(X0, TOP, CW, ROW * d.rows.len() as f32 + 24.0);
+    let card = Rect::new(X0, BODY, CW, ROW * d.rows.len() as f32 + 16.0);
     f.card(card);
 
     for (i, (caption, value)) in d.rows.iter().enumerate() {
-        let y = card.y + 12.0 + i as f32 * ROW;
-        f.caption_in(tr(*caption), card.x + PAD, y + 8.0, 190.0);
+        let y = card.y + 8.0 + i as f32 * ROW;
+        f.caption_in(tr(*caption), card.x + PAD, y + 6.0, 190.0);
         let (text, color) = if value.is_empty() { (tr(T::NotReported).to_string(), th().faint) } else { (value.clone(), th().text) };
         let r = Rect::new(card.x + 230.0, y, card.w - 250.0, ROW);
         let size = super::fit_size(&text, r.w, 13.5);
         f.g.text(&text, r, size, Weight::Normal, Align::Left, color);
     }
 
-    let mut y = card.y + card.h + 14.0;
+    let mut y = card.y + card.h + GAP;
     if d.experimental {
         let r = Rect::new(X0, y, CW, 36.0);
         f.g.text(tr(T::ExperimentalNote), r, 12.0, Weight::Normal, Align::Wrap, th().warn);
-        y += 44.0;
+        y += 42.0;
     }
-    f.push_button(Act::ChangeMouse, Rect::new(X0, y, 180.0, 36.0), tr(T::ChangeMouse), false);
     if d.offline {
-        let r = Rect::new(X0 + 196.0, y, CW - 196.0, 36.0);
+        let r = Rect::new(X0, y, CW, 18.0);
         f.g.text(tr(T::DevOffline), r, 12.0, Weight::Normal, Align::Left, th().muted);
+        y += 26.0;
+    }
+    f.push_button(Act::ChangeMouse, Rect::new(X0, y, 170.0, 36.0), tr(T::ChangeMouse), false);
+    let arrow = if v.diagnostics { "▾" } else { "▸" };
+    let diag = format!("{} {arrow}", tr(T::Diagnostics));
+    f.push_button(Act::Diagnostics, Rect::new(X0 + 180.0, y, 170.0, 36.0), &diag, false);
+    if v.diagnostics {
+        diagnostics(f, d, y + 36.0 + 10.0);
     }
 }
 
+/// Raw status bytes and "Copy for support".
+fn diagnostics(f: &mut Frame, d: &DeviceView, y: f32) {
+    const BTN_W: f32 = 190.0;
+    let card = Rect::new(X0, y, CW, 56.0);
+    f.card(card);
+    f.caption(tr(T::DevStatus), card.x + PAD, card.y + 8.0);
+    let (text, color) = if d.status.is_empty() { (tr(T::NotReported), th().faint) } else { (d.status.as_str(), th().text) };
+    let r = Rect::new(card.x + PAD, card.y + 26.0, card.w - 2.0 * PAD - BTN_W - 12.0, 22.0);
+    f.g.text(text, r, super::fit_size(text, r.w, 12.5), Weight::Normal, Align::Left, color);
+    let btn = Rect::new(card.x + card.w - PAD - BTN_W + 8.0, card.y + 10.0, BTN_W - 8.0, 36.0);
+    f.push_button(Act::CopyDiagnostics, btn, tr(T::CopySupport), false);
+}
+
 pub(super) fn detect_dialog(f: &mut Frame, d: &Detect) {
+    const LEGEND_H: f32 = 26.0;
     f.g.fill(Rect::new(0.0, 0.0, WIDTH, HEIGHT), 0.0, th().scrim);
     let dlg = Rect::new((WIDTH - 600.0) / 2.0, (HEIGHT - 450.0) / 2.0, 600.0, 450.0);
     f.g.fill(dlg, RADIUS, th().card_hi);
@@ -87,22 +113,47 @@ pub(super) fn detect_dialog(f: &mut Frame, d: &Detect) {
 
     let inner = dlg.inset(24.0);
     f.g.text(tr(T::DetectTitle), Rect::new(inner.x, inner.y, inner.w, 28.0), 18.0, Weight::Bold, Align::Left, th().text);
-    let text = if d.empty && !d.manual { tr(T::NoMouse) } else { tr(T::DetectText) };
+    let text = match (d.manual, d.empty) {
+        (true, _) => tr(T::DetectManualText),
+        (false, true) => tr(T::NoMouse),
+        (false, false) => tr(T::DetectText),
+    };
     f.g.text(text, Rect::new(inner.x, inner.y + 36.0, inner.w, 40.0), 13.0, Weight::Normal, Align::Wrap, th().muted);
 
     if d.manual {
-        model_grid(f, d, Rect::new(inner.x, inner.y + 84.0, inner.w, dlg.h - 84.0 - 2.0 * 24.0 - 48.0));
+        let grid = Rect::new(inner.x, inner.y + 84.0, inner.w, dlg.h - 84.0 - 2.0 * 24.0 - 48.0 - LEGEND_H);
+        model_grid(f, d, grid);
+        legend(f, inner.x, grid.y + grid.h + 8.0);
     } else {
         detected_rows(f, d, inner);
     }
 
+    // Left: switch list; right: Cancel (keeps the current mouse) and Use.
     let by = dlg.y + dlg.h - 24.0 - 36.0;
     if !d.manual {
         f.push_button(Act::DetectManual, Rect::new(inner.x, by, 230.0, 36.0), tr(T::ChooseManually), false);
+    } else if !d.empty {
+        f.push_button(Act::DetectBack, Rect::new(inner.x, by, 120.0, 36.0), &format!("‹ {}", tr(T::Back)), false);
     }
+    let use_btn = Rect::new(dlg.x + dlg.w - 24.0 - 170.0, by, 170.0, 36.0);
     if !d.rows.is_empty() {
-        let use_btn = Rect::new(dlg.x + dlg.w - 24.0 - 180.0, by, 180.0, 36.0);
         f.push_button(Act::DetectUse, use_btn, tr(T::UseMouse), true);
+    }
+    let cancel = Rect::new(use_btn.x - 10.0 - 120.0, by, 120.0, 36.0);
+    f.push_button(Act::DetectCancel, cancel, tr(T::Cancel), false);
+}
+
+/// What the dots of the model grid mean.
+fn legend(f: &mut Frame, x: f32, y: f32) {
+    const SIZE: f32 = 12.0;
+    let items = [(Badge::Good, T::BadgeFull), (Badge::Warn, T::BadgeExperimental), (Badge::Muted, T::LegendStats)];
+    let mut x = x;
+    for (kind, key) in items {
+        let label = tr(key);
+        f.g.circle(x + 4.0, y + 9.0, 4.0, badge_color(kind));
+        let w = super::text_w(label, SIZE) + 8.0;
+        f.g.text(label, Rect::new(x + 14.0, y, w, 18.0), SIZE, Weight::Normal, Align::Left, th().muted);
+        x += 14.0 + w + 18.0;
     }
 }
 
