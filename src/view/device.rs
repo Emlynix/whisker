@@ -376,3 +376,26 @@ pub(super) fn banner(f: &mut Frame, b: &Banner) {
     f.g.text(&title, Rect::new(text_x, r.y + 5.0, room, 20.0), Size::Body, Weight::Semibold, Align::Left, th().text);
     f.g.text(&b.badge, Rect::new(text_x, r.y + 25.0, room, 18.0), Size::Caption, Weight::Semibold, Align::Left, badge_color(b.kind));
 }
+
+/// "Whisker needs permission to access the mouse  [Copy command]" over
+/// the title row, in the warning colour.
+pub(super) fn access_banner(f: &mut Frame) {
+    const TOP: f32 = 12.0;
+    const H: f32 = 48.0;
+    const BTN_H: f32 = 32.0;
+    // Room for the semibold label, measured at normal weight.
+    const BTN_PAD: f32 = 48.0;
+    let r = Rect::new(X0, TOP, CW, H);
+    f.g.fill(r, RADIUS, th().card_hi);
+    f.g.stroke(r, RADIUS, 1.0, th().warn);
+
+    let btn_w = text_w(tr(T::CopyCommand), Size::Body) + BTN_PAD;
+    let btn = Rect::new(r.x + r.w - 8.0 - btn_w, r.y + (H - BTN_H) / 2.0, btn_w, BTN_H);
+    f.push_button(Act::CopyCommand, btn, tr(T::CopyCommand), true);
+
+    // What is missing on top, what to do below; no icon: the text needs the room.
+    let text_x = r.x + 16.0;
+    let room = btn.x - 12.0 - text_x;
+    f.g.text(tr(T::AccessNeeded), Rect::new(text_x, r.y + 5.0, room, 20.0), Size::Body, Weight::Semibold, Align::Left, th().text);
+    f.g.text(tr(T::AccessSteps), Rect::new(text_x, r.y + 25.0, room, 18.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
+}

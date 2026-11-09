@@ -283,9 +283,14 @@ pub enum T {
     UpdateCheckFailed,
     /// About: what the daily update check reveals.
     UpdatePrivacy,
+    /// Linux without the udev rule: the mouse can't be opened.
+    AccessNeeded,
+    /// What to do with the copied command.
+    AccessSteps,
+    CopyCommand,
 }
 
-const COUNT: usize = T::UpdatePrivacy as usize + 1;
+const COUNT: usize = T::CopyCommand as usize + 1;
 type Table = [&'static str; COUNT];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -738,6 +743,9 @@ const EN: Table = [
     "Whisker is up to date.",
     "Could not check for updates.",
     "Daily update check shares only your IP and app version. Off in Settings.",
+    "Whisker needs permission to access the mouse",
+    "Run the command in a terminal.",
+    "Copy command",
 ];
 
 const SK: Table = [
@@ -1016,6 +1024,9 @@ const SK: Table = [
     "Whisker je aktuálny.",
     "Aktualizácie sa nepodarilo skontrolovať.",
     "Denná kontrola aktualizácií odosiela len IP adresu a verziu aplikácie. Vypnete ju v Nastaveniach.",
+    "Whisker potrebuje prístup k myši",
+    "Príkaz spustite v termináli.",
+    "Kopírovať príkaz",
 ];
 
 const CS: Table = [
@@ -1294,6 +1305,9 @@ const CS: Table = [
     "Whisker je aktuální.",
     "Aktualizace se nepodařilo zkontrolovat.",
     "Denní kontrola aktualizací odesílá jen IP adresu a verzi aplikace. Vypnete ji v Nastavení.",
+    "Whisker potřebuje přístup k myši",
+    "Příkaz spusťte v terminálu.",
+    "Kopírovat příkaz",
 ];
 
 const PL: Table = [
@@ -1572,6 +1586,9 @@ const PL: Table = [
     "Whisker jest aktualny.",
     "Nie udało się sprawdzić aktualizacji.",
     "Codzienne sprawdzanie aktualizacji przesyła tylko IP i wersję aplikacji. Wyłączenie w Ustawieniach.",
+    "Whisker potrzebuje dostępu do myszy",
+    "Polecenie należy uruchomić w terminalu.",
+    "Kopiuj polecenie",
 ];
 
 const DE: Table = [
@@ -1850,6 +1867,9 @@ const DE: Table = [
     "Whisker ist auf dem neuesten Stand.",
     "Updates konnten nicht geprüft werden.",
     "Die tägliche Update-Prüfung übermittelt nur IP-Adresse und App-Version. Abschaltbar in den Einstellungen.",
+    "Whisker benötigt Zugriffsrechte für die Maus",
+    "Führen Sie den Befehl im Terminal aus.",
+    "Befehl kopieren",
 ];
 
 const FR: Table = [
@@ -2128,6 +2148,9 @@ const FR: Table = [
     "Whisker est à jour.",
     "Impossible de rechercher des mises à jour.",
     "La vérification quotidienne des mises à jour n'envoie que votre IP et la version. Désactivable dans Paramètres.",
+    "Whisker a besoin d'un accès à la souris",
+    "Exécutez la commande dans un terminal.",
+    "Copier la commande",
 ];
 
 const ES: Table = [
@@ -2406,6 +2429,9 @@ const ES: Table = [
     "Whisker está actualizado.",
     "No se pudieron buscar actualizaciones.",
     "La comprobación diaria de actualizaciones solo envía su IP y la versión. Puede desactivarla en Configuración.",
+    "Whisker necesita acceso al ratón",
+    "Ejecute el comando en una terminal.",
+    "Copiar comando",
 ];
 
 const PT: Table = [
@@ -2684,6 +2710,9 @@ const PT: Table = [
     "O Whisker está atualizado.",
     "Não foi possível procurar atualizações.",
     "A verificação diária de atualizações envia apenas o seu IP e a versão. Pode desativá-la nas Definições.",
+    "O Whisker precisa de acesso ao rato",
+    "Execute o comando num terminal.",
+    "Copiar comando",
 ];
 
 const IT: Table = [
@@ -2962,6 +2991,9 @@ const IT: Table = [
     "Whisker è aggiornato.",
     "Impossibile cercare aggiornamenti.",
     "Il controllo giornaliero degli aggiornamenti invia solo IP e versione dell'app. Disattivabile in Impostazioni.",
+    "Whisker richiede l'autorizzazione per il mouse",
+    "Eseguire il comando in un terminale.",
+    "Copia comando",
 ];
 
 const JA: Table = [
@@ -3240,6 +3272,9 @@ const JA: Table = [
     "Whisker は最新です。",
     "アップデートを確認できませんでした。",
     "1 日 1 回更新を確認し、送信するのは IP アドレスとバージョンのみです。設定 でオフにできます。",
+    "Whisker にはマウスへのアクセス許可が必要です",
+    "コマンドをターミナルで実行してください。",
+    "コマンドをコピー",
 ];
 
 const KO: Table = [
@@ -3518,6 +3553,9 @@ const KO: Table = [
     "Whisker가 최신 상태입니다.",
     "업데이트를 확인하지 못했습니다.",
     "하루 한 번 업데이트를 확인하며 IP 주소와 앱 버전만 전송합니다. 설정에서 끌 수 있습니다.",
+    "Whisker에 마우스 접근 권한이 필요합니다",
+    "터미널에서 명령을 실행하십시오.",
+    "명령 복사",
 ];
 
 const ZH_HANS: Table = [
@@ -3796,6 +3834,9 @@ const ZH_HANS: Table = [
     "Whisker 已是最新版本。",
     "无法检查更新。",
     "每天检查一次更新，仅发送您的 IP 地址和应用版本。可在设置中关闭。",
+    "Whisker 需要访问鼠标的权限",
+    "请您在终端中运行该命令。",
+    "复制命令",
 ];
 
 const ZH_HANT: Table = [
@@ -4074,6 +4115,9 @@ const ZH_HANT: Table = [
     "Whisker 已是最新版本。",
     "無法檢查更新。",
     "每天檢查一次更新，只會傳送您的 IP 位址和應用程式版本。可在設定中關閉。",
+    "Whisker 需要存取滑鼠的權限",
+    "請您在終端機中執行該命令。",
+    "複製命令",
 ];
 
 #[cfg(test)]

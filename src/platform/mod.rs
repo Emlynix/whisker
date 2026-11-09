@@ -72,6 +72,12 @@
 //!   `read(len, timeout) -> Option<Vec<u8>>` (next input report),
 //!   `read_until(len, timeout, accept) -> Option<T>`,
 //!   `set_feature(report) -> bool`, `get_feature(buf) -> bool` (`buf[0]` = id).
+//! - `access(vid) -> Access`: whether the user may open the vendor's
+//!   devices. Linux: `Denied` when a hidraw node exists but none is
+//!   readable and writable (no udev rule). Windows, macOS: `Granted`.
+//! - `grant_command(dir) -> Option<String>`: Linux writes the bundled
+//!   udev rule into `dir` and returns the shell command installing it;
+//!   `None` elsewhere.
 //!
 //! `bluetooth` — `battery(addr) -> Option<u8>` and `name(addr) ->
 //! Option<String>` of a BLE device by its 12-hex-digit address.
@@ -139,6 +145,15 @@ pub struct TitleColors {
 pub enum Shade {
     Dark,
     Light,
+}
+
+/// `hid::access`: may the user open a vendor's HID devices.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Access {
+    Granted,
+    /// Devices present, opening refused (Linux without the udev rule).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Denied,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

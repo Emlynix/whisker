@@ -372,6 +372,17 @@ impl Channel {
     }
 }
 
+
+/// No per-device permission to grant here.
+pub fn access(_vid: u16) -> crate::platform::Access {
+    crate::platform::Access::Granted
+}
+
+/// Nothing to install: devices open without a rule.
+pub fn grant_command(_dir: &std::path::Path) -> Option<String> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

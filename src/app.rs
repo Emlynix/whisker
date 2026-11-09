@@ -25,7 +25,7 @@ use crate::protocol::{
     self, Action, BREATHING_MAX, DEFAULT_ACTIONS, DELAY_MAX_MS, Edge, Effect, Ev, MACRO_MAX_EVENTS, MB_LEFT, MOD_ALT,
     MOD_CTRL, MOD_SHIFT, MOD_WIN, MacroEvent, PollingRate, STAGE_COUNT, Status,
 };
-use crate::platform::{self, Autostart, Shade, TitleColors, autostart, install, window};
+use crate::platform::{self, Access, Autostart, Shade, TitleColors, autostart, hid, install, window};
 use crate::shell::{Hooks, KeyEvent, Mods, Phase};
 use crate::stats::{self, Period, Stats};
 use crate::theme::{self, THEMES};
@@ -379,6 +379,7 @@ fn initial_view(cfg: &AppConfig, ask_setup: bool) -> View {
         diagnostics: false,
         pulse: u8::MAX,
         banner: None,
+        access: Access::Granted,
         report: None,
         update: UpdateView::new(cfg.update_check, updater::install_kind()),
     }
@@ -451,6 +452,7 @@ fn belongs_to(ev: &Event, t: &Target) -> bool {
 fn forget_mouse(v: &mut View, caps: Caps) {
     v.basic = BasicView::default();
     v.connected = false;
+    v.access = Access::Granted;
     v.battery = 0;
     v.battery_approx = false;
     v.charge = Charge::Discharging;
@@ -1301,6 +1303,7 @@ impl Controller {
             }
             Act::Diagnostics => self.view.diagnostics = !self.view.diagnostics,
             Act::CopyDiagnostics => self.copy_diagnostics(),
+            Act::CopyCommand => self.copy_command(),
             Act::ReportOpen => self.open_report(),
             Act::ReportSel(i) => {
                 if let Some(r) = self.view.report.as_mut() {
@@ -1335,6 +1338,7 @@ impl Controller {
         let (link, level) = match ev {
             Event::Device(info) => {
                 self.device_info = Some(info);
+                self.view.access = Access::Granted;
                 self.refresh_device();
                 return;
             }
@@ -1390,6 +1394,7 @@ impl Controller {
             Event::Absent => {
                 self.status = None;
                 self.basic_online = false;
+                self.view.access = self.hid_access();
                 (T::LinkNoReceiver, Level::Offline)
             }
         };
@@ -1531,6 +1536,20 @@ impl Controller {
             Some(Some(m)) => self.mice.iter().find(|d| devices::match_device(d) == Match::Known(m)),
             _ => self.mice.iter().find(|d| devices::match_device(d) == Match::Unknown).or(self.mice.first()),
         }
+    }
+
+    /// Whether the mouse's HID devices refuse this user (Linux without
+    /// the udev rule); only mice opened over HID can be refused.
+    fn hid_access(&self) -> Access {
+        let vid = match self.target {
+            Target::Bluetooth(_) | Target::Nothing => return Access::Granted,
+            Target::Lionel => self.pick().vid.unwrap_or(protocol::VENDOR_ID),
+            _ => match self.pick().vid {
+                Some(v) => v,
+                None => return Access::Granted,
+            },
+        };
+        hid::access(vid)
     }
 
     /// USB devices the driver may open: the chosen model's, or exactly the
@@ -2097,6 +2116,16 @@ impl Controller {
         window::invalidate();
     }
 
+    /// Puts the command installing the udev rule on the clipboard.
+    fn copy_command(&mut self) {
+        let Some(cmd) = store::data_dir().and_then(|d| hid::grant_command(&d)) else {
+            return;
+        };
+        if window::set_clipboard(&cmd) {
+            self.show_toast(tr(T::Copied).into(), None);
+        }
+    }
+
     /// Puts the Mouse tab's facts on the clipboard for a bug report.
     fn copy_diagnostics(&mut self) {
         // English for public issues, whatever the UI language.
@@ -2651,8 +2680,11 @@ mod tests {
         // Lionel was connected at 56 %, then "other mouse" is chosen.
         let mut v = initial_view(&AppConfig::default(), false);
         (v.connected, v.has_battery, v.battery) = (true, true, 56);
+        v.access = Access::Denied;
         forget_mouse(&mut v, CAPS_NONE);
         assert!(!v.connected);
+        // The permission hint belonged to the old mouse.
+        assert_eq!(v.access, Access::Granted);
         assert!(!v.has_battery);
         assert_eq!(v.battery, 0);
     }

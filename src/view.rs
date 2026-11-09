@@ -33,6 +33,7 @@ pub use device::{Badge, Banner, BrandRow, Detect, DetectRow, DeviceView, Found, 
 pub use report::{Answer, Ask, CheckView, PickRow, REPORT_ROWS, ReportView, Step as ReportStep, report_at};
 pub use update::{Install, Offer, Probe, Step as UpdateStep, UpdateView, note_lines};
 use crate::devices::{Caps, DpiUi};
+use crate::platform::Access;
 use crate::store::{DEBOUNCE_CHOICES, SLEEP_CHOICES};
 use crate::theme::{self, THEMES, Theme};
 
@@ -225,6 +226,8 @@ pub enum Act {
     OpenWeb(Web),
     Diagnostics,
     CopyDiagnostics,
+    /// Copies the command installing the udev rule (Linux).
+    CopyCommand,
     /// Opens the "assign macro to button" dialog.
     AssignMacro,
     /// Assigns the selected macro to this button.
@@ -425,6 +428,8 @@ pub struct View {
     pub pulse: u8,
     /// "New mouse connected" offer over the title row.
     pub banner: Option<Banner>,
+    /// The chosen mouse's devices refuse this user (Linux, no udev rule).
+    pub access: Access,
     /// "Help add your mouse" wizard.
     pub report: Option<ReportView>,
     pub update: UpdateView,
@@ -722,6 +727,11 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
     // Over the title row: never covers controls of the page.
     if let Some(b) = &v.banner {
         device::banner(&mut f, b);
+    }
+    // No permission: say so where the mouse is expected.
+    let hint_page = matches!(v.page, Page::Overview | Page::Mouse);
+    if v.banner.is_none() && hint_page && v.access == Access::Denied {
+        device::access_banner(&mut f);
     }
 
     match v.page {

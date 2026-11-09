@@ -24,9 +24,12 @@
 
 use super::descriptor::collections;
 use crate::hid_link::{DeviceInfo, Interface, ReportLayout, Transport, report_ids};
+use crate::platform::Access;
+use std::ffi::CString;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -52,6 +55,16 @@ const IOC_TYPE_SHIFT: u64 = 8;
 const HID_IOC_TYPE: u64 = b'H' as u64;
 const NR_SET_FEATURE: u64 = 0x06;
 const NR_GET_FEATURE: u64 = 0x07;
+/// udev rule granting the seat user the catalogue vendors' hidraw nodes
+/// and mouse evdev nodes (`TAG+="uaccess"`).
+const RULES: &str = include_str!("../../../bundle/linux/70-whisker.rules");
+const RULES_NAME: &str = "70-whisker.rules";
+const RULES_DIR: &str = "/etc/udev/rules.d";
+/// Applies the new rule to devices already connected.
+const RELOAD: &str = "sudo udevadm control --reload && sudo udevadm trigger";
+/// Debug builds: act as if the rule were missing (snapshots in WSL).
+#[cfg(debug_assertions)]
+const DENY_VAR: &str = "WHISKER_DENY_HID";
 
 /// `_IOC(READ | WRITE, 'H', nr, len)`: the feature ioctls carry the length.
 fn feature_ioctl(nr: u64, len: usize) -> u64 {
@@ -176,6 +189,54 @@ pub fn interfaces(vid: u16) -> Vec<Interface> {
 /// Mouse collections (generic desktop / mouse) of every vendor.
 pub fn mice() -> Vec<Interface> {
     nodes().iter().flat_map(Node::describe).filter(|i| (i.usage_page, i.usage) == (USAGE_PAGE_DESKTOP, USAGE_MOUSE)).collect()
+}
+
+/// Read and write permission on `path` for this user (ACLs included).
+fn may_open(path: &Path) -> std::io::Result<()> {
+    let c = CString::new(path.as_os_str().as_bytes())?;
+    // SAFETY: valid NUL-terminated path; `access` only reads it.
+    let r = unsafe { libc::access(c.as_ptr(), libc::R_OK | libc::W_OK) };
+    if r == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) }
+}
+
+/// Denied when nodes exist and every one refuses for lack of permission.
+fn verdict(results: Vec<std::io::Result<()>>) -> Access {
+    let refused = |r: &std::io::Result<()>| r.as_ref().is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied);
+    if !results.is_empty() && results.iter().all(refused) {
+        return Access::Denied;
+    }
+    Access::Granted
+}
+
+/// Whether this user may open the hidraw nodes of vendor `vid`
+/// (checked with `access(2)`, nothing opened).
+pub fn access(vid: u16) -> Access {
+    #[cfg(debug_assertions)]
+    if std::env::var_os(DENY_VAR).is_some() {
+        return Access::Denied;
+    }
+    let results = nodes().iter().filter(|n| n.vid == vid).map(|n| may_open(&Path::new(DEV_DIR).join(&n.name))).collect();
+    verdict(results)
+}
+
+/// `it's` -> `'it'\''s'`: one shell word whatever the path holds.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// `sudo install` of the rules file at `src`, then reload and trigger.
+fn install_command(src: &Path) -> String {
+    let src = shell_quote(&src.to_string_lossy());
+    format!("sudo install -m 644 {src} {RULES_DIR}/{RULES_NAME} && {RELOAD}")
+}
+
+/// Writes the bundled rule into `dir` and returns the command that
+/// installs it; `None` when the file can't be written.
+pub fn grant_command(dir: &Path) -> Option<String> {
+    let path = dir.join(RULES_NAME);
+    std::fs::create_dir_all(dir).ok()?;
+    std::fs::write(&path, RULES).ok()?;
+    Some(install_command(&path))
 }
 
 /// `hidraw3` from a path made by `Node::path`.
@@ -342,10 +403,37 @@ mod tests {
     }
 
     #[test]
+    fn denied_only_when_no_node_opens() {
+        let denied = || Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert_eq!(verdict(Vec::new()), Access::Granted);
+        assert_eq!(verdict(vec![denied()]), Access::Denied);
+        assert_eq!(verdict(vec![denied(), Ok(())]), Access::Granted);
+        // Gone in between: not a permission problem.
+        assert_eq!(verdict(vec![Err(std::io::Error::from(std::io::ErrorKind::NotFound))]), Access::Granted);
+    }
+
+    #[test]
+    fn command_quotes_the_rules_path() {
+        let c = install_command(Path::new("/home/o'neil/.config/Whisker/70-whisker.rules"));
+        assert!(c.starts_with("sudo install -m 644 '/home/o'\\''neil/.config/Whisker/70-whisker.rules' /etc/udev/rules.d/70-whisker.rules && "), "{c}");
+        assert!(c.ends_with("sudo udevadm control --reload && sudo udevadm trigger"), "{c}");
+    }
+
+    #[test]
+    fn grant_writes_the_rules() {
+        let dir = std::env::temp_dir().join(format!("whisker-udev-{}", std::process::id()));
+        let cmd = grant_command(&dir).expect("command");
+        assert_eq!(std::fs::read_to_string(dir.join(RULES_NAME)).ok().as_deref(), Some(RULES));
+        assert!(cmd.contains(RULES_NAME));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn no_devices_is_not_an_error() {
         // WSL and containers have no hidraw nodes; this must not panic.
         let _ = mice();
         assert!(Channel::open("/dev/hidraw999").is_none());
         assert!(layout("/dev/hidraw999").is_none());
+        assert_eq!(access(0xFFFF), Access::Granted);
     }
 }

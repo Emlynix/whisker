@@ -1,0 +1,54 @@
+# Whisker: device access for the logged-in user (systemd-logind "uaccess").
+#
+# Install:  sudo install -m 644 70-whisker.rules /etc/udev/rules.d/
+#           sudo udevadm control --reload && sudo udevadm trigger
+#
+# Only what the app needs, nothing else:
+#   - hidraw nodes of the mouse vendors Whisker has drivers for
+#     (data/mice.toml), never all hidraw: keyboards stay closed;
+#   - evdev nodes of mice, for the click and distance statistics.
+#
+# KERNELS walks up to the HID device, named "BUS:VENDOR:PRODUCT.N":
+#   0003 = USB (cable, receiver, devices behind a receiver),
+#   0005 = Bluetooth.
+# Hex digits are upper case, as the kernel names them.
+# Sorting before 73-seat-late.rules lets logind apply the tag.
+
+ACTION=="remove", GOTO="whisker_end"
+
+# ---- hidraw: mouse configuration (DPI, rate, battery, lighting) ----
+SUBSYSTEM!="hidraw", GOTO="whisker_input"
+
+# White Shark (Telink)
+KERNELS=="000[35]:248A:*", TAG+="uaccess"
+# Logitech (HID++)
+KERNELS=="000[35]:046D:*", TAG+="uaccess"
+# Razer
+KERNELS=="000[35]:1532:*", TAG+="uaccess"
+# SteelSeries
+KERNELS=="000[35]:1038:*", TAG+="uaccess"
+# Corsair
+KERNELS=="000[35]:1B1C:*", TAG+="uaccess"
+# ASUS ROG
+KERNELS=="000[35]:0B05:*", TAG+="uaccess"
+# Roccat
+KERNELS=="000[35]:1E7D:*", TAG+="uaccess"
+# Glorious
+KERNELS=="000[35]:3794:*", TAG+="uaccess"
+# Sinowealth OEM (Glorious, Dream Machines, Genesis, ...)
+KERNELS=="000[35]:258A:*", TAG+="uaccess"
+# Eternico receiver
+KERNELS=="000[35]:1D57:*", TAG+="uaccess"
+# ATK
+KERNELS=="000[35]:373B:*", TAG+="uaccess"
+# VXE / VGN / Lamzu
+KERNELS=="000[35]:3554:*", TAG+="uaccess"
+GOTO="whisker_end"
+
+# ---- evdev: mouse input for statistics, never keyboards ----
+LABEL="whisker_input"
+SUBSYSTEM!="input", GOTO="whisker_end"
+KERNEL!="event*", GOTO="whisker_end"
+ENV{ID_INPUT_MOUSE}=="1", ENV{ID_INPUT_KEYBOARD}!="1", TAG+="uaccess"
+
+LABEL="whisker_end"

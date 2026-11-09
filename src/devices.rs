@@ -695,4 +695,25 @@ mod tests {
         assert_eq!(sensor_name(0x25), Some("PixArt PAW3325"));
         assert_eq!(sensor_name(0x00), None);
     }
+
+    /// Linux udev rule shipped with the app: hidraw access per vendor.
+    const UDEV_RULES: &str = include_str!("../bundle/linux/70-whisker.rules");
+
+    /// `0003:046D:*` style match of one vendor in the rules file.
+    fn has_rule(vid: u16) -> bool {
+        UDEV_RULES.lines().filter(|l| !l.trim_start().starts_with('#')).any(|l| l.contains(&format!(":{vid:04X}:")))
+    }
+
+    #[test]
+    fn udev_rule_covers_every_driver_vendor() {
+        // Every vendor a driver opens over hidraw needs a rule.
+        for m in models().filter(|m| m.family != Family::NoDriver) {
+            assert!(has_rule(m.vid), "{} {:04X} missing in 70-whisker.rules", m.id, m.vid);
+        }
+        // Vendors only counted for statistics stay closed (Apple keyboards).
+        let driven = |vid| models().any(|m| m.vid == vid && m.family != Family::NoDriver);
+        for m in models().filter(|m| m.family == Family::NoDriver && !driven(m.vid)) {
+            assert!(!has_rule(m.vid), "{} {:04X} must not be in 70-whisker.rules", m.id, m.vid);
+        }
+    }
 }
