@@ -16,8 +16,8 @@
 //! CID/MID. Writes happen only on model + transport pairs that OpenMouse
 //! verified on hardware; everything else is read-only.
 
-use super::{Ability, DpiRange, Ident, Reading};
-use crate::hid_link::raw::{Channel, interfaces};
+use super::{Ability, DpiRange, Ident, Pick, Reading};
+use crate::hid_link::raw::Channel;
 use std::time::Duration;
 
 /// ATK's own vendor id and CompX's shared ODM id (VXE, VGN, Lamzu).
@@ -128,6 +128,16 @@ const PORTS: [Port; 13] = [
     // The 4K receiver re-enumerates on a rate change.
     Port { vid: VID_COMPX, pid: 0xF510, cap_hz: 4000, access: Access::ReadOnly, spec: Some(&ATLANTIS_4K) },
 ];
+
+/// Known models as (name, vendor id, product id) for the catalogue.
+/// Models told apart only by the CID/MID reply on a shared receiver have
+/// no product id of their own (`None`); ATK ones use ATK's vendor id.
+pub fn listed() -> Vec<(&'static str, u16, Option<u16>)> {
+    let vid_of = |name: &str| if name.starts_with("ATK") { VID_ATK } else { VID_COMPX };
+    let shared = MODELS.iter().map(|(_, s)| (s.name, vid_of(s.name), None));
+    let own = PORTS.iter().filter_map(|p| p.spec.map(|s| (s.name, p.vid, Some(p.pid))));
+    shared.chain(own).collect()
+}
 
 fn port(vid: u16, pid: u16) -> Option<&'static Port> {
     PORTS.iter().find(|p| p.vid == vid && p.pid == pid)
@@ -241,9 +251,9 @@ pub struct OemHid {
 
 impl OemHid {
     /// Opens the FF02:0002 collection carrying report 8. Sends nothing.
-    pub fn open() -> Option<(OemHid, crate::hid_link::DeviceInfo)> {
+    pub fn open(pick: &Pick) -> Option<(OemHid, crate::hid_link::DeviceInfo)> {
         for vid in VIDS {
-            let found = interfaces(vid).into_iter().find_map(|i| {
+            let found = pick.interfaces(vid).into_iter().find_map(|i| {
                 let p = port(i.info.vid, i.info.pid)?;
                 let config = i.usage_page == CONFIG_PAGE && i.usage == CONFIG_USAGE && i.output_len == FRAME_LEN;
                 config.then_some((i, p))

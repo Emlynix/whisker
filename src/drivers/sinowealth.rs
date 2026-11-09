@@ -20,9 +20,9 @@
 //! bricked keyboards that way), so a mouse is only driven when its
 //! firmware version is in [`MODELS`].
 
-use super::{Ability, DpiRange, Ident, Reading};
+use super::{Ability, DpiRange, Ident, Pick, Reading};
 use crate::hid_link::DeviceInfo;
-use crate::hid_link::raw::{Channel, Interface, interfaces};
+use crate::hid_link::raw::{Channel, Interface};
 use std::time::{Duration, Instant};
 
 /// Sinowealth's own id, and the one Glorious moved to (Model O Eternal).
@@ -279,9 +279,9 @@ pub struct Sinowealth {
 impl Sinowealth {
     /// Finds a listed mouse by firmware version and reads its config
     /// block once. Sends read commands only; never writes a block.
-    pub fn open() -> Option<(Sinowealth, DeviceInfo)> {
+    pub fn open(pick: &Pick) -> Option<(Sinowealth, DeviceInfo)> {
         for vid in VIDS {
-            let all = interfaces(vid);
+            let all = pick.interfaces(vid);
             let mut pids: Vec<u16> = MODELS.iter().filter(|m| m.vid == vid).map(|m| m.pid).collect();
             pids.sort_unstable();
             pids.dedup();

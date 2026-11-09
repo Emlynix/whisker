@@ -9,8 +9,8 @@
 //! Lives on the UI thread in a thread-local; other threads reach it with
 //! `window::post(.. with_ctrl(..))`.
 
-use crate::devices::{self, CAPS_NONE, Caps, Family, Link, Match, Support};
-use crate::drivers::{Ability, Ident};
+use crate::devices::{self, CAPS_NONE, Caps, Entry, Family, Link, Match, Model, Support};
+use crate::drivers::{Ability, Ident, Pick};
 use crate::mouse::Target;
 use crate::hid_link::{self, DeviceInfo};
 use crate::gfx::Gfx;
@@ -28,8 +28,8 @@ use crate::theme::{self, THEMES};
 use crate::store::{self, AppConfig};
 use crate::tray::{Level, TrayAction};
 use crate::view::{
-    self, Act, Badge, Banner, BasicView, Charge, DelayMode, Detect, DetectRow, DeviceView, Dialog, Focus, Hit, Page, Picker,
-    StageView, Sync, Toast, View, Web,
+    self, Act, Badge, Banner, BasicView, BrandRow, Charge, DelayMode, Detect, DetectRow, DeviceView, Dialog, Focus, Found, Hit, Page,
+    Pane, Picker, StageView, Sync, Toast, View, Web,
 };
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
@@ -66,7 +66,9 @@ const VK_RETURN: u16 = 0x0D;
 const VK_ESCAPE: u16 = 0x1B;
 const VK_SPACE: u16 = 0x20;
 const VK_LEFT: u16 = 0x25;
+const VK_UP: u16 = 0x26;
 const VK_RIGHT: u16 = 0x27;
+const VK_DOWN: u16 = 0x28;
 const VK_1: u16 = 0x31;
 const VK_Z: u16 = 0x5A;
 const VK_COMMA: u16 = 0xBC;
@@ -167,6 +169,7 @@ pub fn run(mode: StartMode) {
         draw: hook_draw,
         act: hook_act,
         drag: hook_drag,
+        wheel: hook_wheel,
         timer: hook_timer,
         tray: hook_tray,
         hidden: hook_hidden,
@@ -182,11 +185,12 @@ pub fn run(mode: StartMode) {
     apply_look(&cfg);
     let first_run = !cfg.setup_asked && !install::is_installed_copy();
     let target = target_of(cfg.device.as_deref());
+    let pick = pick_for(cfg.device.as_deref(), cfg.device_usb);
     let ctrl = Controller {
         view: initial_view(&cfg, first_run),
         cfg,
         stats: Stats::start(),
-        mouse: MouseService::start(target.clone(), |ev| post(move |c| c.on_mouse(ev))),
+        mouse: MouseService::start(target.clone(), pick, |ev| post(move |c| c.on_mouse(ev))),
         status: None,
         link: T::LinkSearching,
         level: Level::Offline,
@@ -309,9 +313,14 @@ fn apply_look(cfg: &AppConfig) {
 /// Pages to show for the configured mouse. Until one is chosen, show all.
 fn caps_of(device: Option<&str>) -> Caps {
     match device {
-        None => devices::MODELS[0].caps,
+        None => devices::default_model().caps,
         Some(id) => devices::by_id(id).map_or(CAPS_NONE, |m| m.caps),
     }
+}
+
+/// Devices the driver may open for the configured mouse; any for "other".
+fn pick_for(device: Option<&str>, usb: Option<(u16, u16)>) -> Pick {
+    device.and_then(devices::by_id).map(|m| m.pick(usb)).unwrap_or_default()
 }
 
 /// Driver for the configured mouse; until one is chosen, the Lionel driver.
@@ -351,7 +360,8 @@ fn support_badge(s: Support) -> (&'static str, Badge) {
     match s {
         Support::Full => (tr(T::BadgeFull), Badge::Good),
         Support::Experimental => (tr(T::BadgeExperimental), Badge::Warn),
-        Support::Basic => (tr(T::BadgeUnknown), Badge::Muted),
+        Support::Partial => (tr(T::BadgePartial), Badge::Partial),
+        Support::StatsOnly => (tr(T::LegendStats), Badge::Muted),
     }
 }
 
@@ -359,7 +369,7 @@ fn support_badge(s: Support) -> (&'static str, Badge) {
 fn stats_vendor(device: Option<&str>) -> Option<u16> {
     match device {
         Some(id) => devices::by_id(id).map(|m| m.vid),
-        None => Some(devices::MODELS[0].vid),
+        None => Some(devices::default_model().vid),
     }
 }
 
@@ -367,7 +377,7 @@ fn device_name(device: Option<&str>) -> String {
     match device.and_then(devices::by_id) {
         Some(m) => m.full_name(),
         None if device.is_some() => tr(T::GenericMouse).into(),
-        None => devices::MODELS[0].full_name(),
+        None => devices::default_model().full_name(),
     }
 }
 
@@ -377,31 +387,155 @@ fn other_name(info: Option<&DeviceInfo>) -> String {
     product.unwrap_or_else(|| tr(T::GenericMouse).into())
 }
 
-/// Dialog rows for detected mice; an unknown one maps to "statistics only".
-fn detect_rows(mice: &[DeviceInfo]) -> Vec<DetectRow> {
-    mice.iter()
-        .map(|d| {
-            let usb = format!("{:04X}:{:04X}", d.vid, d.pid);
-            let sub = if d.product.is_empty() { usb } else { format!("{usb} · {}", d.product) };
-            let (title, badge, kind, choice) = match devices::match_device(d) {
-                Match::Known(m) => {
-                    let (b, k) = support_badge(m.support);
-                    // Vendor-wide entries (any product id) show the product name.
-                    let title = if m.pids.is_empty() && !d.product.is_empty() { format!("{} {}", m.vendor, d.product) } else { m.full_name() };
-                    (title, b.to_string(), k, m.id.to_string())
-                }
-                Match::Guess(m) => {
-                    let title = if d.product.is_empty() { tr(T::UnknownMouse).to_string() } else { d.product.clone() };
-                    (title, fill(tr(T::BadgeGuess), &[&m.full_name()]), Badge::Warn, m.id.to_string())
-                }
-                Match::Unknown => {
-                    let title = if d.product.is_empty() { tr(T::UnknownMouse).to_string() } else { d.product.clone() };
-                    (title, tr(T::BadgeUnknown).to_string(), Badge::Muted, store::GENERIC_DEVICE.to_string())
-                }
-            };
-            DetectRow { title, sub, badge, kind, choice }
+/// A connected mouse's catalogue entry and its display name. Unknown mice
+/// map to "other mouse" (statistics only).
+fn detected(d: &DeviceInfo) -> (String, &'static Model) {
+    let unknown = || if d.product.is_empty() { tr(T::UnknownMouse).to_string() } else { d.product.clone() };
+    match devices::match_device(d) {
+        // Auto entries name the product the vendor reports.
+        Match::Known(m) if m.entry == Entry::Auto && !d.product.is_empty() => (format!("{} {}", devices::brand_of(m).title(), d.product), m),
+        Match::Known(m) => (m.full_name(), m),
+        Match::Guess(m) => (unknown(), m),
+        Match::Unknown => (unknown(), other_entry()),
+    }
+}
+
+/// "Other brand › Other mouse".
+fn other_entry() -> &'static Model {
+    devices::entry(store::GENERIC_DEVICE).unwrap_or_else(devices::default_model)
+}
+
+/// (brand, model) list positions of a catalogue id (old ids too).
+fn locate(id: &str) -> Option<(usize, usize)> {
+    let id = devices::migrate_id(id);
+    devices::brands().iter().enumerate().find_map(|(b, brand)| brand.models.iter().position(|m| m.id == id).map(|k| (b, k)))
+}
+
+/// Model rows of brand `b`.
+fn model_rows(b: usize) -> Vec<DetectRow> {
+    let Some(brand) = devices::brands().get(b) else {
+        return Vec::new();
+    };
+    brand
+        .models
+        .iter()
+        .map(|m| {
+            let (badge, kind) = support_badge(m.support);
+            let pids = m.pids.iter().map(|(p, _)| format!("{p:04X}")).collect::<Vec<_>>().join("/");
+            let sub = if m.vid == 0 { String::new() } else { format!("{:04X}:{}", m.vid, if pids.is_empty() { "*" } else { &pids }) };
+            DetectRow { title: m.title(), sub, badge: badge.into(), kind, choice: m.id.clone() }
         })
         .collect()
+}
+
+/// The detect dialog for `mice`; preselects the current mouse, else the
+/// first detected one Whisker can drive, else the first brand.
+fn detect_state(mice: &[DeviceInfo], device: Option<&str>, usb: Option<(u16, u16)>) -> Detect {
+    let brands = devices::brands().iter().map(|b| BrandRow { name: b.title(), kind: support_badge(b.best()).1 }).collect();
+    let current = device.map(devices::migrate_id);
+    let found: Vec<Found> = mice
+        .iter()
+        .map(|d| {
+            let (title, m) = detected(d);
+            let (brand, model) = locate(&m.id).unwrap_or((0, 0));
+            let usb_here = (d.vid, d.pid);
+            let is_current = current == Some(m.id.as_str()) && usb.is_none_or(|u| u == usb_here);
+            Found { title, kind: support_badge(m.support).1, current: is_current, brand, model, usb: usb_here }
+        })
+        .collect();
+
+    let drivable = found.iter().position(|f| f.kind != Badge::Muted);
+    let chip = found.iter().position(|f| f.current).or(if current.is_none() { drivable.or((!found.is_empty()).then_some(0)) } else { None });
+    let (brand, model) = match (chip, current) {
+        (Some(c), _) => (found[c].brand, found[c].model),
+        (None, Some(id)) => locate(id).unwrap_or((0, 0)),
+        (None, None) => (0, 0),
+    };
+    let mut d = Detect { found, brands, models: model_rows(brand), brand, model, chip, pane: Pane::Models, brand_top: 0, model_top: 0, keys: false };
+    reveal(&mut d);
+    d
+}
+
+/// Scrolls both lists so their selection is visible.
+fn reveal(d: &mut Detect) {
+    let keep = |top: &mut usize, sel: usize| {
+        if sel < *top {
+            *top = sel;
+        } else if sel >= *top + view::LIST_ROWS {
+            *top = sel + 1 - view::LIST_ROWS;
+        }
+    };
+    keep(&mut d.brand_top, d.brand);
+    keep(&mut d.model_top, d.model);
+}
+
+fn pick_brand(d: &mut Detect, b: usize) {
+    if b >= d.brands.len() || b == d.brand {
+        return;
+    }
+    (d.brand, d.models, d.model, d.model_top, d.chip) = (b, model_rows(b), 0, 0, None);
+    reveal(d);
+}
+
+fn pick_model(d: &mut Detect, k: usize) {
+    if k >= d.models.len() {
+        return;
+    }
+    d.model = k;
+    // Still the detected mouse only if the chip points at this model.
+    d.chip = d.chip.filter(|&c| (d.found[c].brand, d.found[c].model) == (d.brand, k));
+    reveal(d);
+}
+
+fn pick_found(d: &mut Detect, i: usize) {
+    let Some(f) = d.found.get(i) else {
+        return;
+    };
+    let (b, k) = (f.brand, f.model);
+    if b != d.brand {
+        (d.brand, d.models, d.model_top) = (b, model_rows(b), 0);
+    }
+    (d.model, d.chip) = (k, Some(i));
+    reveal(d);
+}
+
+/// "Back to detected": the current mouse among the detected, else the first.
+fn back_to_detected(d: &mut Detect) {
+    let i = d.found.iter().position(|f| f.current).unwrap_or(0);
+    pick_found(d, i);
+}
+
+/// Arrow keys in the dialog: Up/Down move in the list, Left/Right (and
+/// Tab) switch lists.
+fn detect_key(d: &mut Detect, vk: u16) -> bool {
+    d.keys = true;
+    let step = |i: usize, n: usize, down: bool| if down { (i + 1).min(n.saturating_sub(1)) } else { i.saturating_sub(1) };
+    match (vk, d.pane) {
+        (VK_UP | VK_DOWN, Pane::Brands) => pick_brand(d, step(d.brand, d.brands.len(), vk == VK_DOWN)),
+        (VK_UP | VK_DOWN, Pane::Models) => pick_model(d, step(d.model, d.models.len(), vk == VK_DOWN)),
+        (VK_LEFT, _) => d.pane = Pane::Brands,
+        (VK_RIGHT, _) => d.pane = Pane::Models,
+        (VK_TAB, Pane::Brands) => d.pane = Pane::Models,
+        (VK_TAB, Pane::Models) => d.pane = Pane::Brands,
+        _ => return false,
+    }
+    true
+}
+
+/// Mouse wheel over a list: scrolls it (`notches` > 0 = up).
+fn detect_wheel(d: &mut Detect, pane: Pane, notches: i32) {
+    let (top, count) = match pane {
+        Pane::Brands => (&mut d.brand_top, d.brands.len()),
+        Pane::Models => (&mut d.model_top, d.models.len()),
+    };
+    let max = count.saturating_sub(view::LIST_ROWS) as i32;
+    *top = (*top as i32 - notches).clamp(0, max) as usize;
+}
+
+/// Model id and detected USB ids "Use" stores.
+fn detect_choice(d: &Detect) -> Option<(String, Option<(u16, u16)>)> {
+    let row = d.models.get(d.model)?;
+    Some((row.choice.clone(), d.chip.map(|c| d.found[c].usb)))
 }
 
 /// Identity for "Not now": VID:PID, plus the serial when the mouse has
@@ -417,29 +551,28 @@ fn mouse_key(d: &DeviceInfo) -> String {
 /// model and not dismissed. Unknown mice never are; until a mouse is
 /// chosen, the first-run dialog asks anyway.
 fn new_mouse<'a>(mice: &'a [DeviceInfo], seen: &[String], device: Option<&str>, ignored: &[String]) -> Option<&'a DeviceInfo> {
-    let current = device?;
+    let current = devices::migrate_id(device?);
     mice.iter().find(|d| {
         let key = mouse_key(d);
         let Match::Known(m) = devices::match_device(d) else {
             return false;
         };
-        m.support != Support::Basic && m.id != current && !seen.contains(&key) && !ignored.contains(&key)
+        m.support != Support::StatsOnly && m.id != current && !seen.contains(&key) && !ignored.contains(&key)
     })
 }
 
-/// The banner for a catalogue mouse; `None` for any other.
+/// The banner for a catalogue mouse ("Brand Model"); `None` for any other.
 fn banner_of(d: &DeviceInfo) -> Option<Banner> {
     let Match::Known(m) = devices::match_device(d) else {
         return None;
     };
     let (badge, kind) = support_badge(m.support);
-    let name = detect_rows(std::slice::from_ref(d)).remove(0).title;
-    Some(Banner { name, badge: badge.into(), kind })
+    Some(Banner { name: detected(d).0, badge: badge.into(), kind })
 }
 
 /// Device id "Switch" stores: what the detect dialog would.
 fn offer_choice(d: &DeviceInfo) -> String {
-    detect_rows(std::slice::from_ref(d)).remove(0).choice
+    detected(d).1.id.clone()
 }
 
 /// Remembers a "Not now" for this mouse.
@@ -450,34 +583,8 @@ fn ignore_mouse(cfg: &mut AppConfig, d: &DeviceInfo) {
     }
 }
 
-/// Manual choice: every catalogue model plus "other mouse".
-fn model_rows() -> Vec<DetectRow> {
-    let mut rows: Vec<DetectRow> = devices::MODELS
-        .iter()
-        .map(|m| {
-            let (badge, kind) = support_badge(m.support);
-            let pids = m.pids.iter().map(|(p, _)| format!("{p:04X}")).collect::<Vec<_>>().join("/");
-            let sub = format!("{:04X}:{}", m.vid, if pids.is_empty() { "*".to_string() } else { pids });
-            DetectRow { title: m.full_name(), sub, badge: badge.into(), kind, choice: m.id.into() }
-        })
-        .collect();
-    rows.push(DetectRow {
-        title: tr(T::OtherMouse).into(),
-        sub: String::new(),
-        badge: tr(T::BadgeUnknown).into(),
-        kind: Badge::Muted,
-        choice: store::GENERIC_DEVICE.into(),
-    });
-    rows
-}
-
 fn rate_index(r: PollingRate) -> usize {
     PollingRate::ALL.iter().position(|&x| x == r).unwrap_or(0)
-}
-
-/// Preselects the first mouse Whisker can drive.
-fn preselect(rows: &[DetectRow]) -> usize {
-    rows.iter().position(|r| r.choice != store::GENERIC_DEVICE).unwrap_or(0)
 }
 
 /// Device to store when the dialog is cancelled. The first-run question
@@ -485,16 +592,6 @@ fn preselect(rows: &[DetectRow]) -> usize {
 /// later the current choice stays (`None`).
 fn cancel_choice(device: Option<&str>) -> Option<&'static str> {
     device.is_none().then_some(store::GENERIC_DEVICE)
-}
-
-/// "Back" from the model list to the mice that were found.
-fn detect_back(d: &mut Detect, mice: &[DeviceInfo]) {
-    if mice.is_empty() {
-        return;
-    }
-    d.rows = detect_rows(mice);
-    d.sel = preselect(&d.rows);
-    d.manual = false;
 }
 
 /// Default layout; the old one for Undo, `None` if nothing changed.
@@ -705,6 +802,19 @@ fn hook_act(a: Act) {
     });
 }
 
+/// Mouse wheel: scrolls a list of the detect dialog, the only scrolling place.
+fn hook_wheel(x: f32, y: f32, notches: i32) {
+    with_ctrl(|c| {
+        let Some(d) = c.view.detect.as_mut() else {
+            return;
+        };
+        if let Some(pane) = view::detect_pane_at(x, y) {
+            detect_wheel(d, pane, notches);
+            window::invalidate();
+        }
+    });
+}
+
 fn hook_drag(a: Act, value: usize, phase: Phase) {
     if a == Act::BasicDpi {
         with_ctrl(|c| c.drag_basic_dpi(value, phase));
@@ -908,23 +1018,9 @@ impl Controller {
                 self.view.basic.rate = Some(hz);
                 self.send_setting(Command::SetBasicRate(hz));
             }
-            Act::DetectSel(i) => {
-                if let Some(d) = self.view.detect.as_mut() {
-                    d.sel = i.min(d.rows.len().saturating_sub(1));
-                }
-            }
-            Act::DetectManual => {
-                if let Some(d) = self.view.detect.as_mut() {
-                    (d.rows, d.sel, d.manual) = (model_rows(), 0, true);
-                }
-            }
+            Act::DetectSel(_) | Act::DetectBrand(_) | Act::DetectFound(_) | Act::DetectBack => self.detect_pick(a),
             Act::DetectUse => self.choose_device(),
             Act::DetectCancel => self.cancel_detect(),
-            Act::DetectBack => {
-                if let Some(d) = self.view.detect.as_mut() {
-                    detect_back(d, &self.mice);
-                }
-            }
             Act::Lod(lod) => {
                 self.cfg.lod = lod;
                 self.view.lod = lod;
@@ -1150,9 +1246,15 @@ impl Controller {
         }
     }
 
+    /// USB devices the driver may open: the chosen model's, or exactly the
+    /// detected mouse the user picked.
+    fn pick(&self) -> Pick {
+        pick_for(self.cfg.device.as_deref(), self.cfg.device_usb)
+    }
+
     fn retarget(&mut self, t: Target) {
         self.target = t.clone();
-        self.mouse.send(Command::Target(t));
+        self.mouse.send(Command::Target(t, self.pick()));
     }
 
     /// Mice without a driver but connected over Bluetooth still report a
@@ -1168,8 +1270,10 @@ impl Controller {
     fn on_ident(&mut self, ident: Ident, ability: Ability) {
         let model = self.cfg.device.as_deref().and_then(devices::by_id);
         if let (Some(m), false) = (model, ident.name.is_empty()) {
-            if m.pids.is_empty() {
-                self.view.device_name = format!("{} {}", m.vendor, ident.name.trim_start_matches(m.vendor).trim());
+            // "Other <brand> mouse": the driver names the model.
+            if m.entry == Entry::Auto {
+                let brand = devices::brand_of(m).title();
+                self.view.device_name = format!("{brand} {}", ident.name.trim_start_matches(brand.as_str()).trim());
             }
         }
         self.view.basic.values = ability.dpi.map(|r| r.values()).unwrap_or_default();
@@ -1250,12 +1354,12 @@ impl Controller {
         };
         self.close_offer();
         self.view.detect = None;
-        let choice = offer_choice(&d);
+        let (choice, usb) = (offer_choice(&d), Some((d.vid, d.pid)));
         // No-driver models are found among the detected mice.
         if !self.mice.contains(&d) {
             self.mice.push(d);
         }
-        self.apply_device(choice);
+        self.apply_device(choice, usb);
     }
 
     /// "Not now": this mouse is never offered again.
@@ -1270,22 +1374,30 @@ impl Controller {
 
     fn open_detect(&mut self, mice: Vec<DeviceInfo>) {
         self.mice = mice.clone();
-        let empty = mice.is_empty();
-        let rows = if empty { model_rows() } else { detect_rows(&mice) };
-        let sel = preselect(&rows);
-        self.view.detect = Some(Detect { rows, sel, manual: empty, empty });
+        self.view.detect = Some(detect_state(&mice, self.cfg.device.as_deref(), self.cfg.device_usb));
         self.view.focus = None;
         window::invalidate();
     }
 
+    /// A click in the detect dialog: model, brand, detected chip, "Back to detected".
+    fn detect_pick(&mut self, a: Act) {
+        let Some(d) = self.view.detect.as_mut() else {
+            return;
+        };
+        d.keys = false;
+        match a {
+            Act::DetectSel(k) => pick_model(d, k),
+            Act::DetectBrand(b) => pick_brand(d, b),
+            Act::DetectFound(i) => pick_found(d, i),
+            _ => back_to_detected(d),
+        }
+    }
+
     fn choose_device(&mut self) {
-        let Some(d) = self.view.detect.take() else {
+        let Some((choice, usb)) = self.view.detect.take().as_ref().and_then(detect_choice) else {
             return;
         };
-        let Some(row) = d.rows.get(d.sel) else {
-            return;
-        };
-        self.apply_device(row.choice.clone());
+        self.apply_device(choice, usb);
     }
 
     /// Cancel or Esc: nothing changes, except that the first-run question
@@ -1295,13 +1407,15 @@ impl Controller {
             return;
         }
         if let Some(id) = cancel_choice(self.cfg.device.as_deref()) {
-            self.apply_device(id.to_string());
+            self.apply_device(id.to_string(), None);
         }
     }
 
-    /// Stores the chosen mouse and points the driver at it.
-    fn apply_device(&mut self, choice: String) {
+    /// Stores the chosen mouse (and which detected device, if picked from
+    /// the detected ones) and points the driver at it.
+    fn apply_device(&mut self, choice: String, usb: Option<(u16, u16)>) {
         switch_device(&mut self.cfg, &mut self.undo, choice);
+        self.cfg.device_usb = usb;
         self.hide_toast();
         store::save_config(&self.cfg);
 
@@ -1629,6 +1743,12 @@ impl Controller {
     }
 
     fn on_key_down(&mut self, vk: u16, m: Mods) -> bool {
+        // The detect dialog's lists take the arrow keys and Tab.
+        if let Some(d) = self.view.detect.as_mut().filter(|_| !self.view.ask_setup) {
+            if matches!(vk, VK_UP | VK_DOWN | VK_LEFT | VK_RIGHT | VK_TAB) {
+                return detect_key(d, vk);
+            }
+        }
         let cover = if self.modal() { Cover::Modal } else { Cover::Free };
         match key_action(vk, m, self.view.focus, &self.acts, &self.view.caps, cover) {
             Key::Close => self.close_top(),
@@ -2017,38 +2137,94 @@ mod tests {
     }
 
     fn lionel() -> DeviceInfo {
-        let m = &devices::MODELS[0];
+        let m = devices::default_model();
         DeviceInfo { vid: m.vid, pid: m.pids[0].0, product: "Lionel".into(), ..DeviceInfo::default() }
     }
 
     #[test]
     fn detect_cancel_keeps_mouse_or_settles_first_run() {
         // Later: Cancel leaves the chosen mouse alone.
-        assert_eq!(cancel_choice(Some("whiteshark-lionel")), None);
+        assert_eq!(cancel_choice(Some("whiteshark/lionel")), None);
         // First run: Cancel means "other mouse", so the question isn't repeated.
         assert_eq!(cancel_choice(None), Some(store::GENERIC_DEVICE));
     }
 
-    #[test]
-    fn detect_back_returns_to_found_mice() {
-        let mice = [lionel()];
-        let mut d = Detect { rows: model_rows(), sel: 3, manual: true, empty: false };
-        detect_back(&mut d, &mice);
-        assert!(!d.manual);
-        assert_eq!(d.rows, detect_rows(&mice));
-        assert_eq!(d.sel, 0);
-
-        // Nothing was found: the model list is all there is.
-        let mut d = Detect { rows: model_rows(), sel: 0, manual: true, empty: true };
-        detect_back(&mut d, &[]);
-        assert!(d.manual);
+    /// A catalogue model's device as the OS would list it.
+    fn device_of(id: &str) -> DeviceInfo {
+        let m = devices::by_id(id).unwrap();
+        DeviceInfo { vid: m.vid, pid: m.pids[0].0, ..DeviceInfo::default() }
     }
 
     #[test]
-    fn other_mouse_tile_is_short() {
-        let last = model_rows().pop().unwrap();
-        assert_eq!(last.choice, store::GENERIC_DEVICE);
-        assert_eq!(last.title, tr(T::OtherMouse));
+    fn detect_preselects_the_current_mouse() {
+        let mice = [lionel(), device_of("corsair/katar-pro")];
+        let d = detect_state(&mice, Some("corsair/katar-pro"), None);
+        let (b, k) = locate("corsair/katar-pro").unwrap();
+        assert_eq!((d.brand, d.model, d.chip), (b, k, Some(1)));
+        assert!(d.found[1].current && !d.found[0].current);
+        assert_eq!(d.models[d.model].choice, "corsair/katar-pro");
+
+        // Old id in the config: same place.
+        let d = detect_state(&mice, Some("whiteshark-lionel"), None);
+        assert_eq!((d.brand, d.model, d.chip), (0, 0, Some(0)));
+
+        // First run: the first detected mouse Whisker can drive.
+        let unknown = DeviceInfo { vid: 0x1234, pid: 1, ..DeviceInfo::default() };
+        let d = detect_state(&[unknown, device_of("corsair/katar-pro")], None, None);
+        assert_eq!((d.brand, d.model, d.chip), (b, k, Some(1)));
+        // A current mouse that is not connected is still selected.
+        let d = detect_state(&[], Some("roccat/auto"), None);
+        assert_eq!(d.models[d.model].choice, "roccat/auto");
+        assert_eq!(d.chip, None);
+    }
+
+    #[test]
+    fn detect_lists_scroll_with_the_selection() {
+        let mut d = detect_state(&[], Some("steelseries/auto"), None);
+        assert!(d.models.len() > view::LIST_ROWS, "SteelSeries lists more models than fit");
+        assert!(d.model >= d.model_top && d.model < d.model_top + view::LIST_ROWS);
+        detect_wheel(&mut d, Pane::Models, 100);
+        assert_eq!(d.model_top, 0);
+        for _ in 0..d.models.len() {
+            detect_key(&mut d, VK_DOWN);
+        }
+        assert_eq!(d.model, d.models.len() - 1);
+        assert_eq!(d.model_top, d.models.len() - view::LIST_ROWS);
+
+        // Left: the brand list takes Up/Down; a new brand starts at its top.
+        detect_key(&mut d, VK_LEFT);
+        detect_key(&mut d, VK_UP);
+        assert_eq!(d.pane, Pane::Brands);
+        assert_eq!((d.model, d.model_top), (0, 0));
+    }
+
+    #[test]
+    fn detect_use_keeps_the_picked_device() {
+        let mice = [device_of("corsair/katar-pro")];
+        let mut d = detect_state(&mice, None, None);
+        let usb = (mice[0].vid, mice[0].pid);
+        assert_eq!(detect_choice(&d), Some(("corsair/katar-pro".into(), Some(usb))));
+
+        // Another model of the brand: no longer that device.
+        let other = d.models.iter().position(|m| m.choice == "corsair/auto").unwrap();
+        pick_model(&mut d, other);
+        assert_eq!(detect_choice(&d), Some(("corsair/auto".into(), None)));
+        back_to_detected(&mut d);
+        assert_eq!(d.chip, Some(0));
+    }
+
+    #[test]
+    fn chosen_device_is_what_the_driver_may_open() {
+        // Picked from the detected mice: exactly that product.
+        let pick = pick_for(Some("corsair/auto"), Some((0x1B1C, 0x1B80)));
+        assert_eq!(pick, Pick { vid: Some(0x1B1C), pids: vec![0x1B80] });
+        assert!(pick.allows(0x1B1C, 0x1B80) && !pick.allows(0x1B1C, 0x1B81));
+        // Picked from the list: the model's products, or the whole vendor.
+        let katar = devices::by_id("corsair/katar-pro").unwrap();
+        assert_eq!(pick_for(Some("corsair/katar-pro"), None).pids, katar.pids.iter().map(|(p, _)| *p).collect::<Vec<_>>());
+        assert_eq!(pick_for(Some("corsair/auto"), None), Pick { vid: Some(0x1B1C), pids: Vec::new() });
+        // Other mouse: no driver, nothing to limit.
+        assert_eq!(pick_for(Some(store::GENERIC_DEVICE), None), Pick::default());
     }
 
     #[test]
@@ -2079,7 +2255,7 @@ mod tests {
 
     #[test]
     fn nav_shows_only_supported_pages() {
-        let all = view::nav_pages(&devices::MODELS[0].caps);
+        let all = view::nav_pages(&devices::default_model().caps);
         assert_eq!(all, [Page::Overview, Page::Dpi, Page::Polling, Page::Lighting, Page::Buttons, Page::Stats]);
         assert_eq!(view::nav_pages(&CAPS_NONE), [Page::Overview, Page::Stats]);
 
@@ -2092,7 +2268,7 @@ mod tests {
     #[test]
     fn ctrl_digits_switch_visible_pages() {
         let ctrl = Mods { ctrl: true, ..Mods::default() };
-        let caps = devices::MODELS[0].caps;
+        let caps = devices::default_model().caps;
         assert_eq!(page_shortcut(VK_1, ctrl, &caps), Some(Page::Overview));
         assert_eq!(page_shortcut(VK_1 + 5, ctrl, &caps), Some(Page::Stats));
         assert_eq!(page_shortcut(VK_COMMA, ctrl, &caps), Some(Page::General));
@@ -2121,7 +2297,7 @@ mod tests {
         // Settings › General in drawing order: About (logo) and Mouse (name)
         // repeat further down as the About item and the Mouse tab.
         let mut acts = vec![Act::About, Act::Nav(Page::Mouse)];
-        acts.extend(view::nav_pages(&devices::MODELS[0].caps).into_iter().map(Act::Nav));
+        acts.extend(view::nav_pages(&devices::default_model().caps).into_iter().map(Act::Nav));
         acts.extend([Act::About, Act::Nav(Page::General)]);
         acts.extend([Act::Nav(Page::General), Act::Nav(Page::Appearance), Act::Nav(Page::Mouse), Act::Install, Act::Autostart]);
 
@@ -2162,8 +2338,8 @@ mod tests {
         DeviceInfo { vid: m.vid, pid, serial: serial.into(), ..DeviceInfo::default() }
     }
 
-    const LIONEL: &str = "whiteshark-lionel";
-    const ETERNICO: &str = "eternico-ms480b";
+    const LIONEL: &str = "whiteshark/lionel";
+    const ETERNICO: &str = "eternico/aet-ms480b";
 
     #[test]
     fn banner_offers_a_new_known_mouse() {
@@ -2175,7 +2351,7 @@ mod tests {
         assert_eq!(b.name, devices::by_id(ETERNICO).unwrap().full_name());
 
         // Statistics-only models are not worth a banner.
-        let basic = listed("eternico-mvs490b", "");
+        let basic = listed("eternico/aet-mvs490b", "");
         assert_eq!(new_mouse(&[basic], &[], Some(LIONEL), &[]), None);
 
         // Already there at the last scan: no news.
@@ -2213,9 +2389,9 @@ mod tests {
     fn switch_retargets_to_the_offered_mouse() {
         let mut cfg = AppConfig { device: Some(LIONEL.into()), ..AppConfig::default() };
         let mut undo = Some(Undo::Buttons(DEFAULT_ACTIONS));
-        let offered = listed("razer", "");
+        let offered = listed("razer/auto", "");
         switch_device(&mut cfg, &mut undo, offer_choice(&offered));
-        assert_eq!(cfg.device.as_deref(), Some("razer"));
+        assert_eq!(cfg.device.as_deref(), Some("razer/auto"));
         assert_eq!(undo, None);
         assert_eq!(target_of(cfg.device.as_deref()), Target::Razer);
     }
@@ -2265,7 +2441,7 @@ mod tests {
     fn enter_ignores_focus_from_another_page() {
         // Tab to "Reset all buttons", Ctrl+1, Enter: must not reset.
         let ctrl = Mods { ctrl: true, ..Mods::default() };
-        let caps = devices::MODELS[0].caps;
+        let caps = devices::default_model().caps;
         let focus = Some(Focus { index: 1, act: Act::ResetButtons });
         let buttons_acts = [Act::Nav(Page::Overview), Act::ResetButtons];
         assert_eq!(key_action(VK_1, ctrl, focus, &buttons_acts, &caps, Cover::Free), Key::Page(Page::Overview));

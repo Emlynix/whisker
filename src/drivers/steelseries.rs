@@ -13,8 +13,8 @@
 //! battery (some models) and firmware (some models). Settings are saved to
 //! flash after each change, as `rivalcfg` does.
 
-use super::{Ability, DpiRange, Ident, Reading};
-use crate::hid_link::raw::{Channel, Interface, interfaces};
+use super::{Ability, DpiRange, Ident, Pick, Reading};
+use crate::hid_link::raw::{Channel, Interface};
 use std::time::Duration;
 
 pub const VID: u16 = 0x1038;
@@ -343,6 +343,11 @@ const MODELS: [Model; 25] = [
     },
 ];
 
+/// Known models as (name, product id), for the catalogue.
+pub fn listed() -> Vec<(&'static str, u16)> {
+    MODELS.iter().flat_map(|m| m.pids.iter().map(move |p| (m.name, *p))).collect()
+}
+
 fn model(pid: u16) -> Option<&'static Model> {
     MODELS.iter().find(|m| m.pids.contains(&pid))
 }
@@ -502,8 +507,8 @@ impl SteelSeries {
     /// Picks the first known model by PID and opens the collection on its
     /// interface that takes output reports (vendor page first). Sends
     /// nothing.
-    pub fn open() -> Option<(SteelSeries, crate::hid_link::DeviceInfo)> {
-        let mut cands: Vec<(Interface, &'static Model)> = interfaces(VID)
+    pub fn open(pick: &Pick) -> Option<(SteelSeries, crate::hid_link::DeviceInfo)> {
+        let mut cands: Vec<(Interface, &'static Model)> = pick.interfaces(VID)
             .into_iter()
             .filter(|i| i.output_len > 1)
             .filter_map(|i| model(i.info.pid).map(|m| (i, m)))

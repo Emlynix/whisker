@@ -16,7 +16,7 @@ use crate::drivers::asus::Asus;
 use crate::drivers::razer::Razer;
 use crate::drivers::sinowealth::Sinowealth;
 use crate::drivers::steelseries::SteelSeries;
-use crate::drivers::{Ability, Ident, Reading};
+use crate::drivers::{Ability, Ident, Pick, Reading};
 use crate::hid_link::{DeviceInfo, HidLink};
 use crate::protocol::{self, Action, BUTTON_COUNT, DPI_COLOR_SLOTS, DpiConfig, Lighting, Lod, MacroEvent, PollingRate, Power, Status};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
@@ -62,8 +62,8 @@ pub enum Command {
     SetPower(Power),
     /// All button actions plus the macro list they may reference.
     SetButtons([Action; BUTTON_COUNT], Vec<Vec<MacroEvent>>),
-    /// Switch driver (another mouse was chosen).
-    Target(Target),
+    /// Switch driver (another mouse was chosen) and which devices it may open.
+    Target(Target, Pick),
     /// DPI / report rate for driver-based mice.
     SetBasicDpi(u32),
     SetBasicRate(u32),
@@ -91,11 +91,11 @@ pub struct MouseService {
 }
 
 impl MouseService {
-    pub fn start(target: Target, on_event: impl Fn(Event) + Send + 'static) -> Self {
+    pub fn start(target: Target, pick: Pick, on_event: impl Fn(Event) + Send + 'static) -> Self {
         let (tx, rx) = channel();
         thread::Builder::new()
             .name("mouse".into())
-            .spawn(move || run(target, rx, on_event))
+            .spawn(move || run(target, pick, rx, on_event))
             .expect("spawn mouse thread");
         Self { tx }
     }
@@ -119,17 +119,18 @@ enum Driver {
 }
 
 impl Driver {
-    fn open(t: &Target) -> Option<(Driver, DeviceInfo)> {
+    /// Opens the driver of `t` on a device `pick` allows.
+    fn open(t: &Target, pick: &Pick) -> Option<(Driver, DeviceInfo)> {
         match t {
-            Target::Hidpp => Hidpp::open().map(|(d, i)| (Driver::Hidpp(d), i)),
-            Target::Razer => Razer::open().map(|(d, i)| (Driver::Razer(d), i)),
-            Target::Eternico => Eternico::open().map(|(d, i)| (Driver::Eternico(d), i)),
-            Target::Sinowealth => Sinowealth::open().map(|(d, i)| (Driver::Sinowealth(d), i)),
-            Target::SteelSeries => SteelSeries::open().map(|(d, i)| (Driver::SteelSeries(d), i)),
-            Target::OemHid => OemHid::open().map(|(d, i)| (Driver::OemHid(d), i)),
-            Target::Roccat => Roccat::open().map(|(d, i)| (Driver::Roccat(d), i)),
-            Target::Corsair => Corsair::open().map(|(d, i)| (Driver::Corsair(d), i)),
-            Target::Asus => Asus::open().map(|(d, i)| (Driver::Asus(d), i)),
+            Target::Hidpp => Hidpp::open(pick).map(|(d, i)| (Driver::Hidpp(d), i)),
+            Target::Razer => Razer::open(pick).map(|(d, i)| (Driver::Razer(d), i)),
+            Target::Eternico => Eternico::open(pick).map(|(d, i)| (Driver::Eternico(d), i)),
+            Target::Sinowealth => Sinowealth::open(pick).map(|(d, i)| (Driver::Sinowealth(d), i)),
+            Target::SteelSeries => SteelSeries::open(pick).map(|(d, i)| (Driver::SteelSeries(d), i)),
+            Target::OemHid => OemHid::open(pick).map(|(d, i)| (Driver::OemHid(d), i)),
+            Target::Roccat => Roccat::open(pick).map(|(d, i)| (Driver::Roccat(d), i)),
+            Target::Corsair => Corsair::open(pick).map(|(d, i)| (Driver::Corsair(d), i)),
+            Target::Asus => Asus::open(pick).map(|(d, i)| (Driver::Asus(d), i)),
             _ => None,
         }
     }
@@ -201,6 +202,7 @@ struct Worker {
     /// Last identity reported, so `Device` is sent only on change.
     reported: Option<DeviceInfo>,
     target: Target,
+    pick: Pick,
     driver: Option<Driver>,
     misses: u8,
 }
@@ -247,7 +249,7 @@ impl Worker {
     /// Poll of a driver-based mouse; opens the driver first if needed.
     fn poll_driver(&mut self, on_event: &impl Fn(Event)) {
         if self.driver.is_none() {
-            let Some((mut d, info)) = Driver::open(&self.target) else {
+            let Some((mut d, info)) = Driver::open(&self.target, &self.pick) else {
                 on_event(Event::Absent);
                 return;
             };
@@ -288,8 +290,8 @@ impl Worker {
     }
 }
 
-fn run(target: Target, rx: Receiver<Command>, on_event: impl Fn(Event)) {
-    let mut w = Worker { link: Some(HidLink::new()), seq: 0, verified: false, reported: None, target, driver: None, misses: 0 };
+fn run(target: Target, pick: Pick, rx: Receiver<Command>, on_event: impl Fn(Event)) {
+    let mut w = Worker { link: Some(HidLink::new()), seq: 0, verified: false, reported: None, target, pick, driver: None, misses: 0 };
     let mut period = POLL_VISIBLE;
 
     loop {
@@ -350,8 +352,8 @@ fn run(target: Target, rx: Receiver<Command>, on_event: impl Fn(Event)) {
                     w.write(f);
                 }
             }
-            Command::Target(t) => {
-                w.target = t;
+            Command::Target(t, pick) => {
+                (w.target, w.pick) = (t, pick);
                 w.driver = None;
                 w.verified = false;
                 w.reported = None;

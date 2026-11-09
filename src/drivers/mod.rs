@@ -16,6 +16,28 @@ pub mod roccat;
 pub mod sinowealth;
 pub mod steelseries;
 
+/// Which USB device a driver may open: the chosen mouse's vendor and
+/// product ids. Empty `pids` = any product of the vendor (auto-detect);
+/// `vid: None` = any vendor the driver knows. Two mice of one vendor
+/// then open the chosen one, not the first match.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Pick {
+    pub vid: Option<u16>,
+    pub pids: Vec<u16>,
+}
+
+impl Pick {
+    pub fn allows(&self, vid: u16, pid: u16) -> bool {
+        self.vid.is_none_or(|v| v == vid) && (self.pids.is_empty() || self.pids.contains(&pid))
+    }
+
+    /// HID collections of `vid` this pick allows.
+    pub fn interfaces(&self, vid: u16) -> Vec<crate::hid_link::Interface> {
+        let all = crate::hid_link::raw::interfaces(vid);
+        all.into_iter().filter(|i| self.allows(i.info.vid, i.info.pid)).collect()
+    }
+}
+
 /// DPI values a mouse accepts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DpiRange {
@@ -83,6 +105,16 @@ pub fn percent_from_mv(mv: u16) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pick_limits_vendor_and_products() {
+        let any = Pick::default();
+        assert!(any.allows(0x1B1C, 0x1B80));
+        let vendor = Pick { vid: Some(0x1B1C), pids: Vec::new() };
+        assert!(vendor.allows(0x1B1C, 0x1234) && !vendor.allows(0x0B05, 0x1234));
+        let chosen = Pick { vid: Some(0x1B1C), pids: vec![0x1B80] };
+        assert!(chosen.allows(0x1B1C, 0x1B80) && !chosen.allows(0x1B1C, 0x1B81));
+    }
 
     #[test]
     fn dpi_range_values() {

@@ -1,21 +1,23 @@
-//! Settings › Mouse tab (hardware info, diagnostics) and the "which mouse
-//! do you use?" dialog.
+//! Settings › Mouse tab (hardware info, diagnostics), the "which mouse
+//! do you use?" dialog and the new-mouse banner.
 
-use super::{Act, BODY, CW, Frame, GAP, Glyph, HEIGHT, Page, Place, R_CTRL, RADIUS, View, WIDTH, X0, art, check_badge, icon, text_w, th};
+use super::{Act, BODY, CW, Frame, GAP, Glyph, HEIGHT, Page, Place, R_CTRL, RADIUS, View, WIDTH, X0, icon, text_w, th};
 use crate::gfx::{Align, Color, Rect, Size, Weight};
 use crate::i18n::{T, fill, tr};
 
 const ROW: f32 = 26.0;
 const PAD: f32 = 20.0;
 
+/// Support level as a colour: full, experimental, partial, statistics only.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Badge {
     Good,
     Warn,
+    Partial,
     Muted,
 }
 
-/// One selectable line of the detect dialog.
+/// One model row of the detect dialog.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DetectRow {
     pub title: String,
@@ -26,14 +28,50 @@ pub struct DetectRow {
     pub choice: String,
 }
 
+/// A connected mouse in the dialog's "Detected" row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Found {
+    pub title: String,
+    pub kind: Badge,
+    /// The mouse in use now.
+    pub current: bool,
+    /// Its catalogue entry as (brand, model) list positions.
+    pub brand: usize,
+    pub model: usize,
+    pub usb: (u16, u16),
+}
+
+/// A brand in the left list; `kind` = best support among its models.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BrandRow {
+    pub name: String,
+    pub kind: Badge,
+}
+
+/// List the arrow keys move in.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Pane {
+    Brands,
+    Models,
+}
+
+/// The "which mouse" dialog: detected mice, brands, models of one brand.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Detect {
-    pub rows: Vec<DetectRow>,
-    pub sel: usize,
-    /// Showing the model list instead of detected mice.
-    pub manual: bool,
-    /// Nothing was detected.
-    pub empty: bool,
+    pub found: Vec<Found>,
+    pub brands: Vec<BrandRow>,
+    /// Models of the selected brand.
+    pub models: Vec<DetectRow>,
+    pub brand: usize,
+    pub model: usize,
+    /// The detected mouse the selection came from, if any.
+    pub chip: Option<usize>,
+    pub pane: Pane,
+    /// First visible row of each list.
+    pub brand_top: usize,
+    pub model_top: usize,
+    /// Arrow keys were used: outline the list they move in.
+    pub keys: bool,
 }
 
 /// "New mouse connected: Logitech G305 (Supported)  [Not now] [Switch]".
@@ -61,7 +99,9 @@ fn badge_color(k: Badge) -> Color {
     match k {
         Badge::Good => th().good,
         Badge::Warn => th().warn,
-        Badge::Muted => th().faint,
+        Badge::Partial => th().accent,
+        // Also a text colour (badges): `subtle`, not the decorative `faint`.
+        Badge::Muted => th().subtle,
     }
 }
 
@@ -110,126 +150,181 @@ fn diagnostics(f: &mut Frame, d: &DeviceView, y: f32) {
     f.push_button(Act::CopyDiagnostics, btn, tr(T::CopySupport), false);
 }
 
-pub(super) fn detect_dialog(f: &mut Frame, d: &Detect) {
-    const LEGEND_H: f32 = 26.0;
-    f.g.fill(Rect::new(0.0, 0.0, WIDTH, HEIGHT), 0.0, th().scrim);
-    let dlg = Rect::new((WIDTH - 600.0) / 2.0, (HEIGHT - 450.0) / 2.0, 600.0, 450.0);
-    f.g.fill(dlg, RADIUS, th().card_hi);
-    f.g.stroke(dlg, RADIUS, 1.0, th().border);
+// ---- "which mouse" dialog ----------------------------------------------------
+//
+//  +-----------------------------------------------------------+
+//  | Which mouse do you use?                                   |
+//  | DETECTED  (● White Shark Lionel · current) (● Corsair …)  |
+//  | BRAND               MODEL                                 |
+//  | ● White Shark    |  Lionel                     Supported  |
+//  | ● Logitech       |  Other White Shark mouse  Experimental |
+//  | …  (scrolls)     |  …  (scrolls)                          |
+//  | ● Supported ● Experimental ● Partial ● Statistics only    |
+//  | [‹ Back to detected]                     [Cancel] [Use]   |
+//  +-----------------------------------------------------------+
 
-    let inner = dlg.inset(24.0);
-    f.g.text(tr(T::DetectTitle), Rect::new(inner.x, inner.y, inner.w, 28.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
-    let text = match (d.manual, d.empty) {
-        (true, _) => tr(T::DetectManualText),
-        (false, true) => tr(T::NoMouse),
-        (false, false) => tr(T::DetectText),
-    };
-    f.g.text(text, Rect::new(inner.x, inner.y + 36.0, inner.w, 40.0), Size::Body, Weight::Normal, Align::Wrap, th().muted);
+const DLG_W: f32 = 700.0;
+const DLG_H: f32 = 520.0;
+const DLG_PAD: f32 = 24.0;
+const CHIP_H: f32 = 32.0;
+const LIST_ROW: f32 = 28.0;
+/// Rows each list shows; longer lists scroll.
+pub const LIST_ROWS: usize = 9;
+const BRAND_W: f32 = 220.0;
+const PANE_GAP: f32 = 16.0;
+const BADGE_W: f32 = 170.0;
 
-    if d.manual {
-        let grid = Rect::new(inner.x, inner.y + 84.0, inner.w, dlg.h - 84.0 - 2.0 * 24.0 - 48.0 - LEGEND_H);
-        model_grid(f, d, grid);
-        legend(f, inner.x, grid.y + grid.h + 8.0);
-    } else {
-        detected_rows(f, d, inner);
-        detect_art(f, d, inner);
-    }
-
-    // Left: switch list; right: Cancel (keeps the current mouse) and Use.
-    let by = dlg.y + dlg.h - 24.0 - 36.0;
-    if !d.manual {
-        f.push_button(Act::DetectManual, Rect::new(inner.x, by, 230.0, 36.0), tr(T::ChooseManually), false);
-    } else if !d.empty {
-        f.glyph_button(Act::DetectBack, Rect::new(inner.x, by, 120.0, 36.0), tr(T::Back), Glyph::ChevronLeft, Place::Lead);
-    }
-    let use_btn = Rect::new(dlg.x + dlg.w - 24.0 - 170.0, by, 170.0, 36.0);
-    if !d.rows.is_empty() {
-        f.push_button(Act::DetectUse, use_btn, tr(T::UseMouse), true);
-    }
-    let cancel = Rect::new(use_btn.x - 10.0 - 120.0, by, 120.0, 36.0);
-    f.push_button(Act::DetectCancel, cancel, tr(T::Cancel), false);
+/// Dialog frame and the two list areas (brands, models).
+struct Layout {
+    dlg: Rect,
+    inner: Rect,
+    brands: Rect,
+    models: Rect,
 }
 
-/// The mouse drawing in the free space under the detected mice, when
-/// there is room for it (one or two rows, or none found).
-fn detect_art(f: &mut Frame, d: &Detect, inner: Rect) {
-    const MIN_H: f32 = 96.0;
-    const MAX_H: f32 = 120.0;
-    let used = d.rows.len().min(MAX_ROWS) as f32 * (ROW_H + 8.0);
-    let top = inner.y + ROWS_TOP + used + 8.0;
-    // Bottom: above the button row (36 px + 16 px gap).
-    let room = inner.y + inner.h - 52.0 - top;
-    if room < MIN_H {
+fn layout() -> Layout {
+    let dlg = Rect::new((WIDTH - DLG_W) / 2.0, (HEIGHT - DLG_H) / 2.0, DLG_W, DLG_H);
+    let inner = dlg.inset(DLG_PAD);
+    let top = inner.y + 130.0;
+    let h = LIST_ROWS as f32 * LIST_ROW;
+    let brands = Rect::new(inner.x, top, BRAND_W, h);
+    let models = Rect::new(inner.x + BRAND_W + PANE_GAP, top, inner.w - BRAND_W - PANE_GAP, h);
+    Layout { dlg, inner, brands, models }
+}
+
+/// The list under a pointer position, for the mouse wheel.
+pub fn detect_pane_at(x: f32, y: f32) -> Option<Pane> {
+    let l = layout();
+    if l.brands.contains(x, y) {
+        return Some(Pane::Brands);
+    }
+    l.models.contains(x, y).then_some(Pane::Models)
+}
+
+pub(super) fn detect_dialog(f: &mut Frame, d: &Detect) {
+    let l = layout();
+    f.g.fill(Rect::new(0.0, 0.0, WIDTH, HEIGHT), 0.0, th().scrim);
+    f.g.fill(l.dlg, RADIUS, th().card_hi);
+    f.g.stroke(l.dlg, RADIUS, 1.0, th().border);
+
+    let inner = l.inner;
+    f.g.text(tr(T::DetectTitle), Rect::new(inner.x, inner.y, inner.w, 28.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
+    f.caption_in(tr(T::DetectedCaption), inner.x, inner.y + 42.0, inner.w);
+    found_chips(f, d, Rect::new(inner.x, inner.y + 62.0, inner.w, CHIP_H));
+
+    f.caption_in(tr(T::BrandCaption), l.brands.x, l.brands.y - 22.0, l.brands.w);
+    f.caption_in(tr(T::ModelCaption), l.models.x, l.models.y - 22.0, l.models.w);
+    brand_list(f, d, l.brands);
+    model_list(f, d, l.models);
+    if d.keys {
+        // Which list the arrow keys move in.
+        let r = if d.pane == Pane::Brands { l.brands } else { l.models };
+        f.g.stroke(Rect::new(r.x - 4.0, r.y - 4.0, r.w + 8.0, r.h + 8.0), R_CTRL + 4.0, 2.0, th().accent);
+    }
+
+    let by = l.dlg.y + l.dlg.h - DLG_PAD - 36.0;
+    legend(f, inner.x, by - 32.0);
+    if !d.found.is_empty() {
+        f.glyph_button(Act::DetectBack, Rect::new(inner.x, by, 200.0, 36.0), tr(T::BackToDetected), Glyph::ChevronLeft, Place::Lead);
+    }
+    let use_btn = Rect::new(inner.x + inner.w - 170.0, by, 170.0, 36.0);
+    f.push_button(Act::DetectUse, use_btn, tr(T::UseMouse), true);
+    f.push_button(Act::DetectCancel, Rect::new(use_btn.x - 10.0 - 120.0, by, 120.0, 36.0), tr(T::Cancel), false);
+}
+
+/// Detected mice as chips: support dot, name, "· current" on the one in use.
+fn found_chips(f: &mut Frame, d: &Detect, row: Rect) {
+    if d.found.is_empty() {
+        f.g.text(tr(T::NoMouse), row, Size::Body, Weight::Normal, Align::Left, th().muted);
         return;
     }
-    let h = room.min(MAX_H);
-    let w = h * 2.0 / 3.0;
-    let r = Rect::new(inner.x + (inner.w - w) / 2.0, top + (room - h) / 2.0, w, h);
-    art::mouse(f, r, art::Marks::None);
+    let mut x = row.x;
+    for (i, m) in d.found.iter().enumerate() {
+        let tag = if m.current { format!("{} · {}", m.title, tr(T::CurrentTag)) } else { m.title.clone() };
+        let w = (text_w(&tag, Size::Body) + 40.0).min(row.x + row.w - x);
+        if w < 80.0 {
+            break;
+        }
+        let r = Rect::new(x, row.y, w, row.h);
+        let selected = d.chip == Some(i);
+        let hot = f.button(Act::DetectFound(i), r);
+        let bg = if selected { th().accent_soft } else if hot { th().hover } else { th().card };
+        f.g.fill(r, r.h / 2.0, th().card);
+        f.g.fill(r, r.h / 2.0, bg);
+        let (bw, bc) = if selected { (2.0, th().accent) } else { (1.0, th().border) };
+        f.g.stroke(r, r.h / 2.0, bw, bc);
+        f.g.circle(r.x + 16.0, r.y + r.h / 2.0, 4.0, badge_color(m.kind));
+        let label = Rect::new(r.x + 26.0, r.y, r.w - 34.0, r.h);
+        f.g.text(&tag, label, Size::Body, Weight::Semibold, Align::Left, th().text);
+        x += w + 8.0;
+    }
 }
 
-/// What the dots of the model grid mean.
+/// One list row: selected = soft fill and a left bar; hover = hover fill.
+fn list_row(f: &mut Frame, act: Act, r: Rect, selected: bool) {
+    let hot = f.button(act, r);
+    if selected || hot {
+        f.g.fill(r, R_CTRL, if selected { th().accent_soft } else { th().hover });
+    }
+    if selected {
+        f.g.fill(Rect::new(r.x, r.y + 7.0, 3.0, r.h - 14.0), 1.5, th().accent);
+    }
+}
+
+/// Thin scroll bar on the right of a list longer than `LIST_ROWS`.
+fn scroll_bar(f: &mut Frame, area: Rect, top: usize, count: usize) {
+    if count <= LIST_ROWS {
+        return;
+    }
+    let track = Rect::new(area.x + area.w - 3.0, area.y, 3.0, area.h);
+    f.g.fill(track, 1.5, th().border);
+    let h = track.h * LIST_ROWS as f32 / count as f32;
+    let y = track.y + (track.h - h) * top as f32 / (count - LIST_ROWS) as f32;
+    f.g.fill(Rect::new(track.x, y, track.w, h), 1.5, th().subtle);
+}
+
+/// Brands with a dot for the best support among their models.
+fn brand_list(f: &mut Frame, d: &Detect, area: Rect) {
+    for (k, b) in d.brands.iter().enumerate().skip(d.brand_top).take(LIST_ROWS) {
+        let r = Rect::new(area.x, area.y + (k - d.brand_top) as f32 * LIST_ROW, area.w - 8.0, LIST_ROW - 2.0);
+        let sel = k == d.brand;
+        list_row(f, Act::DetectBrand(k), r, sel);
+        f.g.circle(r.x + 16.0, r.y + r.h / 2.0, 4.0, badge_color(b.kind));
+        let weight = if sel { Weight::Semibold } else { Weight::Normal };
+        let label = Rect::new(r.x + 28.0, r.y, r.w - 34.0, r.h);
+        f.g.text(&b.name, label, Size::Body, weight, Align::Left, if sel { th().text } else { th().muted });
+    }
+    scroll_bar(f, area, d.brand_top, d.brands.len());
+}
+
+/// Models of the selected brand with their support badge.
+fn model_list(f: &mut Frame, d: &Detect, area: Rect) {
+    for (k, m) in d.models.iter().enumerate().skip(d.model_top).take(LIST_ROWS) {
+        let r = Rect::new(area.x, area.y + (k - d.model_top) as f32 * LIST_ROW, area.w - 8.0, LIST_ROW - 2.0);
+        let sel = k == d.model;
+        list_row(f, Act::DetectSel(k), r, sel);
+        let weight = if sel { Weight::Semibold } else { Weight::Normal };
+        // The badge takes what it needs, the name the rest.
+        let badge_w = (text_w(&m.badge, Size::Caption) + 8.0).min(BADGE_W);
+        let name = Rect::new(r.x + 14.0, r.y, r.w - badge_w - 34.0, r.h);
+        f.g.text(&m.title, name, Size::Body, weight, Align::Left, if sel { th().text } else { th().muted });
+        let badge = Rect::new(r.x + r.w - badge_w - 10.0, r.y, badge_w, r.h);
+        f.g.text(&m.badge, badge, Size::Caption, Weight::Semibold, Align::Right, badge_color(m.kind));
+    }
+    scroll_bar(f, area, d.model_top, d.models.len());
+}
+
+/// What the support dots mean.
 fn legend(f: &mut Frame, x: f32, y: f32) {
     const SIZE: Size = Size::Caption;
-    let items = [(Badge::Good, T::BadgeFull), (Badge::Warn, T::BadgeExperimental), (Badge::Muted, T::LegendStats)];
+    let items = [(Badge::Good, T::BadgeFull), (Badge::Warn, T::BadgeExperimental), (Badge::Partial, T::BadgePartial), (Badge::Muted, T::LegendStats)];
     let mut x = x;
     for (kind, key) in items {
         let label = tr(key);
         f.g.circle(x + 4.0, y + 9.0, 4.0, badge_color(kind));
-        let w = super::text_w(label, SIZE) + 8.0;
+        let w = text_w(label, SIZE) + 8.0;
         f.g.text(label, Rect::new(x + 14.0, y, w, 18.0), SIZE, Weight::Normal, Align::Left, th().muted);
         x += 14.0 + w + 18.0;
-    }
-}
-
-const ROW_H: f32 = 58.0;
-const MAX_ROWS: usize = 4;
-/// First detected row below the dialog's top text.
-const ROWS_TOP: f32 = 88.0;
-
-/// Detected mice: up to four wide rows with product line and badge.
-fn detected_rows(f: &mut Frame, d: &Detect, inner: Rect) {
-    for (i, r) in d.rows.iter().take(MAX_ROWS).enumerate() {
-        let rr = Rect::new(inner.x, inner.y + ROWS_TOP + i as f32 * (ROW_H + 8.0), inner.w, ROW_H);
-        let hot = f.button(Act::DetectSel(i), rr);
-        tile(f, rr, i == d.sel, hot);
-
-        let left = Rect::new(rr.x + 16.0, rr.y + 9.0, rr.w - 250.0, 22.0);
-        f.g.text(&r.title, left, Size::Body, Weight::Semibold, Align::Left, th().text);
-        let sub = Rect::new(rr.x + 16.0, rr.y + 31.0, rr.w - 250.0, 18.0);
-        f.g.text(&r.sub, sub, Size::Caption, Weight::Normal, Align::Left, th().muted);
-        let badge = Rect::new(rr.x + rr.w - 236.0, rr.y, 220.0, rr.h);
-        f.g.text(&r.badge, badge, Size::Caption, Weight::Semibold, Align::Right, badge_color(r.kind));
-    }
-}
-
-/// Catalogue models: compact tiles, badge as a dot. Two columns, three
-/// once the list outgrows them (tiles would drop below ~35 px).
-fn model_grid(f: &mut Frame, d: &Detect, area: Rect) {
-    const TWO_COL_MAX: usize = 12;
-    const GAP: f32 = 8.0;
-    let cols = if d.rows.len() > TWO_COL_MAX { 3 } else { 2 };
-    let rows = d.rows.len().div_ceil(cols).max(1);
-    let h = ((area.h - (rows - 1) as f32 * GAP) / rows as f32).min(44.0);
-    let w = (area.w - (cols - 1) as f32 * GAP) / cols as f32;
-
-    for (i, r) in d.rows.iter().enumerate() {
-        let (row, col) = ((i / cols) as f32, (i % cols) as f32);
-        let rr = Rect::new(area.x + col * (w + GAP), area.y + row * (h + GAP), w, h);
-        let hot = f.button(Act::DetectSel(i), rr);
-        tile(f, rr, i == d.sel, hot);
-        f.g.circle(rr.x + 14.0, rr.y + h / 2.0, 4.0, badge_color(r.kind));
-        let title = Rect::new(rr.x + 24.0, rr.y, rr.w - 30.0, h);
-        f.g.text(&r.title, title, Size::Body, Weight::Semibold, Align::Left, th().text);
-    }
-}
-
-fn tile(f: &mut Frame, r: Rect, selected: bool, hot: bool) {
-    f.g.fill(r, R_CTRL, if selected { th().accent_soft } else if hot { th().hover } else { th().card });
-    let (bw, bc) = if selected { (2.0, th().accent) } else { (1.0, th().border) };
-    f.g.stroke(r, R_CTRL, bw, bc);
-    if selected {
-        check_badge(f.g, r);
     }
 }
 

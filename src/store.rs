@@ -49,6 +49,9 @@ pub struct AppConfig {
     /// Chosen mouse model id, `GENERIC_DEVICE` for statistics only, `None`
     /// until the user confirmed one.
     pub device: Option<String>,
+    /// VID:PID of the detected mouse the user picked, so a vendor-wide
+    /// driver opens that one; `None` = any of the model's products.
+    pub device_usb: Option<(u16, u16)>,
     /// Last DPI stage reported by a stage-only mouse (it reports changes only).
     pub last_stage: Option<u8>,
     /// First-run install question was answered.
@@ -74,6 +77,7 @@ impl Default for AppConfig {
             buttons: DEFAULT_ACTIONS,
             macros: vec![Vec::new(); MACRO_COUNT],
             device: None,
+            device_usb: None,
             last_stage: None,
             setup_asked: false,
             theme: theme::Choice::System,
@@ -156,6 +160,12 @@ fn triple_hex(t: [u8; 3]) -> String {
     format!("{:02X}{:02X}{:02X}", t[0], t[1], t[2])
 }
 
+/// `"1B1C:1B80"` -> `(0x1B1C, 0x1B80)`.
+fn usb_ids(v: &str) -> Option<(u16, u16)> {
+    let (vid, pid) = v.split_once(':')?;
+    Some((u16::from_str_radix(vid, 16).ok()?, u16::from_str_radix(pid, 16).ok()?))
+}
+
 fn nums(v: &str) -> Vec<u32> {
     v.split(',').filter_map(|x| x.trim().parse().ok()).collect()
 }
@@ -211,7 +221,9 @@ fn parse_config(text: &str, mut c: AppConfig) -> AppConfig {
                 };
                 c.macros[i] = v.split(',').filter_map(triple).filter_map(MacroEvent::decode).take(MACRO_MAX_EVENTS).collect();
             }
-            ("device", _) if !v.is_empty() => c.device = Some(v.to_string()),
+            // Ids of the flat catalogue are renamed to brand/model ids.
+            ("device", _) if !v.is_empty() => c.device = Some(crate::devices::migrate_id(v).to_string()),
+            ("device_usb", _) => c.device_usb = usb_ids(v),
             ("stage", Some(x)) if x > 0 => c.last_stage = Some(x as u8),
             ("setup_asked", _) => c.setup_asked = v == "1",
             ("theme", _) => c.theme = theme::Choice::from_id(v),
@@ -242,6 +254,7 @@ fn format_config(c: &AppConfig) -> String {
         format!("dark_moving={}", c.power.dark_while_moving as u8),
         format!("buttons={}", c.buttons.iter().map(|a| triple_hex(a.to_stored())).collect::<Vec<_>>().join(",")),
         format!("device={}", c.device.as_deref().unwrap_or("")),
+        format!("device_usb={}", c.device_usb.map(|(v, p)| format!("{v:04X}:{p:04X}")).unwrap_or_default()),
         format!("stage={}", c.last_stage.unwrap_or(0)),
         format!("setup_asked={}", c.setup_asked as u8),
         format!("theme={}", c.theme.id()),
@@ -454,6 +467,17 @@ mod tests {
         assert_eq!(back.lighting, c.lighting);
         assert_eq!((back.debounce, back.lod, back.power), (c.debounce, c.lod, c.power));
         assert!(back.setup_asked);
+    }
+
+    #[test]
+    fn old_device_ids_migrate() {
+        let c = parse_config("device=corsair\ndevice_usb=1B1C:1B80\n", AppConfig::default());
+        assert_eq!(c.device.as_deref(), Some("corsair/auto"));
+        assert_eq!(c.device_usb, Some((0x1B1C, 0x1B80)));
+        let c = parse_config("device=whiteshark-lionel\n", AppConfig::default());
+        assert_eq!(c.device.as_deref(), Some("whiteshark/lionel"));
+        let back = parse_config(&format_config(&c), AppConfig::default());
+        assert_eq!((back.device, back.device_usb), (c.device, None));
     }
 
     #[test]

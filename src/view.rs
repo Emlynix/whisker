@@ -27,7 +27,7 @@ mod art;
 mod buttons;
 mod device;
 pub use buttons::{DelayMode, Picker, Tab, button_name};
-pub use device::{Badge, Banner, Detect, DetectRow, DeviceView};
+pub use device::{Badge, Banner, BrandRow, Detect, DetectRow, DeviceView, Found, LIST_ROWS, Pane, detect_pane_at};
 use crate::devices::{Caps, DpiUi};
 use crate::store::{DEBOUNCE_CHOICES, SLEEP_CHOICES};
 use crate::theme::{self, THEMES, Theme};
@@ -199,12 +199,15 @@ pub enum Act {
     /// Slider of a driver-based mouse's single DPI value.
     BasicDpi,
     BasicRate(u32),
+    /// Model row of the detect dialog (index into its models).
     DetectSel(usize),
-    DetectManual,
+    DetectBrand(usize),
+    /// A detected mouse chip.
+    DetectFound(usize),
     DetectUse,
     /// Closes the dialog; the current mouse stays.
     DetectCancel,
-    /// From the model list back to the detected mice.
+    /// Selects the detected mouse again (preselected one).
     DetectBack,
     /// Reverts the last destructive action (toast button, Ctrl+Z).
     Undo,

@@ -23,8 +23,8 @@
 //! DPI code = dpi / unit - 1   (unit 50, or 100 on "double DPI" models)
 //! ```
 
-use super::{Ability, DpiRange, Ident, Reading};
-use crate::hid_link::raw::{Channel, Interface, interfaces};
+use super::{Ability, DpiRange, Ident, Pick, Reading};
+use crate::hid_link::raw::{Channel, Interface};
 use std::time::Duration;
 
 pub const VID: u16 = 0x0B05;
@@ -146,6 +146,11 @@ const MODELS: [Model; 21] = [
     m("TUF Gaming M4 Air", &[0x1A03], (100, 16000, 100), Fifty, 4, Plain, Cable, 6),
     m("TUF Gaming Mini WL", &[0x1C56, 0x1C57], (100, 12000, 100), Fifty, 4, Xy, Wireless, 8),
 ];
+
+/// Known models as (name, product id), for the catalogue.
+pub fn listed() -> Vec<(&'static str, u16)> {
+    MODELS.iter().flat_map(|m| m.pids.iter().map(move |p| (m.name, *p))).collect()
+}
 
 fn model(pid: u16) -> Option<&'static Model> {
     MODELS.iter().find(|m| m.pids.contains(&pid))
@@ -306,8 +311,8 @@ impl Asus {
     /// Opens the vendor collection (64-byte output report) of a known
     /// model that also exposes a mouse collection, then checks that it
     /// answers the profile query. Nothing is sent to unknown PIDs.
-    pub fn open() -> Option<(Asus, crate::hid_link::DeviceInfo)> {
-        let all = interfaces(VID);
+    pub fn open(pick: &Pick) -> Option<(Asus, crate::hid_link::DeviceInfo)> {
+        let all = pick.interfaces(VID);
         let is_mouse = |pid: u16| all.iter().any(|i| i.info.pid == pid && i.usage_page == DESKTOP && i.usage == MOUSE);
         let mut cands: Vec<(&Interface, &'static Model)> = all
             .iter()

@@ -7,8 +7,8 @@
 //! ```
 //! Feature indexes are per device and looked up through the root feature.
 
-use super::{Ability, DpiRange, Ident, Reading, percent_from_mv};
-use crate::hid_link::raw::{Channel, interfaces};
+use super::{Ability, DpiRange, Ident, Pick, Reading, percent_from_mv};
+use crate::hid_link::raw::Channel;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -102,9 +102,9 @@ impl Hidpp {
     /// Finds a Logitech HID++ 2.0 mouse: every long collection, direct
     /// (cable / Bluetooth) or receiver slots 1..6. A pointing device wins
     /// over keyboards paired to the same receiver.
-    pub fn open() -> Option<(Hidpp, crate::hid_link::DeviceInfo)> {
+    pub fn open(pick: &Pick) -> Option<(Hidpp, crate::hid_link::DeviceInfo)> {
         let mut fallback = None;
-        let candidates = interfaces(VID).into_iter().filter(|i| i.usage_page == VENDOR_PAGE && i.usage == USAGE_LONG && i.output_len >= LONG_LEN);
+        let candidates = pick.interfaces(VID).into_iter().filter(|i| i.usage_page == VENDOR_PAGE && i.usage == USAGE_LONG && i.output_len >= LONG_LEN);
 
         for iface in candidates {
             for dev in DEVICE_SLOTS {

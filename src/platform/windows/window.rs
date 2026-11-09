@@ -13,9 +13,9 @@ use crate::tray::Level;
 use std::cell::RefCell;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
-use windows_sys::Win32::Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT};
+use windows_sys::Win32::Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT, ScreenToClient};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, SetProcessWorkingSetSize};
 use windows_sys::Win32::UI::HiDpi::*;
@@ -286,6 +286,20 @@ fn on_move(hwnd: HWND, lp: LPARAM) {
     }
 }
 
+/// Wheel notches (120 units each, at least one) at the pointer, which
+/// the message gives in screen coordinates.
+fn on_wheel(hwnd: HWND, wp: WPARAM, lp: LPARAM) {
+    const NOTCH: i32 = 120;
+    let delta = ((wp >> 16) & 0xFFFF) as i16 as i32;
+    let notches = if delta.abs() < NOTCH { delta.signum() } else { delta / NOTCH };
+    let mut pt = POINT { x: (lp & 0xFFFF) as i16 as i32, y: ((lp >> 16) & 0xFFFF) as i16 as i32 };
+    unsafe { ScreenToClient(hwnd, &mut pt) };
+    let Some((f, x, y)) = with_shell(|s| (s.hooks.wheel, pt.x as f32 / s.scale, pt.y as f32 / s.scale)) else {
+        return;
+    };
+    f(x, y, notches);
+}
+
 fn on_down(hwnd: HWND, lp: LPARAM) {
     let mut call = None;
     with_shell(|s| {
@@ -329,6 +343,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WM_PAINT => paint(hwnd),
         WM_ERASEBKGND => return 1,
         WM_MOUSEMOVE => on_move(hwnd, lp),
+        WM_MOUSEWHEEL => on_wheel(hwnd, wp, lp),
         WM_LBUTTONDOWN => on_down(hwnd, lp),
         WM_LBUTTONUP => on_up(lp),
         WM_MOUSELEAVE => {

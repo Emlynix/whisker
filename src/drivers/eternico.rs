@@ -8,8 +8,8 @@
 //! ```
 //! Battery meaning is inferred: 09 matched 90 % read over Bluetooth.
 
-use super::{Ability, Ident, Reading};
-use crate::hid_link::raw::{Channel, interfaces};
+use super::{Ability, Ident, Pick, Reading};
+use crate::hid_link::raw::Channel;
 use std::time::Duration;
 
 pub const VID: u16 = 0x1D57;
@@ -53,8 +53,8 @@ pub struct Eternico {
 }
 
 impl Eternico {
-    pub fn open() -> Option<(Eternico, crate::hid_link::DeviceInfo)> {
-        let iface = interfaces(VID).into_iter().find(|i| i.info.pid == PID && i.usage_page == STATUS_PAGE)?;
+    pub fn open(pick: &Pick) -> Option<(Eternico, crate::hid_link::DeviceInfo)> {
+        let iface = pick.interfaces(VID).into_iter().find(|i| i.info.pid == PID && i.usage_page == STATUS_PAGE)?;
         let ch = Channel::open(&iface.path)?;
         Some((Eternico { ch, stage: None }, iface.info))
     }

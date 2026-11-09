@@ -28,9 +28,9 @@
 //! Kone AIMO, Kova/Kova+, Kain, Burst, Tyon, Savu, Lua, Pyra.
 
 
-use super::{Ability, DpiRange, Ident, Reading};
+use super::{Ability, DpiRange, Ident, Pick, Reading};
 use crate::hid_link::DeviceInfo;
-use crate::hid_link::raw::{Channel, Interface, interfaces};
+use crate::hid_link::raw::{Channel, Interface};
 use std::time::{Duration, Instant};
 
 pub const VID: u16 = 0x1E7D;
@@ -330,8 +330,8 @@ impl Roccat {
     /// Finds a listed PID and the collection that answers the control and
     /// profile reports and returns a valid settings block. The only write
     /// before that is the settings select (`04 pp 80`).
-    pub fn open() -> Option<(Roccat, DeviceInfo)> {
-        let all = interfaces(VID);
+    pub fn open(pick: &Pick) -> Option<(Roccat, DeviceInfo)> {
+        let all = pick.interfaces(VID);
         for model in MODELS {
             let ours: Vec<&Interface> = all.iter().filter(|i| i.info.pid == model.pid).collect();
             for i in candidates(&ours, model) {
