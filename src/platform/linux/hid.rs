@@ -189,9 +189,11 @@ pub fn interfaces(vid: u16) -> Vec<Interface> {
     nodes().iter().filter(|n| n.vid == vid).flat_map(Node::describe).collect()
 }
 
-/// Mouse collections (generic desktop / mouse) of every vendor.
+/// Mouse collections (generic desktop / mouse) of every vendor, USB and
+/// Bluetooth only: a laptop's I²C touchpad is no mouse to configure.
 pub fn mice() -> Vec<Interface> {
-    nodes().iter().flat_map(Node::describe).filter(|i| (i.usage_page, i.usage) == (USAGE_PAGE_DESKTOP, USAGE_MOUSE)).collect()
+    let mouse = |i: &Interface| (i.usage_page, i.usage) == (USAGE_PAGE_DESKTOP, USAGE_MOUSE);
+    nodes().iter().filter(|n| transport_of(n.bus) != Transport::Other).flat_map(Node::describe).filter(mouse).collect()
 }
 
 /// Read and write permission on `path` for this user (ACLs included).

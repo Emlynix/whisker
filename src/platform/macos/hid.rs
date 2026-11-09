@@ -120,9 +120,11 @@ pub fn interfaces(vid: u16) -> Vec<Interface> {
     services(HID_CLASS).iter().filter(|s| number(s, "VendorID") == vid).flat_map(describe).collect()
 }
 
-/// Mouse collections (generic desktop / mouse) of every vendor.
+/// Mouse collections (generic desktop / mouse) of every vendor, USB and
+/// Bluetooth only: a built-in SPI trackpad is no mouse to configure.
 pub fn mice() -> Vec<Interface> {
-    services(HID_CLASS).iter().flat_map(describe).filter(|i| (i.usage_page, i.usage) == (USAGE_PAGE_DESKTOP, USAGE_MOUSE)).collect()
+    let mouse = |i: &Interface| (i.usage_page, i.usage) == (USAGE_PAGE_DESKTOP, USAGE_MOUSE);
+    services(HID_CLASS).iter().filter(|s| transport_of(s) != Transport::Other).flat_map(describe).filter(mouse).collect()
 }
 
 /// Report sizes, ids and raw descriptor of a device, from the registry

@@ -504,6 +504,13 @@ fn detected(d: &DeviceInfo) -> (String, &'static Model) {
     }
 }
 
+/// An auto-detect entry named by what the mouse reports, brand first:
+/// "Marathon Mouse/Performance Plus M705" -> "Logitech Marathon …".
+fn auto_name(m: &Model, reported: &str) -> String {
+    let brand = devices::brand_of(m).title();
+    format!("{brand} {}", reported.trim_start_matches(brand.as_str()).trim())
+}
+
 /// "Other brand › Other mouse".
 fn other_entry() -> &'static Model {
     devices::entry(store::GENERIC_DEVICE).unwrap_or_else(devices::default_model)
@@ -515,8 +522,9 @@ fn locate(id: &str) -> Option<(usize, usize)> {
     devices::brands().iter().enumerate().find_map(|(b, brand)| brand.models.iter().position(|m| m.id == id).map(|k| (b, k)))
 }
 
-/// Model rows of brand `b`.
-fn model_rows(b: usize) -> Vec<DetectRow> {
+/// Model rows of brand `b`; the mouse in use (`live`) shows the support
+/// its driver found.
+fn model_rows(b: usize, live: Option<&(String, Support)>) -> Vec<DetectRow> {
     let Some(brand) = devices::brands().get(b) else {
         return Vec::new();
     };
@@ -524,7 +532,8 @@ fn model_rows(b: usize) -> Vec<DetectRow> {
         .models
         .iter()
         .map(|m| {
-            let (badge, kind) = support_badge(m.support);
+            let proven = live.filter(|(id, _)| *id == m.id).map(|(_, s)| *s);
+            let (badge, kind) = support_badge(proven.unwrap_or(m.support));
             let pids = m.pids.iter().map(|(p, _)| format!("{p:04X}")).collect::<Vec<_>>().join("/");
             let sub = if m.vid == 0 { String::new() } else { format!("{:04X}:{}", m.vid, if pids.is_empty() { "*" } else { &pids }) };
             DetectRow { title: m.title(), sub, badge: badge.into(), kind, choice: m.id.clone() }
@@ -533,10 +542,12 @@ fn model_rows(b: usize) -> Vec<DetectRow> {
 }
 
 /// The detect dialog for `mice`; preselects the current mouse, else the
-/// first detected one Whisker can drive, else the first brand.
-fn detect_state(mice: &[DeviceInfo], device: Option<&str>, usb: Option<(u16, u16)>) -> Detect {
+/// first detected one Whisker can drive, else the first brand. `reported`
+/// is the name the driver read from the mouse in use ("" if none).
+fn detect_state(mice: &[DeviceInfo], device: Option<&str>, usb: Option<(u16, u16)>, reported: &str) -> Detect {
     let brands = devices::brands().iter().map(|b| BrandRow { name: b.title(), kind: support_badge(b.best()).1 }).collect();
     let current = device.map(devices::migrate_id);
+    let live = current.and_then(devices::by_id).map(|m| (m.id.clone(), devices::support_of(m, reported)));
     let found: Vec<Found> = mice
         .iter()
         .map(|d| {
@@ -545,7 +556,11 @@ fn detect_state(mice: &[DeviceInfo], device: Option<&str>, usb: Option<(u16, u16
             let usb_here = (d.vid, d.pid);
             let is_current = current == Some(m.id.as_str()) && usb.is_none_or(|u| u == usb_here);
             let (badge, kind) = support_badge(m.support);
-            Found { title, badge: badge.into(), kind, current: is_current, brand, model, usb: usb_here }
+            let mut f = Found { title, badge: badge.into(), kind, current: is_current, via: None, brand, model, usb: usb_here };
+            if is_current {
+                identified(&mut f, m, d, reported);
+            }
+            f
         })
         .collect();
 
@@ -558,10 +573,22 @@ fn detect_state(mice: &[DeviceInfo], device: Option<&str>, usb: Option<(u16, u16
     };
     // Step 1 lists the detected mice; with none, the catalogue right away.
     let step = if found.is_empty() { DetectStep::List } else { DetectStep::Found };
-    let models = model_rows(brand);
-    let mut d = Detect { step, found, brands, models, brand, model, chip, kept: None, pane: Pane::Models, brand_top: 0, model_top: 0, keys: false };
+    let models = model_rows(brand, live.as_ref());
+    let mut d = Detect { step, found, brands, models, brand, model, live, chip, kept: None, pane: Pane::Models, brand_top: 0, model_top: 0, keys: false };
     reveal(&mut d);
     d
+}
+
+/// The mouse in use as its driver named it, e.g. "Logitech Marathon
+/// Mouse/Performance Plus M705" / "Supported · in use · via receiver"
+/// instead of "Logitech USB Receiver". Unchanged until identified.
+fn identified(f: &mut Found, m: &Model, d: &DeviceInfo, reported: &str) {
+    if m.entry != Entry::Auto || reported.is_empty() {
+        return;
+    }
+    let (badge, kind) = support_badge(devices::support_of(m, reported));
+    (f.title, f.badge, f.kind) = (auto_name(m, reported), badge.into(), kind);
+    f.via = (m.link_of(d.pid) == Some(Link::Receiver)).then_some(T::ViaReceiver);
 }
 
 /// Scrolls both lists so their selection is visible.
@@ -581,7 +608,7 @@ fn pick_brand(d: &mut Detect, b: usize) {
     if b >= d.brands.len() || b == d.brand {
         return;
     }
-    (d.brand, d.models, d.model, d.model_top, d.chip) = (b, model_rows(b), 0, 0, None);
+    (d.brand, d.models, d.model, d.model_top, d.chip) = (b, model_rows(b, d.live.as_ref()), 0, 0, None);
     reveal(d);
 }
 
@@ -601,7 +628,7 @@ fn pick_found(d: &mut Detect, i: usize) {
     };
     let (b, k) = (f.brand, f.model);
     if b != d.brand {
-        (d.brand, d.models, d.model_top) = (b, model_rows(b), 0);
+        (d.brand, d.models, d.model_top) = (b, model_rows(b, d.live.as_ref()), 0);
     }
     (d.model, d.chip) = (k, Some(i));
     reveal(d);
@@ -1626,8 +1653,7 @@ impl Controller {
         if m.entry != Entry::Auto || ident.name.is_empty() {
             return;
         }
-        let brand = devices::brand_of(m).title();
-        self.view.device_name = format!("{brand} {}", ident.name.trim_start_matches(brand.as_str()).trim());
+        self.view.device_name = auto_name(m, &ident.name);
     }
 
     fn on_mice(&mut self, mice: Vec<DeviceInfo>) {
@@ -1754,7 +1780,8 @@ impl Controller {
 
     fn open_detect(&mut self, mice: Vec<DeviceInfo>) {
         self.mice = mice.clone();
-        self.view.detect = Some(detect_state(&mice, self.cfg.device.as_deref(), self.cfg.device_usb));
+        let reported = self.ident.as_ref().map_or("", |i| i.name.as_str());
+        self.view.detect = Some(detect_state(&mice, self.cfg.device.as_deref(), self.cfg.device_usb, reported));
         self.view.focus = None;
         window::invalidate();
     }
@@ -2799,29 +2826,29 @@ mod tests {
     #[test]
     fn detect_preselects_the_current_mouse() {
         let mice = [lionel(), device_of("corsair/katar-pro")];
-        let d = detect_state(&mice, Some("corsair/katar-pro"), None);
+        let d = detect_state(&mice, Some("corsair/katar-pro"), None, "");
         let (b, k) = locate("corsair/katar-pro").unwrap();
         assert_eq!((d.brand, d.model, d.chip), (b, k, Some(1)));
         assert!(d.found[1].current && !d.found[0].current);
         assert_eq!(d.models[d.model].choice, "corsair/katar-pro");
 
         // Old id in the config: same place.
-        let d = detect_state(&mice, Some("whiteshark-lionel"), None);
+        let d = detect_state(&mice, Some("whiteshark-lionel"), None, "");
         assert_eq!((d.brand, d.model, d.chip), (0, 0, Some(0)));
 
         // First run: the first detected mouse Whisker can drive.
         let unknown = DeviceInfo { vid: 0x1234, pid: 1, ..DeviceInfo::default() };
-        let d = detect_state(&[unknown, device_of("corsair/katar-pro")], None, None);
+        let d = detect_state(&[unknown, device_of("corsair/katar-pro")], None, None, "");
         assert_eq!((d.brand, d.model, d.chip), (b, k, Some(1)));
         // A current mouse that is not connected is still selected.
-        let d = detect_state(&[], Some("roccat/auto"), None);
+        let d = detect_state(&[], Some("roccat/auto"), None, "");
         assert_eq!(d.models[d.model].choice, "roccat/auto");
         assert_eq!(d.chip, None);
     }
 
     #[test]
     fn detect_lists_scroll_with_the_selection() {
-        let mut d = detect_state(&[], Some("steelseries/auto"), None);
+        let mut d = detect_state(&[], Some("steelseries/auto"), None, "");
         assert_eq!(d.step, DetectStep::List);
         assert!(d.models.len() > view::LIST_ROWS, "SteelSeries lists more models than fit");
         assert!(d.model >= d.model_top && d.model < d.model_top + view::LIST_ROWS);
@@ -2843,7 +2870,7 @@ mod tests {
     #[test]
     fn detect_use_keeps_the_picked_device() {
         let mice = [device_of("corsair/katar-pro")];
-        let mut d = detect_state(&mice, None, None);
+        let mut d = detect_state(&mice, None, None, "");
         let usb = (mice[0].vid, mice[0].pid);
         assert_eq!(detect_choice(&d), Some(("corsair/katar-pro".into(), Some(usb))));
 
@@ -2856,11 +2883,11 @@ mod tests {
 
     #[test]
     fn detect_starts_on_the_detected_mice() {
-        let d = detect_state(&[lionel()], None, None);
+        let d = detect_state(&[lionel()], None, None, "");
         assert_eq!(d.step, DetectStep::Found);
 
         // Nothing detected: the lists, with no step to go back to.
-        let mut d = detect_state(&[], Some("corsair/katar-pro"), None);
+        let mut d = detect_state(&[], Some("corsair/katar-pro"), None, "");
         assert_eq!(d.step, DetectStep::List);
         assert!(!step_back(&mut d));
         assert_eq!(d.step, DetectStep::List);
@@ -2870,7 +2897,7 @@ mod tests {
     fn detect_back_restores_the_detected_pick() {
         let mice = [lionel(), device_of("corsair/katar-pro")];
         let usb = (mice[1].vid, mice[1].pid);
-        let mut d = detect_state(&mice, None, None);
+        let mut d = detect_state(&mice, None, None, "");
         pick_found(&mut d, 1);
         show_list(&mut d);
         assert_eq!(d.step, DetectStep::List);
@@ -2884,9 +2911,29 @@ mod tests {
     }
 
     #[test]
+    fn detect_names_the_identified_mouse() {
+        const UNIFYING: u16 = 0xC52B;
+        const M705: &str = "Logitech Marathon Mouse/Performance Plus M705";
+        let auto = devices::by_id("logitech/auto").unwrap();
+        let receiver = DeviceInfo { vid: auto.vid, pid: UNIFYING, product: "USB Receiver".into(), ..DeviceInfo::default() };
+
+        // The driver named the mouse behind the receiver: its name and support.
+        let d = detect_state(std::slice::from_ref(&receiver), Some("logitech/auto"), None, M705);
+        let f = &d.found[0];
+        assert_eq!(f.title, M705);
+        assert_eq!((f.kind, f.via), (Badge::Good, Some(T::ViaReceiver)));
+        assert_eq!(d.models[d.model].kind, Badge::Good, "step 2 agrees with step 1");
+
+        // Not identified yet: what the receiver reports.
+        let d = detect_state(&[receiver], Some("logitech/auto"), None, "");
+        assert_eq!((d.found[0].title.as_str(), d.found[0].kind), ("Logitech USB Receiver", Badge::Warn));
+        assert_eq!(d.found[0].via, None);
+    }
+
+    #[test]
     fn detect_use_needs_a_detected_pick() {
         // The current mouse is not connected: nothing picked on step 1 yet.
-        let mut d = detect_state(&[lionel(), device_of("corsair/katar-pro")], Some("roccat/auto"), None);
+        let mut d = detect_state(&[lionel(), device_of("corsair/katar-pro")], Some("roccat/auto"), None, "");
         assert_eq!((d.step, d.chip), (DetectStep::Found, None));
         assert_eq!(detect_choice(&d), None);
 

@@ -2,6 +2,7 @@
 //! do you use?" dialog and the new-mouse banner.
 
 use super::{Act, BODY, CW, Frame, GAP, Glyph, HEIGHT, Mark, Page, Place, R_CTRL, RADIUS, View, WIDTH, X0, glyph, icon, text_w, th};
+use crate::devices::Support;
 use crate::gfx::{Align, Color, Rect, Size, Weight};
 use crate::i18n::{T, fill, tr};
 
@@ -37,6 +38,8 @@ pub struct Found {
     pub kind: Badge,
     /// The mouse in use now.
     pub current: bool,
+    /// Tag after the support level, e.g. `T::ViaReceiver`.
+    pub via: Option<T>,
     /// Its catalogue entry as (brand, model) list positions.
     pub brand: usize,
     pub model: usize,
@@ -74,6 +77,9 @@ pub struct Detect {
     pub models: Vec<DetectRow>,
     pub brand: usize,
     pub model: usize,
+    /// The mouse in use: catalogue id and the support its driver found
+    /// (an auto-detect entry that named a verified model).
+    pub live: Option<(String, Support)>,
     /// The detected mouse the selection came from, if any.
     pub chip: Option<usize>,
     /// Step 1 pick when the lists opened; "Back" restores it.
@@ -298,22 +304,26 @@ fn found_row(f: &mut Frame, m: &Found, act: Act, r: Rect, mark: Mark) {
     // Name on top; support dot and level below.
     let (x, w) = (r.x + 50.0, r.w - 66.0);
     f.g.text(&m.title, Rect::new(x, r.y + 8.0, w, 20.0), Size::Body, Weight::Semibold, Align::Left, th().text);
-    let sub = if m.current { format!("{} · {}", m.badge, tr(T::CurrentTag)) } else { m.badge.clone() };
+    let mut sub = m.badge.clone();
+    if m.current {
+        sub = format!("{sub} · {}", tr(T::CurrentTag));
+    }
+    if let Some(via) = m.via {
+        sub = format!("{sub} · {}", tr(via));
+    }
     f.g.circle(x + 4.0, r.y + 39.0, 3.5, badge_color(m.kind));
     f.g.text(&sub, Rect::new(x + 14.0, r.y + 30.0, w - 14.0, 18.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
 }
 
-/// Accent link with a trailing chevron, e.g. "My mouse isn't listed ›".
+/// Accent link, e.g. "My mouse isn't listed". No chevron: the label
+/// width is only estimated, so a trailing glyph floats off the text.
 fn more_link(f: &mut Frame, act: Act, label: &str, x: f32, y: f32) {
     const H: f32 = 32.0;
-    const GLYPH_W: f32 = 16.0;
-    // Width is an estimate: the label gets slack, the chevron sits at the estimate.
-    let label_w = text_w(label, Size::Body);
-    let r = Rect::new(x, y, label_w + GLYPH_W, H);
+    const SLACK: f32 = 16.0;
+    let r = Rect::new(x, y, text_w(label, Size::Body) + SLACK, H);
     let hot = f.button(act, r);
     let c = if hot { th().text } else { th().accent };
-    f.g.text(label, Rect::new(r.x, r.y, label_w + GLYPH_W, H), Size::Body, Weight::Semibold, Align::Left, c);
-    glyph(f.g, Glyph::ChevronRight, r.x + label_w + GLYPH_W / 2.0, r.y + H / 2.0, c);
+    f.g.text(label, r, Size::Body, Weight::Semibold, Align::Left, c);
 }
 
 /// Step 2: brand and model lists, the picked model's support below.
@@ -420,7 +430,8 @@ fn brand_list(f: &mut Frame, d: &Detect, area: Rect) {
     scroll_cue(f, area, d.brand_top, count);
 }
 
-/// Models of the selected brand, names only; support shows below.
+/// Models of the selected brand with a support dot, like the brands;
+/// the picked model's support in words shows below.
 fn model_list(f: &mut Frame, d: &Detect, area: Rect) {
     list_frame(f, area);
     let count = d.models.len();
@@ -428,8 +439,9 @@ fn model_list(f: &mut Frame, d: &Detect, area: Rect) {
         let r = row_rect(area, k, d.model_top, count);
         let sel = k == d.model;
         list_row(f, Act::DetectSel(k), r, sel);
+        f.g.circle(r.x + 16.0, r.y + r.h / 2.0, 4.0, badge_color(m.kind));
         let weight = if sel { Weight::Semibold } else { Weight::Normal };
-        let name = Rect::new(r.x + 14.0, r.y, r.w - 20.0, r.h);
+        let name = Rect::new(r.x + 28.0, r.y, r.w - 34.0, r.h);
         f.g.text(&m.title, name, Size::Body, weight, Align::Left, if sel { th().text } else { th().muted });
     }
     scroll_cue(f, area, d.model_top, count);

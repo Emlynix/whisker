@@ -261,9 +261,16 @@ pub fn interfaces(vid: u16) -> Vec<Interface> {
     interface_paths().into_iter().filter(|p| p.to_lowercase().contains(&tag)).filter_map(describe).collect()
 }
 
-/// Mouse collections (generic desktop / mouse) of every vendor.
+/// Mouse collections (generic desktop / mouse) of every vendor, USB and
+/// Bluetooth only: a laptop's I²C touchpad is no mouse to configure.
 pub fn mice() -> Vec<Interface> {
-    interface_paths().into_iter().filter_map(describe).filter(|i| (i.usage_page, i.usage) == (USAGE_PAGE_DESKTOP, USAGE_MOUSE)).collect()
+    let mouse = |i: &Interface| (i.usage_page, i.usage) == (USAGE_PAGE_DESKTOP, USAGE_MOUSE);
+    interface_paths().into_iter().filter(|p| external(p)).filter_map(describe).filter(mouse).collect()
+}
+
+/// Connected over USB or Bluetooth, not built in (I²C, SPI, virtual).
+fn external(path: &str) -> bool {
+    transport_of(&path.to_lowercase()) != Transport::Other
 }
 
 /// Open read/write handle to one collection, with overlapped I/O so reads
@@ -396,5 +403,14 @@ mod tests {
         assert_eq!(transport_of(ble), Transport::Bluetooth);
         assert_eq!(interface_of(ble), None);
         assert_eq!(transport_of(r"\?\hid#converteddevice&col01#1&2d595ca7&0&0000#{x}"), Transport::Other);
+    }
+
+    #[test]
+    fn laptop_touchpads_are_not_mice() {
+        // I²C HID touchpad ("HIDI2C Device"): an ACPI id, no USB vendor id.
+        let touchpad = r"\?\hid#asue1306&col01#5&2501cc81&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
+        let receiver = r"\?\hid#vid_046d&pid_c52b&mi_01&col01#8&2cc9b1de&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
+        assert!(!external(touchpad));
+        assert!(external(receiver));
     }
 }
