@@ -20,7 +20,7 @@ pub fn get(req: &Fetch) -> Result<Reply, NetError> {
     let limit = req.limit.to_string();
     // `-q` must come first to skip ~/.curlrc.
     let args = [
-        "-q", "--silent", "--proto", "=https", "--max-redirs", "0", "--max-time", &secs, "--max-filesize", &limit,
+        "-q", "--silent", "--globoff", "--proto", "=https", "--max-redirs", "0", "--max-time", &secs, "--max-filesize", &limit,
         "--user-agent", req.agent, "--write-out", TRAILER, &url,
     ];
     let mut child = Command::new(CURL).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|_| NetError::Failed)?;

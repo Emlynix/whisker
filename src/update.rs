@@ -170,13 +170,15 @@ impl Url {
 enum Purpose {
     Manifest,
     Binary,
+    /// The `.sig` file of a binary: same hosts, tiny limit.
+    Signature,
 }
 
 impl Purpose {
     fn hosts(self) -> &'static [&'static str] {
         match self {
             Purpose::Manifest => &MANIFEST_HOSTS,
-            Purpose::Binary => &DOWNLOAD_HOSTS,
+            Purpose::Binary | Purpose::Signature => &DOWNLOAD_HOSTS,
         }
     }
 
@@ -285,6 +287,7 @@ fn fetch(url: &Url, purpose: Purpose) -> Result<Option<Vec<u8>>, Fail> {
     let (limit, timeout) = match purpose {
         Purpose::Manifest => (JSON_MAX, JSON_TIMEOUT),
         Purpose::Binary => (BINARY_MAX, BINARY_TIMEOUT),
+        Purpose::Signature => (sig::SIG_MAX, JSON_TIMEOUT),
     };
     let mut url = url.clone();
     for _ in 0..=MAX_REDIRECTS {
@@ -311,8 +314,10 @@ fn fetch(url: &Url, purpose: Purpose) -> Result<Option<Vec<u8>>, Fail> {
 /// Plain text for the dialog: no controls (but newlines), no bidi
 /// overrides, at most `NOTES_MAX` characters.
 fn clean_notes(s: &str) -> String {
-    let bidi = |c: char| matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}');
-    s.replace("\r\n", "\n").replace('\t', " ").chars().filter(|&c| c == '\n' || !(c.is_control() || bidi(c))).take(NOTES_MAX).collect()
+    // Bidi overrides, zero-width and line/paragraph separators hide or
+    // reorder text.
+    let hidden = |c: char| matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200B}'..='\u{200F}' | '\u{2028}' | '\u{2029}' | '\u{2060}' | '\u{FEFF}');
+    s.replace("\r\n", "\n").replace('\t', " ").chars().filter(|&c| c == '\n' || !(c.is_control() || hidden(c))).take(NOTES_MAX).collect()
 }
 
 /// `2026-11-20` (also the start of `2026-11-20T10:00:00Z`), else empty.
@@ -372,10 +377,11 @@ pub fn download(r: &Release) -> Result<Vec<u8>, Fail> {
     }
     let der = match &r.asset.sig {
         Signature::Inline(der) => der.clone(),
-        Signature::File(url) => fetch(url, Purpose::Binary)?.filter(|b| b.len() <= sig::SIG_MAX).ok_or(Fail::Unsigned)?,
+        Signature::File(url) => fetch(url, Purpose::Signature)?.ok_or(Fail::Unsigned)?,
         Signature::Missing => return Err(Fail::Unsigned),
     };
-    if !sig::verify(&digest, &der) {
+    let target = TARGET.ok_or(Fail::Unsigned)?.key;
+    if !sig::verify(&sig::statement(target, &r.version.to_string(), &digest), &der) {
         return Err(Fail::Unsigned);
     }
     Ok(body)
@@ -588,6 +594,7 @@ mod tests {
         assert_eq!(clean_date("20261120"), "");
         assert_eq!(clean_date("2026-1x-20"), "");
         assert_eq!(clean_notes("a\tb\u{1b}[31m\u{2066}c"), "a b[31mc");
+        assert_eq!(clean_notes("x\u{200B}y\u{2028}z\u{FEFF}"), "xyz");
         assert_eq!(clean_notes(&"é".repeat(NOTES_MAX + 10)).chars().count(), NOTES_MAX);
     }
 

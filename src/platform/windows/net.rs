@@ -46,7 +46,10 @@ pub fn get(req: &Fetch) -> Result<Reply, NetError> {
         Handle::new(unsafe { WinHttpOpenRequest(connect.0, verb.as_ptr(), path.as_ptr(), null(), null(), null(), WINHTTP_FLAG_SECURE) })?;
     let off = WINHTTP_DISABLE_COOKIES | WINHTTP_DISABLE_REDIRECTS | WINHTTP_DISABLE_AUTHENTICATION;
     let set = unsafe { WinHttpSetOption(request.0, WINHTTP_OPTION_DISABLE_FEATURE, (&off as *const u32).cast(), size_of::<u32>() as u32) };
-    if set == 0 {
+    // Revoked server certificates count as a failed connection.
+    let revocation = WINHTTP_ENABLE_SSL_REVOCATION;
+    let checked = unsafe { WinHttpSetOption(request.0, WINHTTP_OPTION_ENABLE_FEATURE, (&revocation as *const u32).cast(), size_of::<u32>() as u32) };
+    if set == 0 || checked == 0 {
         return Err(NetError::Failed);
     }
 
