@@ -6,6 +6,8 @@
 use super::gfx::Gfx;
 use super::tray;
 use super::win::wide;
+use crate::gfx::Color;
+use crate::platform::{Shade, TitleColors};
 use crate::shell::{Hooks, KeyEvent, Mods, Moved, Phase, Pointer, Released};
 use crate::tray::Level;
 use std::cell::RefCell;
@@ -78,10 +80,32 @@ pub fn kill_timer(id: usize) {
     unsafe { KillTimer(hwnd(), id) };
 }
 
-/// Dark or light window title bar to match the theme.
-pub fn set_dark_title(dark: bool) {
-    let v = dark as u32;
-    unsafe { DwmSetWindowAttribute(hwnd(), DWMWA_USE_IMMERSIVE_DARK_MODE, (&v as *const u32).cast(), 4) };
+/// Title bar in the theme's colours. Windows 11 takes caption, text and
+/// border colours; Windows 10 refuses them and keeps the dark/light bar.
+pub fn set_title_colors(c: TitleColors) {
+    const DWMWA_BORDER_COLOR: u32 = 34;
+    const DWMWA_CAPTION_COLOR: u32 = 35;
+    const DWMWA_TEXT_COLOR: u32 = 36;
+
+    // Dark mode also picks light caption buttons, so set it everywhere.
+    dwm_set(DWMWA_USE_IMMERSIVE_DARK_MODE, (c.shade == Shade::Dark) as u32);
+    if !dwm_set(DWMWA_CAPTION_COLOR, colorref(c.bg)) {
+        return;
+    }
+    dwm_set(DWMWA_TEXT_COLOR, colorref(c.text));
+    dwm_set(DWMWA_BORDER_COLOR, colorref(c.border));
+}
+
+/// One 32-bit DWM window attribute; false if Windows refuses it.
+fn dwm_set(attr: u32, v: u32) -> bool {
+    const S_OK: i32 = 0;
+    unsafe { DwmSetWindowAttribute(hwnd(), attr, (&v as *const u32).cast(), size_of::<u32>() as u32) == S_OK }
+}
+
+/// `0xRRGGBB` -> COLORREF `0x00BBGGRR`.
+fn colorref(c: Color) -> u32 {
+    let v = c.0;
+    ((v & 0xFF) << 16) | (v & 0xFF00) | ((v >> 16) & 0xFF)
 }
 
 pub fn modifiers() -> Mods {

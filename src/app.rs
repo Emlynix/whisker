@@ -21,7 +21,7 @@ use crate::protocol::{
     self, Action, BREATHING_MAX, DEFAULT_ACTIONS, DELAY_MAX_MS, Edge, Effect, Ev, MACRO_MAX_EVENTS, MB_LEFT, MOD_ALT,
     MOD_CTRL, MOD_SHIFT, MOD_WIN, MacroEvent, PollingRate, STAGE_COUNT, Status,
 };
-use crate::platform::{self, Autostart, autostart, install, window};
+use crate::platform::{self, Autostart, Shade, TitleColors, autostart, install, window};
 use crate::shell::{Hooks, KeyEvent, Mods, Phase};
 use crate::stats::{self, Period, Stats};
 use crate::theme::{self, THEMES};
@@ -274,7 +274,9 @@ fn initial_view(cfg: &AppConfig, ask_setup: bool) -> View {
 fn apply_look(cfg: &AppConfig) {
     theme::apply(cfg.theme);
     i18n::set_lang(cfg.lang.unwrap_or_else(i18n::system_lang));
-    window::set_dark_title(theme::current().dark);
+    let t = theme::current();
+    let shade = if t.dark { Shade::Dark } else { Shade::Light };
+    window::set_title_colors(TitleColors { bg: t.bg, text: t.text, border: t.border, shade });
 }
 
 /// Pages to show for the configured mouse. Until one is chosen, show all.

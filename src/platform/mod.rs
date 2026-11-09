@@ -30,7 +30,11 @@
 //! - `post(f)`: run `f` on the UI thread; callable from any thread (wake).
 //! - `invalidate()`, `show()`, `quit()`: repaint, raise, close for good.
 //! - `set_timer(id, ms)`, `kill_timer(id)`: repeating timer to `Hooks::timer`.
-//! - `set_dark_title(bool)`: title bar matching the theme (may be a no-op).
+//! - `set_title_colors(TitleColors)`: title bar in the theme's colours.
+//!   Windows 11 sets caption, text and border colours; Windows 10 only
+//!   switches dark/light (`shade`). macOS draws a transparent title bar
+//!   over the window background with the matching appearance. Linux
+//!   (TODO): a client-side or `_GTK_THEME_VARIANT` dark/light hint.
 //! - `modifiers() -> shell::Mods`: modifier keys held now.
 //! - `set_clipboard(text) -> bool`: replaces the clipboard with plain text
 //!   (the window owns it on Windows).
@@ -71,6 +75,8 @@
 //! launch makes the first show its window), `request_quit()`,
 //! `wait_closed(limit)`, `listen(on_show, on_quit)`.
 
+use crate::gfx::Color;
+
 /// Start hidden in the tray (autostart launch line).
 pub const TRAY_ARG: &str = "--tray";
 pub const UNINSTALL_ARG: &str = "--uninstall";
@@ -84,6 +90,25 @@ pub const AUTOSTART_OFF_ARG: &str = "--autostart-off";
 fn is_web_url(url: &str) -> bool {
     const SCHEMES: [&str; 2] = ["https://", "http://"];
     SCHEMES.iter().any(|s| url.starts_with(s)) && !url.chars().any(|c| c.is_whitespace() || c.is_control())
+}
+
+/// Title bar look for `window::set_title_colors`, from the active theme.
+#[derive(Clone, Copy)]
+pub struct TitleColors {
+    pub bg: Color,
+    // macOS draws title text and border itself.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    pub text: Color,
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    pub border: Color,
+    /// Fallback where custom colours are not supported.
+    pub shade: Shade,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Shade {
+    Dark,
+    Light,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -13,6 +13,7 @@
 
 use super::gfx::Gfx;
 use super::{keymap, tray};
+use crate::platform::{Shade, TitleColors};
 use crate::shell::{Hooks, KeyEvent, Mods, Moved, Phase, Pointer, Released};
 use crate::tray::{Level, TrayAction};
 use block2::RcBlock;
@@ -21,7 +22,7 @@ use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{AnyThread, MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSCursor, NSEvent,
+    NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSColor, NSAppearanceNameDarkAqua, NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSCursor, NSEvent,
     NSEventModifierFlags, NSEventType, NSGraphicsContext, NSResponder, NSTrackingArea, NSTrackingAreaOptions, NSView, NSWindow, NSWindowDelegate,
     NSWindowStyleMask,
 };
@@ -284,12 +285,19 @@ pub fn kill_timer(id: usize) {
     }
 }
 
-/// Dark or light window title bar (and controls) to match the theme.
-pub fn set_dark_title(dark: bool) {
+/// Title bar in the theme's colours: transparent over the window
+/// background, with the dark or light appearance for its controls.
+pub fn set_title_colors(c: TitleColors) {
     // SAFETY: AppKit constants, initialized when the framework loads.
-    let name = unsafe { if dark { NSAppearanceNameDarkAqua } else { NSAppearanceNameAqua } };
+    let name = unsafe { if c.shade == Shade::Dark { NSAppearanceNameDarkAqua } else { NSAppearanceNameAqua } };
     let look = NSAppearance::appearanceNamed(name);
-    with_ui(|u| u.window.setAppearance(look.as_deref()));
+    let ch = |shift: u32| ((c.bg.0 >> shift) & 0xFF) as f64 / 255.0;
+    let bg = NSColor::colorWithSRGBRed_green_blue_alpha(ch(16), ch(8), ch(0), 1.0);
+    with_ui(|u| {
+        u.window.setAppearance(look.as_deref());
+        u.window.setTitlebarAppearsTransparent(true);
+        u.window.setBackgroundColor(Some(&bg));
+    });
 }
 
 /// Control, Shift, Option and Command (as the Windows key).
