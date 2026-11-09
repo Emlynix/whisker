@@ -26,8 +26,10 @@ use crate::protocol::{
 mod art;
 mod buttons;
 mod device;
+mod report;
 pub use buttons::{DelayMode, Picker, Tab, button_name};
 pub use device::{Badge, Banner, BrandRow, Detect, DetectRow, DeviceView, Found, LIST_ROWS, Pane, detect_pane_at};
+pub use report::{Answer, Ask, CheckView, PickRow, REPORT_ROWS, ReportView, Step as ReportStep, report_at};
 use crate::devices::{Caps, DpiUi};
 use crate::store::{DEBOUNCE_CHOICES, SLEEP_CHOICES};
 use crate::theme::{self, THEMES, Theme};
@@ -225,6 +227,21 @@ pub enum Act {
     BannerSwitch,
     /// New-mouse banner: never ask for this mouse again.
     BannerDismiss,
+    /// Opens "Help add your mouse".
+    ReportOpen,
+    /// A connected mouse in the report's pick list.
+    ReportSel(usize),
+    /// Probes the picked mouse (read-only) and shows the report.
+    ReportRead,
+    ReportCopy,
+    ReportIssue,
+    /// Starts the guided checks of an experimental driver.
+    ReportCheck,
+    ReportAnswer(Answer),
+    /// Ends the checks; every changed setting is put back.
+    ReportCancelChecks,
+    /// Closes the wizard (checks cancelled and restored first).
+    ReportClose,
 }
 
 /// Pages of the project site the About dialog links to.
@@ -386,6 +403,8 @@ pub struct View {
     pub pulse: u8,
     /// "New mouse connected" offer over the title row.
     pub banner: Option<Banner>,
+    /// "Help add your mouse" wizard.
+    pub report: Option<ReportView>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -705,6 +724,11 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
     } else if let Some(d) = &v.detect {
         f.hits.clear();
         device::detect_dialog(&mut f, d);
+    }
+    // Opened from the detect dialog too: on top of it.
+    if let Some(r) = v.report.as_ref().filter(|_| !v.ask_setup) {
+        f.hits.clear();
+        report::report_dialog(&mut f, r);
     }
 
     focus_ring(&f, v.focus);

@@ -132,6 +132,7 @@ pub(super) fn device_page(f: &mut Frame, v: &View) {
     f.push_button(Act::ChangeMouse, Rect::new(X0, y, 170.0, 36.0), tr(T::ChangeMouse), false);
     let chevron = if v.diagnostics { Glyph::ChevronDown } else { Glyph::ChevronRight };
     f.glyph_button(Act::Diagnostics, Rect::new(X0 + 180.0, y, 170.0, 36.0), tr(T::Diagnostics), chevron, Place::Trail);
+    f.push_button(Act::ReportOpen, Rect::new(X0 + 360.0, y, CW - 360.0, 36.0), tr(T::HelpAddMouse), false);
     if v.diagnostics {
         diagnostics(f, d, y + 36.0 + 10.0);
     }
@@ -169,7 +170,9 @@ const DLG_PAD: f32 = 24.0;
 const CHIP_H: f32 = 32.0;
 const LIST_ROW: f32 = 28.0;
 /// Rows each list shows; longer lists scroll.
-pub const LIST_ROWS: usize = 9;
+pub const LIST_ROWS: usize = 8;
+/// "Mouse missing or experimental? Help add your mouse" under the models.
+const HINT_H: f32 = 26.0;
 const BRAND_W: f32 = 220.0;
 const PANE_GAP: f32 = 16.0;
 const BADGE_W: f32 = 170.0;
@@ -216,6 +219,7 @@ pub(super) fn detect_dialog(f: &mut Frame, d: &Detect) {
     f.caption_in(tr(T::ModelCaption), l.models.x, l.models.y - 22.0, l.models.w);
     brand_list(f, d, l.brands);
     model_list(f, d, l.models);
+    report_hint(f, Rect::new(l.models.x, l.models.y + l.models.h + 4.0, l.models.w, HINT_H));
     if d.keys {
         // Which list the arrow keys move in.
         let r = if d.pane == Pane::Brands { l.brands } else { l.models };
@@ -312,6 +316,22 @@ fn model_list(f: &mut Frame, d: &Detect, area: Rect) {
         f.g.text(&m.badge, badge, Size::Caption, Weight::Semibold, Align::Right, badge_color(m.kind));
     }
     scroll_bar(f, area, d.model_top, d.models.len());
+}
+
+/// Next to the auto-detect and "other" entries: a way to get a missing
+/// or experimental mouse supported.
+fn report_hint(f: &mut Frame, r: Rect) {
+    const SIZE: Size = Size::Caption;
+    let link = tr(T::HelpAddMouse);
+    let link_w = (text_w(link, SIZE) + 20.0).min(r.w / 2.0);
+    let lr = Rect::new(r.x + r.w - link_w, r.y, link_w, r.h);
+    let hot = f.button(Act::ReportOpen, lr);
+    if hot {
+        f.g.fill(lr, R_CTRL, th().hover);
+    }
+    f.g.text(link, Rect::new(lr.x + 8.0, lr.y, lr.w - 16.0, lr.h), SIZE, Weight::Semibold, Align::Right, th().accent);
+    let hint = Rect::new(r.x + 14.0, r.y, r.w - link_w - 18.0, r.h);
+    f.g.text(tr(T::MissingMouse), hint, SIZE, Weight::Normal, Align::Right, th().muted);
 }
 
 /// What the support dots mean.

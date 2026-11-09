@@ -70,6 +70,8 @@ pub enum Command {
     /// Window visibility drives how often status is polled.
     Visible(bool),
     RefreshNow,
+    /// Read-only probe of one device by each of these drivers (report wizard).
+    Probe(Vec<Target>, Pick),
 }
 
 pub enum Event {
@@ -84,6 +86,25 @@ pub enum Event {
     Offline,
     /// No receiver or cable found.
     Absent,
+    /// Results of `Command::Probe`, one per driver.
+    Probe(Vec<Probe>),
+}
+
+/// What one driver learned in a read-only probe.
+#[derive(Clone, Debug)]
+pub struct Probe {
+    pub target: Target,
+    pub got: Probed,
+}
+
+#[derive(Clone, Debug)]
+pub enum Probed {
+    /// Opened: identity, abilities and one status reading (if answered).
+    Driver(DeviceInfo, Ident, Ability, Option<Reading>),
+    /// Lionel family: the status reply, if one came.
+    Status(DeviceInfo, Option<Status>),
+    /// The driver did not accept the device.
+    Refused,
 }
 
 pub struct MouseService {
@@ -290,6 +311,40 @@ impl Worker {
     }
 }
 
+/// Opens the device with each driver on its own channel, reads identity
+/// and one status, closes it again. Only the drivers' identify and read
+/// requests are sent, never a setting.
+fn probe(targets: &[Target], pick: &Pick) -> Vec<Probe> {
+    let mut out = Vec::new();
+    for t in targets {
+        let got = match t {
+            Target::Lionel => probe_lionel(pick),
+            _ => match Driver::open(t, pick) {
+                Some((mut d, info)) => {
+                    let (ident, ability) = d.describe();
+                    Probed::Driver(info, ident, ability, d.read())
+                }
+                None => Probed::Refused,
+            },
+        };
+        out.push(Probe { target: t.clone(), got });
+    }
+    out
+}
+
+/// Lionel family: one status request on the vendor's config collection.
+fn probe_lionel(pick: &Pick) -> Probed {
+    let mut link = HidLink::new();
+    let Some(info) = link.is_present().then(|| link.info().cloned()).flatten() else {
+        return Probed::Refused;
+    };
+    if !pick.allows(info.vid, info.pid) {
+        return Probed::Refused;
+    }
+    let status = link.query(&protocol::status_request(0)).and_then(|r| protocol::parse_status(&r));
+    Probed::Status(info, status)
+}
+
 fn run(target: Target, pick: Pick, rx: Receiver<Command>, on_event: impl Fn(Event)) {
     let mut w = Worker { link: Some(HidLink::new()), seq: 0, verified: false, reported: None, target, pick, driver: None, misses: 0 };
     let mut period = POLL_VISIBLE;
@@ -370,6 +425,7 @@ fn run(target: Target, pick: Pick, rx: Receiver<Command>, on_event: impl Fn(Even
             }
             Command::Visible(v) => period = if v { POLL_VISIBLE } else { POLL_HIDDEN },
             Command::RefreshNow => {}
+            Command::Probe(targets, pick) => on_event(Event::Probe(probe(&targets, &pick))),
         }
     }
 }

@@ -9,13 +9,16 @@
 //! Lives on the UI thread in a thread-local; other threads reach it with
 //! `window::post(.. with_ctrl(..))`.
 
+mod report;
+mod verify;
+
 use crate::devices::{self, CAPS_NONE, Caps, Entry, Family, Link, Match, Model, Support};
 use crate::drivers::{Ability, Ident, Pick};
 use crate::mouse::Target;
-use crate::hid_link::{self, DeviceInfo};
+use crate::hid_link::{self, DeviceInfo, HidDevice};
 use crate::gfx::Gfx;
 use crate::i18n::{self, Lang, T, fill, tr};
-use crate::mouse::{Command, Event, MouseService};
+use crate::mouse::{Command, Event, MouseService, Probe};
 use crate::keys;
 use crate::protocol::{
     self, Action, BREATHING_MAX, DEFAULT_ACTIONS, DELAY_MAX_MS, Edge, Effect, Ev, MACRO_MAX_EVENTS, MB_LEFT, MOD_ALT,
@@ -28,9 +31,10 @@ use crate::theme::{self, THEMES};
 use crate::store::{self, AppConfig};
 use crate::tray::{Level, TrayAction};
 use crate::view::{
-    self, Act, Badge, Banner, BasicView, BrandRow, Charge, DelayMode, Detect, DetectRow, DeviceView, Dialog, Focus, Found, Hit, Page,
-    Pane, Picker, StageView, Sync, Toast, View, Web,
+    self, Act, Answer, Ask, Badge, Banner, BasicView, BrandRow, Charge, CheckView, DelayMode, Detect, DetectRow, DeviceView, Dialog,
+    Focus, Found, Hit, Page, Pane, PickRow, Picker, ReportStep, ReportView, StageView, Sync, Toast, View, Web,
 };
+use verify::{Check, Knobs, Start, Verify};
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
@@ -135,6 +139,32 @@ struct Controller {
     scanning: bool,
     /// The mouse the new-mouse banner offers.
     offer: Option<DeviceInfo>,
+    /// "Help add your mouse" while open.
+    wizard: Option<Wizard>,
+}
+
+/// State of the report wizard behind `View::report`.
+#[derive(Default)]
+struct Wizard {
+    devices: Vec<HidDevice>,
+    probes: Vec<Probe>,
+    /// Guided checks while they run.
+    verify: Option<Verify>,
+    /// Result lines of finished checks.
+    checks: Vec<String>,
+    /// The report as copied or sent.
+    text: String,
+}
+
+/// Checks change settings through the mouse service, like the UI does.
+impl Knobs for MouseService {
+    fn set_dpi(&mut self, dpi: u32) {
+        self.send(Command::SetBasicDpi(dpi));
+    }
+
+    fn set_rate(&mut self, hz: u32) {
+        self.send(Command::SetBasicRate(hz));
+    }
 }
 
 /// State before a destructive action, kept while its toast shows.
@@ -210,6 +240,7 @@ pub fn run(mode: StartMode) {
         seen: None,
         scanning: false,
         offer: None,
+        wizard: None,
     };
     ctrl.stats.set_vendor(stats_vendor(ctrl.cfg.device.as_deref()));
     CTRL.with(|c| *c.borrow_mut() = Some(ctrl));
@@ -298,6 +329,7 @@ fn initial_view(cfg: &AppConfig, ask_setup: bool) -> View {
         diagnostics: false,
         pulse: u8::MAX,
         banner: None,
+        report: None,
     }
 }
 
@@ -342,6 +374,8 @@ fn belongs_to(ev: &Event, t: &Target) -> bool {
         Event::Ident(..) => driver,
         Event::Basic(_) => driver || matches!(t, Target::Bluetooth(_)),
         Event::Offline | Event::Absent => *t != Target::Nothing,
+        // Asked for by the report wizard, whatever the driver.
+        Event::Probe(_) => true,
     }
 }
 
@@ -765,6 +799,53 @@ fn relabel(v: &mut View, link: T, facts: &MouseFacts) {
     v.device = device_rows(facts);
 }
 
+/// Empty wizard view at `step`.
+fn report_view(step: ReportStep) -> ReportView {
+    ReportView { step, rows: Vec::new(), sel: 0, lines: Vec::new(), top: 0, note: String::new(), can_check: false, check: None }
+}
+
+/// "Acme Glide" · "1234:5678 · USB · current".
+fn pick_row(d: &HidDevice, current: Option<(u16, u16)>) -> PickRow {
+    let link = d.collections.first().map_or("", |(_, l)| report::transport(l.transport));
+    let mut sub = format!("{} · {link}", report::usb_id(&d.info));
+    if current == Some((d.info.vid, d.info.pid)) {
+        sub = format!("{sub} · {}", tr(T::CurrentTag));
+    }
+    PickRow { title: report::product(&d.info), sub }
+}
+
+/// Drivers that may know a vendor id, catalogue order, each once.
+fn probe_targets(vid: u16) -> Vec<Target> {
+    let drivers = devices::families_for(vid).into_iter().filter(|f| *f != Family::NoDriver);
+    drivers.map(Family::target).collect()
+}
+
+/// Wheel over the report: three lines a notch, within the text.
+fn report_wheel(r: &mut ReportView, notches: i32) {
+    const LINES_PER_NOTCH: i32 = 3;
+    let max = r.lines.len().saturating_sub(view::REPORT_ROWS) as i32;
+    r.top = (r.top as i32 - notches * LINES_PER_NOTCH).clamp(0, max.max(0)) as usize;
+}
+
+/// Title, question, live value and answers of the open check.
+fn check_view(v: &Verify, c: Check, measured: Option<u32>) -> CheckView {
+    let (n, total) = v.position();
+    let s = v.start();
+    let (name, question, value, ask) = match c {
+        Check::Dpi => {
+            let q = fill(tr(T::CheckDpi), &[&v.test_dpi().to_string(), &s.dpi.unwrap_or_default().to_string()]);
+            ("DPI", q, String::new(), Ask::YesNo)
+        }
+        Check::Rate => {
+            let live = measured.map_or_else(|| tr(T::Measuring).to_string(), |hz| fill(tr(T::MeasuredValue), &[&format!("{hz} Hz")]));
+            ("Hz", fill(tr(T::CheckRate), &[&v.test_rate().to_string()]), live, Ask::Measure)
+        }
+        Check::Battery => (tr(T::Battery), fill(tr(T::CheckBattery), &[&s.battery.unwrap_or_default().to_string()]), String::new(), Ask::YesNo),
+    };
+    let title = fill(tr(T::CheckOf), &[&n.to_string(), &total.to_string(), name]);
+    CheckView { title, question, value, ask }
+}
+
 /// Text for "Copy for support": version, OS, the Mouse tab's rows and
 /// the raw status. Pasted into public issues, so the serial number is
 /// left out and a Bluetooth address keeps only its last two bytes. The
@@ -875,6 +956,11 @@ fn hook_act(a: Act) {
 /// Mouse wheel: scrolls a list of the detect dialog, the only scrolling place.
 fn hook_wheel(x: f32, y: f32, notches: i32) {
     with_ctrl(|c| {
+        if let Some(r) = c.view.report.as_mut().filter(|_| view::report_at(x, y)) {
+            report_wheel(r, notches);
+            window::invalidate();
+            return;
+        }
         let Some(d) = c.view.detect.as_mut() else {
             return;
         };
@@ -922,7 +1008,10 @@ fn hook_tray(a: TrayAction) {
                 c.on_act(Act::About);
             });
         }
-        TrayAction::Quit => window::quit(),
+        TrayAction::Quit => {
+            with_ctrl(|c| c.close_report());
+            window::quit();
+        }
     }
 }
 
@@ -971,6 +1060,8 @@ impl Controller {
     /// Hidden window: slow polling, no UI refresh timer.
     fn on_hidden(&mut self) {
         self.visible = false;
+        // Checks change settings: never leave them changed out of sight.
+        self.cancel_checks();
         self.on_focus_lost();
         window::kill_timer(TIMER_REFRESH);
         self.mouse.send(Command::Visible(false));
@@ -999,8 +1090,9 @@ impl Controller {
     }
 
     /// Which dialogs are open, to notice one opening or closing.
-    fn overlay(&self) -> (bool, bool, bool, Option<Dialog>) {
-        (self.view.ask_setup, self.view.detect.is_some(), self.view.picker.is_some(), self.view.dialog)
+    fn overlay(&self) -> (bool, bool, bool, Option<Dialog>, Option<ReportStep>) {
+        let report = self.view.report.as_ref().map(|r| r.step);
+        (self.view.ask_setup, self.view.detect.is_some(), self.view.picker.is_some(), self.view.dialog, report)
     }
 
     fn act(&mut self, a: Act) {
@@ -1113,6 +1205,19 @@ impl Controller {
             }
             Act::Diagnostics => self.view.diagnostics = !self.view.diagnostics,
             Act::CopyDiagnostics => self.copy_diagnostics(),
+            Act::ReportOpen => self.open_report(),
+            Act::ReportSel(i) => {
+                if let Some(r) = self.view.report.as_mut() {
+                    r.sel = i.min(r.rows.len().saturating_sub(1));
+                }
+            }
+            Act::ReportRead => self.read_report(),
+            Act::ReportCopy => self.copy_report(),
+            Act::ReportIssue => self.open_issue(),
+            Act::ReportCheck => self.start_checks(),
+            Act::ReportAnswer(a) => self.answer_check(a),
+            Act::ReportCancelChecks => self.cancel_checks(),
+            Act::ReportClose => self.close_report(),
         }
     }
 
@@ -1130,6 +1235,10 @@ impl Controller {
             }
             Event::Ident(ident, ability) => {
                 self.on_ident(ident, ability);
+                return;
+            }
+            Event::Probe(p) => {
+                self.on_probe(p);
                 return;
             }
             Event::Basic(r) => {
@@ -1539,6 +1648,202 @@ impl Controller {
         device_rows(&self.facts())
     }
 
+    // ---- "help add your mouse" ----
+
+    /// Lists the connected mice off the UI thread; `on_report_mice` gets them.
+    fn open_report(&mut self) {
+        self.close_report();
+        self.wizard = Some(Wizard::default());
+        self.view.report = Some(report_view(ReportStep::Finding));
+        std::thread::spawn(|| {
+            let devices = hid_link::mouse_devices();
+            post(move |c| c.on_report_mice(devices));
+        });
+    }
+
+    /// Pick list; the mouse in use preselected.
+    fn on_report_mice(&mut self, devices: Vec<HidDevice>) {
+        let current = self.device_info.as_ref().map(|d| (d.vid, d.pid));
+        let (Some(w), Some(r)) = (self.wizard.as_mut(), self.view.report.as_mut()) else {
+            return;
+        };
+        if r.step != ReportStep::Finding {
+            return;
+        }
+        r.rows = devices.iter().map(|d| pick_row(d, current)).collect();
+        r.sel = devices.iter().position(|d| Some((d.info.vid, d.info.pid)) == current).unwrap_or(0);
+        r.step = ReportStep::Pick;
+        w.devices = devices;
+        window::invalidate();
+    }
+
+    /// Read-only probe of the picked mouse on the mouse thread.
+    fn read_report(&mut self) {
+        let (Some(w), Some(r)) = (self.wizard.as_ref(), self.view.report.as_mut()) else {
+            return;
+        };
+        let Some(d) = w.devices.get(r.sel).map(|d| &d.info) else {
+            return;
+        };
+        r.step = ReportStep::Reading;
+        let pick = Pick { vid: Some(d.vid), pids: vec![d.pid] };
+        self.mouse.send(Command::Probe(probe_targets(d.vid), pick));
+    }
+
+    fn on_probe(&mut self, probes: Vec<Probe>) {
+        let reading = self.view.report.as_ref().is_some_and(|r| r.step == ReportStep::Reading);
+        let Some(w) = self.wizard.as_mut().filter(|_| reading) else {
+            return;
+        };
+        w.probes = probes;
+        self.render_report();
+        window::invalidate();
+    }
+
+    /// Report text (English) and the result step.
+    fn render_report(&mut self) {
+        let os = platform::os_version();
+        let sel = self.view.report.as_ref().map_or(0, |r| r.sel);
+        let Some(info) = self.wizard.as_ref().and_then(|w| w.devices.get(sel)).map(|d| d.info.clone()) else {
+            return;
+        };
+        let checkable = self.can_check(&info);
+        let Some(w) = self.wizard.as_mut() else {
+            return;
+        };
+        let Some(dev) = w.devices.get(sel) else {
+            return;
+        };
+        let input = report::Input { dev, probes: &w.probes, checks: &w.checks, os: &os };
+        let text = i18n::with_lang(Lang::En, || report::text(&input));
+        let lines: Vec<String> = text.lines().map(str::to_string).collect();
+        let checkable = checkable && w.checks.is_empty();
+        w.text = text;
+        let Some(r) = self.view.report.as_mut() else {
+            return;
+        };
+        (r.lines, r.top, r.step, r.can_check, r.check) = (lines, 0, ReportStep::Result, checkable, None);
+    }
+
+    /// Guided checks: the mouse in use, driven by a driver not yet verified.
+    fn can_check(&self, d: &DeviceInfo) -> bool {
+        let Some(m) = self.cfg.device.as_deref().and_then(devices::by_id) else {
+            return false;
+        };
+        let same = self.device_info.as_ref().is_some_and(|i| (i.vid, i.pid) == (d.vid, d.pid));
+        m.family.has_driver() && m.support != Support::Full && self.basic_online && same
+    }
+
+    fn copy_report(&mut self) {
+        let Some(text) = self.wizard.as_ref().map(|w| w.text.clone()) else {
+            return;
+        };
+        if window::set_clipboard(&text) {
+            self.report_note(tr(T::Copied));
+        }
+    }
+
+    /// New-issue page with the report, or copied for pasting when too long.
+    fn open_issue(&mut self) {
+        let sel = self.view.report.as_ref().map_or(0, |r| r.sel);
+        let Some(w) = self.wizard.as_ref() else {
+            return;
+        };
+        let Some(dev) = w.devices.get(sel) else {
+            return;
+        };
+        let text = w.text.clone();
+        match report::issue(NEW_ISSUE_URL, &report::title(&dev.info), &text) {
+            report::Issue::Prefilled(url) => {
+                platform::open_url(&url);
+            }
+            report::Issue::Paste(url) => {
+                window::set_clipboard(&text);
+                platform::open_url(&url);
+                self.report_note(tr(T::ReportPasteNote));
+            }
+        }
+    }
+
+    fn report_note(&mut self, note: &str) {
+        if let Some(r) = self.view.report.as_mut() {
+            r.note = note.to_string();
+        }
+    }
+
+    /// First check: its setting is changed now.
+    fn start_checks(&mut self) {
+        let b = &self.view.basic;
+        let battery = self.view.has_battery.then_some(self.view.battery);
+        let start = Start { dpi: b.dpi, values: b.values.clone(), rate: b.rate, rates: b.rates.clone(), battery };
+        let (Some(w), Some(mut v)) = (self.wizard.as_mut(), Verify::new(start)) else {
+            return;
+        };
+        v.begin(&mut self.mouse);
+        w.verify = Some(v);
+        if let Some(r) = self.view.report.as_mut() {
+            (r.step, r.note) = (ReportStep::Check, String::new());
+        }
+        self.sync_check();
+    }
+
+    fn answer_check(&mut self, a: Answer) {
+        let measured = self.stats.measured_hz();
+        let Some(v) = self.wizard.as_mut().and_then(|w| w.verify.as_mut()) else {
+            return;
+        };
+        v.answer(a, measured, &mut self.mouse);
+        if v.current().is_some() {
+            self.sync_check();
+            return;
+        }
+        self.finish_checks();
+    }
+
+    /// Cancel, Esc, close or hide: every changed setting is put back.
+    fn cancel_checks(&mut self) {
+        let Some(v) = self.wizard.as_mut().and_then(|w| w.verify.as_mut()) else {
+            return;
+        };
+        v.cancel(&mut self.mouse);
+        self.finish_checks();
+    }
+
+    /// Results go into the report.
+    fn finish_checks(&mut self) {
+        let Some(w) = self.wizard.as_mut() else {
+            return;
+        };
+        let Some(v) = w.verify.take() else {
+            return;
+        };
+        w.checks = v.lines().to_vec();
+        self.render_report();
+        self.report_note(tr(T::ChecksDone));
+    }
+
+    fn close_report(&mut self) {
+        self.cancel_checks();
+        self.wizard = None;
+        self.view.report = None;
+    }
+
+    /// The open check as shown; the rate check's measured value is live.
+    fn sync_check(&mut self) {
+        let measured = self.stats.measured_hz();
+        let Some(v) = self.wizard.as_ref().and_then(|w| w.verify.as_ref()) else {
+            return;
+        };
+        let Some(c) = v.current() else {
+            return;
+        };
+        let check = check_view(v, c, measured);
+        if let Some(r) = self.view.report.as_mut() {
+            r.check = Some(check);
+        }
+        window::invalidate();
+    }
+
     // ---- buttons ----
 
     /// Applies a new layout; refused if no button would stay a left click.
@@ -1806,7 +2111,7 @@ impl Controller {
 
     /// A dialog or picker covers the page.
     fn modal(&self) -> bool {
-        self.view.ask_setup || self.view.detect.is_some() || self.view.picker.is_some() || self.view.dialog.is_some()
+        self.view.ask_setup || self.view.detect.is_some() || self.view.picker.is_some() || self.view.dialog.is_some() || self.view.report.is_some()
     }
 
     /// Esc: closes the topmost dialog without side effects.
@@ -1814,7 +2119,11 @@ impl Controller {
         if self.view.ask_setup {
             return false;
         }
-        let closed = if self.view.detect.is_some() {
+        let closed = if self.view.report.is_some() {
+            // On top of the detect dialog when opened from it.
+            self.close_report();
+            true
+        } else if self.view.detect.is_some() {
             self.cancel_detect();
             true
         } else {
@@ -1826,7 +2135,12 @@ impl Controller {
 
     /// Enter with nothing focused: the open dialog's main button.
     fn press_default(&mut self) -> bool {
-        let act = if self.view.detect.is_some() && !self.view.ask_setup {
+        let step = self.view.report.as_ref().map(|r| r.step);
+        let act = if step == Some(ReportStep::Pick) {
+            Act::ReportRead
+        } else if step.is_some() {
+            return false;
+        } else if self.view.detect.is_some() && !self.view.ask_setup {
             Act::DetectUse
         } else if self.view.picker.is_some_and(|p| p.built().is_some()) {
             Act::PickApply
@@ -2056,6 +2370,7 @@ impl Controller {
         self.view.today_clicks = group(today.clicks());
         self.view.today_distance = distance(today.distance_m);
         self.view.measured = self.stats.measured_hz();
+        self.sync_check();
 
         let t = self.stats.totals(self.period);
         self.view.tiles = vec![

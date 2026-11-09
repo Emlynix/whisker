@@ -97,7 +97,6 @@ pub struct ReportLayout {
 #[derive(Clone, Debug)]
 pub struct HidDevice {
     pub info: DeviceInfo,
-    #[allow(dead_code)] // used by the report wizard
     pub collections: Vec<(Interface, ReportLayout)>,
 }
 
@@ -130,7 +129,6 @@ pub fn list_mice() -> Vec<DeviceInfo> {
 /// Connected mice as in `list_mice`, each with every collection of the
 /// same VID:PID (and Bluetooth address) and its report layout.
 /// Descriptors only; nothing is opened for I/O or sent.
-#[allow(dead_code)] // used by the report wizard
 pub fn mouse_devices() -> Vec<HidDevice> {
     let mut out: Vec<HidDevice> = Vec::new();
     for m in crate::platform::hid::mice() {

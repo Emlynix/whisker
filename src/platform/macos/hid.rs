@@ -128,7 +128,6 @@ pub fn mice() -> Vec<Interface> {
 /// Report sizes, ids and raw descriptor of a device, from the registry
 /// only. All collections of one device share this layout; `summary` stays
 /// empty (the descriptor carries the details).
-#[allow(dead_code)] // used by the report wizard
 pub fn layout(path: &str) -> Option<ReportLayout> {
     let s = Service::by_id(entry_id(path)?)?;
     let size = |key: &str| s.number(key).unwrap_or(0).max(0) as usize;

@@ -120,7 +120,6 @@ fn describe(path: String) -> Option<Interface> {
 
 /// Report sizes, ids and caps of one collection; opened for queries only
 /// (no reads or writes). Windows does not expose the raw descriptor.
-#[allow(dead_code)] // used by the report wizard
 pub fn layout(path: &str) -> Option<ReportLayout> {
     let name = wide(path);
     // SAFETY: a NUL-terminated path; access 0 only queries the device.
