@@ -646,6 +646,22 @@ fn skeleton(g: &Gfx, r: Rect) {
     g.fill(r, R_INNER, th().border);
 }
 
+/// Mouse name for the sidebar in up to two lines: breaks after a space or
+/// "/" so "Logitech Marathon Mouse/Performance Plus M705" stays inside the
+/// panel; the second line is trimmed with "…" when still too long.
+fn name_lines(name: &str, width: f32, size: Size) -> (String, Option<String>) {
+    if text_w(name, size) <= width {
+        return (name.to_string(), None);
+    }
+
+    // Last break (after a space or "/") whose first line still fits.
+    let breaks = name.char_indices().filter(|&(_, c)| c == ' ' || c == '/').map(|(i, c)| i + c.len_utf8());
+    let Some(at) = breaks.filter(|&i| text_w(name[..i].trim_end(), size) <= width).last() else {
+        return (name.to_string(), None);
+    };
+    (name[..at].trim_end().to_string(), Some(name[at..].trim_start().to_string()))
+}
+
 /// Rough text width in em: a Latin glyph is ~0.56 em, CJK ~1 em.
 fn ems(text: &str) -> f32 {
     text.chars().map(|c| if (c as u32) < 0x2E80 { 0.56 } else { 1.0 }).sum()
@@ -909,20 +925,27 @@ fn sidebar(f: &mut Frame, v: &View) {
     // the status line under it opens Settings › Mouse. The space down to
     // the nav stays free for a profile switcher.
     const CHEVRON_W: f32 = 14.0;
-    let sub = Rect::new(62.0, 46.0, SIDE_W - 76.0, 16.0);
+    const LINE_H: f32 = 16.0;
+    let name_w = SIDE_W - 76.0 - CHEVRON_W + 4.0;
+    // Long names ("Logitech Marathon Mouse/Performance Plus M705") take two lines.
+    let (first, second) = name_lines(&v.device_name, name_w, Size::Caption);
+    let lines = if second.is_some() { 2.0 } else { 1.0 };
+    let sub = Rect::new(62.0, 46.0, SIDE_W - 76.0, LINE_H * lines);
     // A select-like field: the chevron sits at its right end.
     let pick = Rect::new(sub.x - 4.0, sub.y - 2.0, sub.w + 8.0, sub.h + 4.0);
-    let name_w = pick.w - CHEVRON_W - 12.0;
     let hot = f.button(Act::ChangeMouse, pick);
     if hot {
         f.g.fill(pick, R_INNER, th().hover);
     }
     let name_c = if hot { th().text } else { th().subtle };
-    f.g.text(&v.device_name, Rect::new(sub.x, sub.y, name_w, sub.h), Size::Caption, Weight::Normal, Align::Left, name_c);
+    f.g.text(&first, Rect::new(sub.x, sub.y, name_w, LINE_H), Size::Caption, Weight::Normal, Align::Left, name_c);
+    if let Some(rest) = &second {
+        f.g.text(rest, Rect::new(sub.x, sub.y + LINE_H, name_w, LINE_H), Size::Caption, Weight::Normal, Align::Left, name_c);
+    }
     glyph(f.g, Glyph::ChevronDown, pick.x + pick.w - CHEVRON_W / 2.0 - 2.0, sub.y + sub.h / 2.0, name_c);
 
     if v.caps.battery || v.has_battery {
-        let r = Rect::new(sub.x, sub.y + 20.0, sub.w, 16.0);
+        let r = Rect::new(sub.x, sub.y + sub.h + 4.0, sub.w, 16.0);
         let area = Rect::new(r.x - 4.0, r.y - 2.0, r.w + 4.0, r.h + 4.0);
         if f.button(Act::Nav(Page::Mouse), area) {
             f.g.fill(area, R_INNER, th().hover);
@@ -1045,7 +1068,10 @@ fn overview(f: &mut Frame, v: &View) {
     f.bar(Rect::new(card.x + 200.0, card.y + 46.0, bar_w, 10.0), if shown { v.battery } else { 0 }, tint);
     f.g.text(note, Rect::new(card.x + 200.0, card.y + 64.0, bar_w, 40.0), Size::Body, Weight::Normal, Align::Wrap, th().muted);
 
-    let w = (CW - 2.0 * GAP) / 3.0;
+    // No DPI card for a mouse that neither sets nor reports DPI (M705).
+    let dpi_card = v.caps.dpi != DpiUi::None || v.basic.dpi.is_some() || v.basic.stage.is_some();
+    let cards = if dpi_card { 3.0 } else { 2.0 };
+    let w = (CW - (cards - 1.0) * GAP) / cards;
     let y = TOP + 118.0 + GAP;
     let stages = v.caps.dpi == DpiUi::Stages;
     let (dpi, note) = match v.stages.get(v.active) {
@@ -1063,7 +1089,11 @@ fn overview(f: &mut Frame, v: &View) {
         Some(s) => (s.dpi.to_string(), fill(tr(T::StageOf), &[&(v.active + 1).to_string(), &v.stages.iter().filter(|s| s.enabled).count().to_string()])),
         None => (UNKNOWN.into(), String::new()),
     };
-    stat_card(f, Rect::new(X0, y, w, 110.0), tr(T::ActiveDpi), &dpi, &note);
+    let mut x = X0;
+    if dpi_card {
+        stat_card(f, Rect::new(x, y, w, 110.0), tr(T::ActiveDpi), &dpi, &note);
+        x += w + GAP;
+    }
     let hz = match stages {
         true => format!("{} Hz", RATES[v.polling]),
         false => v.basic.rate.map_or(UNKNOWN.into(), |r| format!("{r} Hz")),
@@ -1071,13 +1101,13 @@ fn overview(f: &mut Frame, v: &View) {
     if v.caps.polling {
         // Only a real measurement is worth a line.
         let note = v.measured.map(|hz| fill(tr(T::MeasuredValue), &[&format!("{hz} Hz")])).unwrap_or_default();
-        stat_card(f, Rect::new(X0 + w + GAP, y, w, 110.0), tr(T::PollingRate), &hz, &note);
+        stat_card(f, Rect::new(x, y, w, 110.0), tr(T::PollingRate), &hz, &note);
     } else {
         // The mouse doesn't report its rate: show what Raw Input measures.
-        stat_card(f, Rect::new(X0 + w + GAP, y, w, 110.0), tr(T::Measured), &measured(v), tr(T::PollingRate));
+        stat_card(f, Rect::new(x, y, w, 110.0), tr(T::Measured), &measured(v), tr(T::PollingRate));
     }
     let today = fill(tr(T::ClicksMoved), &[&v.today_distance]);
-    stat_card(f, Rect::new(X0 + 2.0 * (w + GAP), y, w, 110.0), tr(T::Today), &v.today_clicks, &today);
+    stat_card(f, Rect::new(x + w + GAP, y, w, 110.0), tr(T::Today), &v.today_clicks, &today);
 
     // Quick DPI switch: one chip per enabled stage.
     let mut y = y + 110.0 + GAP;
@@ -1601,5 +1631,25 @@ fn appearance(f: &mut Frame, v: &View) {
     for (i, l) in Lang::ALL.iter().enumerate() {
         let r = cell(i + 1, card.y + 40.0, LANG_H);
         f.choice(Act::Lang(i + 1), r, l.native(), "", v.lang_pick == i + 1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_mouse_name_wraps_in_two_lines() {
+        const W: f32 = 124.0; // sidebar name width
+        let (first, second) = name_lines("Logitech Marathon Mouse/Performance Plus M705", W, Size::Caption);
+        assert_eq!(first, "Logitech Marathon");
+        assert_eq!(second.as_deref(), Some("Mouse/Performance Plus M705"));
+        assert!(text_w(&first, Size::Caption) <= W);
+
+        assert_eq!(name_lines("White Shark Lionel", W, Size::Caption), ("White Shark Lionel".into(), None));
+
+        // One unbreakable word: left to the "…" trimming.
+        let long = "Superlongmodelnamewithoutspaces";
+        assert_eq!(name_lines(long, W, Size::Caption), (long.into(), None));
     }
 }

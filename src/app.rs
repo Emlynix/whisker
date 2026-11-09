@@ -12,7 +12,7 @@
 mod report;
 mod verify;
 
-use crate::devices::{self, CAPS_NONE, Caps, Entry, Family, Link, Match, Model, Support};
+use crate::devices::{self, CAPS_NONE, Caps, DpiUi, Entry, Family, Link, Match, Model, Support};
 use crate::drivers::{Ability, Ident, Pick};
 use crate::mouse::Target;
 use crate::hid_link::{self, DeviceInfo, HidDevice};
@@ -389,6 +389,17 @@ fn caps_of(device: Option<&str>) -> Caps {
         None => devices::default_model().caps,
         Some(id) => devices::by_id(id).map_or(CAPS_NONE, |m| m.caps),
     }
+}
+
+/// Catalogue caps cut down to what the opened mouse reports: a
+/// Logitech M705 has no DPI or report rate to set, so no such pages.
+/// Stage mice (Lionel) describe themselves fully in the catalogue.
+fn narrow_caps(caps: Caps, ability: &Ability) -> Caps {
+    if caps.dpi != DpiUi::Single {
+        return caps;
+    }
+    let dpi = if ability.dpi.is_some() || ability.stages.is_some() { caps.dpi } else { DpiUi::None };
+    Caps { dpi, polling: caps.polling && !ability.rates.is_empty(), ..caps }
 }
 
 /// Devices the driver may open for the configured mouse; any for "other".
@@ -1513,10 +1524,14 @@ impl Controller {
     /// A driver-based mouse opened: name, DPI range and report rates.
     fn on_ident(&mut self, ident: Ident, ability: Ability) {
         self.name_from(&ident);
+        self.view.caps = narrow_caps(caps_of(self.cfg.device.as_deref()), &ability);
         self.view.basic.values = ability.dpi.map(|r| r.values()).unwrap_or_default();
         self.view.basic.rates = ability.rates;
         self.view.basic.stages = ability.stages;
         self.view.has_battery = ability.battery;
+        if !view::page_visible(self.view.page, &self.view.caps) {
+            self.view.page = Page::Overview;
+        }
         self.ident = Some(ident);
         self.refresh_device();
     }
@@ -2715,6 +2730,25 @@ mod tests {
         assert!(cfg.macros[1].is_empty());
         assert_eq!(apply_undo(&mut cfg, u), Resend::Macros);
         assert_eq!(cfg.macros[1], steps);
+    }
+
+    #[test]
+    fn caps_follow_what_the_mouse_reports() {
+        // Logitech M705: battery only, fixed DPI and report rate.
+        let basic = devices::by_id("logitech/auto").expect("catalogue").caps;
+        let m705 = Ability { battery: true, ..Ability::default() };
+        let caps = narrow_caps(basic, &m705);
+        assert_eq!(caps.dpi, DpiUi::None);
+        assert!(!caps.polling);
+        assert_eq!(view::nav_pages(&caps), [Page::Overview, Page::Stats]);
+
+        // A mouse that reports both keeps its pages.
+        let g502 = Ability { dpi: Some(crate::drivers::DpiRange::Steps { min: 100, max: 25600, step: 50 }), rates: vec![125, 1000], battery: false, stages: None };
+        assert_eq!(narrow_caps(basic, &g502), basic);
+
+        // Lionel-style stage mice are not narrowed.
+        let lionel = devices::default_model().caps;
+        assert_eq!(narrow_caps(lionel, &Ability::default()), lionel);
     }
 
     #[test]
