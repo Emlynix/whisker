@@ -39,6 +39,8 @@ const FW_TYPE_MASK: u8 = 0x0F;
 const FW_MAIN: u8 = 0;
 /// Entities to ask when getDeviceInfo does not answer.
 const FW_ENTITIES: u8 = 1;
+/// Real devices have 2–4 firmware entities (bootloader, app, radio…).
+const FW_MAX_ENTITIES: u8 = 8;
 const F_BATTERY_LEVEL: u16 = 0x1000;
 const F_BATTERY_VOLTAGE: u16 = 0x1001;
 const F_BATTERY_UNIFIED: u16 = 0x1004;
@@ -97,6 +99,24 @@ pub fn parse_rates(mask: u8) -> Vec<u32> {
     hz
 }
 
+/// What a paired device is, by DeviceName.getDeviceType.
+#[derive(Debug, PartialEq, Eq)]
+enum Fit {
+    Pointer,
+    /// No device type feature: can't tell, usable only as a fallback.
+    Unknown,
+    /// Keyboard, numpad, remote…: never driven.
+    Other,
+}
+
+fn fit(kind: Option<u8>) -> Fit {
+    match kind {
+        Some(k) if POINTER_KINDS.contains(&k) => Fit::Pointer,
+        Some(_) => Fit::Other,
+        None => Fit::Unknown,
+    }
+}
+
 pub struct Hidpp {
     ch: Channel,
     device: u8,
@@ -105,8 +125,9 @@ pub struct Hidpp {
 
 impl Hidpp {
     /// Finds a Logitech HID++ 2.0 mouse: every long collection, direct
-    /// (cable / Bluetooth) or receiver slots 1..6. A pointing device wins
-    /// over keyboards paired to the same receiver.
+    /// (cable / Bluetooth) or receiver slots 1..6. A pointing device wins;
+    /// a device of unknown type is the fallback; a keyboard or other known
+    /// non-pointer is never opened (it must not get DPI or rate commands).
     pub fn open(pick: &Pick) -> Option<(Hidpp, crate::hid_link::DeviceInfo)> {
         let mut fallback = None;
         let candidates = pick.interfaces(VID).into_iter().filter(|i| i.usage_page == VENDOR_PAGE && i.usage == USAGE_LONG && i.output_len >= LONG_LEN);
@@ -120,10 +141,13 @@ impl Hidpp {
                 if !d.ping() {
                     continue;
                 }
-                if d.kind().is_some_and(|k| POINTER_KINDS.contains(&k)) {
-                    return Some((d, iface.info.clone()));
+                match fit(d.kind()) {
+                    Fit::Pointer => return Some((d, iface.info.clone())),
+                    Fit::Unknown => {
+                        fallback.get_or_insert((d, iface.info.clone()));
+                    }
+                    Fit::Other => {}
                 }
-                fallback.get_or_insert((d, iface.info.clone()));
             }
         }
         fallback
@@ -176,7 +200,8 @@ impl Hidpp {
         }
         if let Some(f) = self.feature(F_FW) {
             // Entity 0 may be the bootloader (M705: "BOT"): find the application.
-            let count = self.call(f, 0, &[]).and_then(|p| p.first().copied()).unwrap_or(FW_ENTITIES);
+            // The count comes from the device: cap it, each silent entity costs a timeout.
+            let count = self.call(f, 0, &[]).and_then(|p| p.first().copied()).unwrap_or(FW_ENTITIES).min(FW_MAX_ENTITIES);
             id.firmware = (0..count).find_map(|e| self.call(f, 1, &[e]).and_then(|p| main_firmware(&p))).unwrap_or_default();
         }
         id
@@ -293,6 +318,15 @@ mod tests {
         assert_eq!(parse_dpi_list(&range), Some(DpiRange::Steps { min: 200, max: 16000, step: 50 }));
         let list = [0x01, 0x90, 0x03, 0x20, 0x06, 0x40, 0, 0];
         assert_eq!(parse_dpi_list(&list), Some(DpiRange::List(vec![400, 800, 1600])));
+    }
+
+    #[test]
+    fn keyboards_are_never_opened() {
+        const KEYBOARD: u8 = 0;
+        const MOUSE: u8 = 3;
+        assert_eq!(fit(Some(MOUSE)), Fit::Pointer);
+        assert_eq!(fit(Some(KEYBOARD)), Fit::Other);
+        assert_eq!(fit(None), Fit::Unknown);
     }
 
     #[test]

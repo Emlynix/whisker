@@ -324,12 +324,17 @@ fn render(cr: &cairo::Context, w: f32, h: f32) {
 
 fn paint(area: &gtk::DrawingArea, cr: &cairo::Context) {
     render(cr, area.allocated_width() as f32, area.allocated_height() as f32);
-    if std::env::var_os(SNAPSHOT_VAR).is_none() || SNAP.get() != Snap::Idle {
+    if !snapshot_wanted() || SNAP.get() != Snap::Idle {
         return;
     }
     // Once the frame is shown, draw the whole window (title bar too).
     SNAP.set(Snap::Queued);
     glib::idle_add_local_once(snapshot);
+}
+
+/// Debug builds only: release never writes window images.
+fn snapshot_wanted() -> bool {
+    cfg!(debug_assertions) && std::env::var_os(SNAPSHOT_VAR).is_some()
 }
 
 /// Draws the whole window into an image at device resolution and saves
