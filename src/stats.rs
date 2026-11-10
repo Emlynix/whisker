@@ -154,7 +154,10 @@ impl Stats {
         }));
         let _ = STATE.set(state.clone());
 
-        input::start(on_input);
+        // Demo mode counts nothing, so the numbers on screen stay put.
+        if !crate::platform::demo() {
+            input::start(on_input);
+        }
         Self { state }
     }
 

@@ -297,7 +297,9 @@ pub fn run(mode: StartMode) {
         post(move |c| c.on_mice(mice));
     });
 
-    platform::single::listen(|| post(|c| c.show()), || window::post(window::quit));
+    if !platform::demo() {
+        platform::single::listen(|| post(|c| c.show()), || window::post(window::quit));
+    }
     window::set_timer(TIMER_SAVE, SAVE_MS);
     window::set_timer(TIMER_SCAN, SCAN_MS);
     window::set_timer(TIMER_UPDATE, updater::POLL_MS);

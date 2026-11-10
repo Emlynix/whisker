@@ -116,6 +116,13 @@ pub const AUTOSTART_OFF_ARG: &str = "--autostart-off";
 /// Passed to the updated exe so it waits for the old process to exit.
 pub const UPDATED_ARG: &str = "--updated";
 
+/// Debug builds: `WHISKER_DEMO` keeps the app off all hardware and other
+/// instances, so screenshots are repeatable: no HID, no input hook, no
+/// single-instance claim.
+pub fn demo() -> bool {
+    cfg!(debug_assertions) && std::env::var_os("WHISKER_DEMO").is_some()
+}
+
 /// Only web links may be opened: `file:`, `ms-settings:` or bare paths
 /// would let a string launch local programs.
 fn is_web_url(url: &str) -> bool {

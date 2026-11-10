@@ -42,7 +42,10 @@ fn main() {
     // Fresh install or update: the previous process is still exiting.
     let handover = has(platform::INSTALLED_ARG) || has(platform::UPDATED_ARG);
     let claim = if handover { Claim::WaitForExit } else { Claim::Now };
-    if let Instance::AlreadyRunning = single::claim(claim) {
+    // Demo mode runs next to the installed app.
+    if !platform::demo()
+        && let Instance::AlreadyRunning = single::claim(claim)
+    {
         return;
     }
     update::cleanup();

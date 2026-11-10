@@ -17,7 +17,15 @@ use std::time::Duration;
 /// usage, then exchange input/output or feature reports with timeouts.
 pub mod raw {
     pub use super::Interface;
-    pub use crate::platform::hid::{Channel, interfaces};
+    pub use crate::platform::hid::Channel;
+
+    /// Collections of a vendor; none in demo mode.
+    pub fn interfaces(vid: u16) -> Vec<Interface> {
+        if crate::platform::demo() {
+            return Vec::new();
+        }
+        crate::platform::hid::interfaces(vid)
+    }
 }
 
 /// Time the firmware needs before a reply can be read back (vendor app uses 10 ms).
@@ -113,11 +121,19 @@ fn identify(i: &Interface) -> DeviceInfo {
     info
 }
 
+/// Mouse collections; none in demo mode.
+fn mice() -> Vec<Interface> {
+    if crate::platform::demo() {
+        return Vec::new();
+    }
+    crate::platform::hid::mice()
+}
+
 /// Connected mice (HID mouse collections), one entry per VID:PID.
 /// Only descriptors are read; nothing is sent to these devices.
 pub fn list_mice() -> Vec<DeviceInfo> {
     let mut out: Vec<DeviceInfo> = Vec::new();
-    for i in crate::platform::hid::mice() {
+    for i in mice() {
         if out.iter().any(|d| (d.vid, d.pid) == (i.info.vid, i.info.pid)) {
             continue;
         }
@@ -131,7 +147,7 @@ pub fn list_mice() -> Vec<DeviceInfo> {
 /// Descriptors only; nothing is opened for I/O or sent.
 pub fn mouse_devices() -> Vec<HidDevice> {
     let mut out: Vec<HidDevice> = Vec::new();
-    for m in crate::platform::hid::mice() {
+    for m in mice() {
         if out.iter().any(|d| (d.info.vid, d.info.pid) == (m.info.vid, m.info.pid)) {
             continue;
         }
