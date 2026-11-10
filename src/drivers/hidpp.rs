@@ -32,6 +32,10 @@ const POINTER_KINDS: [u8; 3] = [3, 4, 5];
 const DEVICE_SLOTS: [u8; 7] = [DIRECT, 1, 2, 3, 4, 5, 6];
 
 const ROOT: u8 = 0x00;
+/// FeatureSet: getCount (fn 0), getFeatureID(index) (fn 1).
+const F_FEATURE_SET: u16 = 0x0001;
+/// A device has a few dozen features; each silent one costs a timeout.
+const FEATURES_MAX: u8 = 64;
 const F_FW: u16 = 0x0003;
 const F_NAME: u16 = 0x0005;
 /// x0003 getFwInfo: entity type in the low nibble; 0 = main application.
@@ -46,6 +50,12 @@ const F_BATTERY_VOLTAGE: u16 = 0x1001;
 const F_BATTERY_UNIFIED: u16 = 0x1004;
 const F_DPI: u16 = 0x2201;
 const F_RATE: u16 = 0x8060;
+/// OnboardProfiles: getOnboardMode is fn 2.
+const F_ONBOARD: u16 = 0x8100;
+/// getOnboardMode: the mouse runs its stored profile.
+const MODE_ONBOARD: u8 = 1;
+/// getOnboardMode: software on the computer sets DPI and report rate.
+const MODE_HOST: u8 = 2;
 
 /// Request frame: `[11, device, feature, fn<<4|sw, params…]`.
 pub fn request(device: u8, feature: u8, func: u8, params: &[u8]) -> [u8; LONG_LEN] {
@@ -207,6 +217,44 @@ impl Hidpp {
         id
     }
 
+    /// Who is in charge of DPI and report rate, for the log and bug
+    /// reports; `None` without onboard profiles. A read request only.
+    pub fn onboard_note(&mut self) -> Option<String> {
+        let f = self.feature(F_ONBOARD)?;
+        let mode = self.call(f, 2, &[])?.first().copied()?;
+        Some(onboard_text(mode))
+    }
+
+    /// Lines for a bug report: the feature table and the onboard mode.
+    /// Read requests only.
+    pub fn details(&mut self) -> Vec<String> {
+        let mut out = Vec::new();
+        let features = self.feature_table();
+        if !features.is_empty() {
+            out.push(features_text(&features));
+        }
+        out.extend(self.onboard_note());
+        out
+    }
+
+    /// (index, feature id) of every feature the device lists.
+    fn feature_table(&mut self) -> Vec<(u8, u16)> {
+        let Some(f) = self.feature(F_FEATURE_SET) else {
+            return Vec::new();
+        };
+        let count = self.call(f, 0, &[]).and_then(|p| p.first().copied()).unwrap_or(0).min(FEATURES_MAX);
+
+        let mut out = vec![(ROOT, 0)];
+        for index in 1..=count {
+            // A device that stops answering is not asked for the rest.
+            let Some(p) = self.call(f, 1, &[index]).filter(|p| p.len() >= 2) else {
+                break;
+            };
+            out.push((index, u16::from_be_bytes([p[0], p[1]])));
+        }
+        out
+    }
+
     pub fn ability(&mut self) -> Ability {
         let mut a = Ability::default();
         if let Some(f) = self.feature(F_DPI) {
@@ -269,6 +317,20 @@ impl Hidpp {
     }
 }
 
+/// `features (index:id): 00:0000, 01:0001, 02:0003`.
+fn features_text(list: &[(u8, u16)]) -> String {
+    let items: Vec<String> = list.iter().map(|(index, id)| format!("{index:02X}:{id:04X}")).collect();
+    format!("features (index:id): {}", items.join(", "))
+}
+
+fn onboard_text(mode: u8) -> String {
+    match mode {
+        MODE_ONBOARD => "onboard mode: the mouse runs its stored profile; DPI and rate set from the computer may be ignored".into(),
+        MODE_HOST => "host mode: software on the computer sets DPI and rate".into(),
+        other => format!("onboard mode value {other}"),
+    }
+}
+
 /// "RQM 17.01 build 0019" from a getFwInfo reply of the main
 /// application; `None` for a bootloader or hardware entity.
 fn main_firmware(p: &[u8]) -> Option<String> {
@@ -291,6 +353,15 @@ mod tests {
         assert_eq!(main_firmware(&boot), None);
         assert_eq!(main_firmware(&app).as_deref(), Some("RQM 17.01 build 0019"));
         assert_eq!(main_firmware(&app[..4]), None);
+    }
+
+    #[test]
+    fn details_name_features_and_who_is_in_charge() {
+        assert_eq!(features_text(&[(0, 0x0000), (1, 0x0001), (0x0B, 0x8100)]), "features (index:id): 00:0000, 01:0001, 0B:8100");
+        // Issue #2: a G502 X in onboard mode ignores the rate we set.
+        assert!(onboard_text(MODE_ONBOARD).starts_with("onboard mode"));
+        assert!(onboard_text(MODE_HOST).starts_with("host mode"));
+        assert_eq!(onboard_text(7), "onboard mode value 7");
     }
 
     #[test]

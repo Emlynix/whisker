@@ -97,6 +97,9 @@ pub enum Event {
 pub struct Probe {
     pub target: Target,
     pub got: Probed,
+    /// More the driver read for the bug report, one line each (HID++:
+    /// feature table, onboard mode).
+    pub notes: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -177,6 +180,22 @@ impl Driver {
             Driver::Roccat(d) => (d.ident(), d.ability()),
             Driver::Corsair(d) => (d.ident(), d.ability()),
             Driver::Asus(d) => (d.ident(), d.ability()),
+        }
+    }
+
+    /// Diagnostic lines for a bug report; read requests only.
+    fn details(&mut self) -> Vec<String> {
+        match self {
+            Driver::Hidpp(d) => d.details(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Who sets DPI and rate, where the mouse can tell; for the log.
+    fn mode_note(&mut self) -> Option<String> {
+        match self {
+            Driver::Hidpp(d) => d.onboard_note(),
+            _ => None,
         }
     }
 
@@ -287,6 +306,9 @@ impl Worker {
             on_event(Event::Device(info));
             let (ident, ability) = d.describe();
             on_event(Event::Ident(ident, ability));
+            if let Some(note) = d.mode_note() {
+                crate::log!("mouse: {note}");
+            }
             self.driver = Some(d);
             self.misses = 0;
         }
@@ -327,17 +349,19 @@ impl Worker {
 fn probe(targets: &[Target], pick: &Pick) -> Vec<Probe> {
     let mut out = Vec::new();
     for t in targets {
+        let mut notes = Vec::new();
         let got = match t {
             Target::Lionel => probe_lionel(pick),
             _ => match Driver::open(t, pick) {
                 Some((mut d, info)) => {
                     let (ident, ability) = d.describe();
+                    notes = d.details();
                     Probed::Driver(info, ident, ability, d.read())
                 }
                 None => Probed::Refused,
             },
         };
-        out.push(Probe { target: t.clone(), got });
+        out.push(Probe { target: t.clone(), got, notes });
     }
     out
 }
@@ -377,7 +401,7 @@ fn link_state(ev: &Event) -> Option<&'static str> {
 /// state when it changes (not every poll). Never the serial number, nor
 /// the OS's product string (over Bluetooth it is a name the owner chose);
 /// the model name comes from the firmware.
-fn log_event(ev: &Event, state: &std::cell::Cell<&'static str>) {
+fn log_event(ev: &Event, state: &LogState) {
     use crate::log::name;
     match ev {
         Event::Device(d) => crate::log!("mouse: device {:04X}:{:04X}", d.vid, d.pid),
@@ -387,17 +411,32 @@ fn log_event(ev: &Event, state: &std::cell::Cell<&'static str>) {
         }
         _ => {}
     }
+    // What the mouse says after a setting was sent: the proof it took it.
+    if let Event::Basic(r) = ev {
+        let now = Some((r.dpi, r.rate_hz, r.stage));
+        if state.reading.replace(now) != now {
+            crate::log!("mouse: reads dpi {:?}, rate {:?} Hz, stage {:?}", r.dpi, r.rate_hz, r.stage);
+        }
+    }
     let Some(now) = link_state(ev) else {
         return;
     };
-    if state.replace(now) != now {
+    if state.link.replace(now) != now {
         crate::log!("mouse: {now}");
     }
 }
 
+/// What the log said last, so only changes are written.
+#[derive(Default)]
+struct LogState {
+    link: std::cell::Cell<&'static str>,
+    /// DPI, report rate and DPI stage last read.
+    reading: std::cell::Cell<Option<(Option<u32>, Option<u32>, Option<u8>)>>,
+}
+
 fn run(target: Target, pick: Pick, rx: Receiver<Command>, on_event: impl Fn(Event)) {
     crate::log!("mouse: driver {}", target_name(&target));
-    let state = std::cell::Cell::new("");
+    let state = LogState::default();
     let on_event = |ev: Event| {
         log_event(&ev, &state);
         on_event(ev);
@@ -465,7 +504,8 @@ fn run(target: Target, pick: Pick, rx: Receiver<Command>, on_event: impl Fn(Even
             }
             Command::Target(t, pick) => {
                 crate::log!("mouse: driver {}", target_name(&t));
-                state.set("");
+                state.link.set("");
+                state.reading.set(None);
                 (w.target, w.pick) = (t, pick);
                 w.driver = None;
                 w.verified = false;
@@ -491,6 +531,24 @@ fn run(target: Target, pick: Pick, rx: Receiver<Command>, on_event: impl Fn(Even
             }
             Command::Flush(done) => {
                 let _ = done.send(());
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Hardware probe of a connected Logitech mouse (read requests only):
+    /// `cargo test -- --ignored --nocapture print_hidpp_probe`.
+    #[test]
+    #[ignore]
+    fn print_hidpp_probe() {
+        for p in probe(&[Target::Hidpp], &Pick::default()) {
+            println!("{:?}", p.got);
+            for n in &p.notes {
+                println!("  {n}");
             }
         }
     }

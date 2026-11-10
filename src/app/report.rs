@@ -213,6 +213,7 @@ fn probes(list: &[Probe]) -> Vec<String> {
     }
     for p in list {
         out.push(format!("- {}: {}", driver_name(&p.target), probed(&p.got)));
+        out.extend(p.notes.iter().map(|n| format!("  - {}", clean(n))));
     }
     out
 }
@@ -265,6 +266,12 @@ fn join(v: &[u32], sep: &str) -> String {
 
 /// Ready-to-paste `[[mouse]]` block for data/mice.toml.
 fn data_block(d: &DeviceInfo, list: &[Probe]) -> Vec<String> {
+    // A receiver calls itself "USB Receiver"; the mouse behind it knows better.
+    let reported = list.iter().find_map(|p| match &p.got {
+        Probed::Driver(_, ident, ..) if !clean(&ident.name).is_empty() => Some(clean(&ident.name)),
+        _ => None,
+    });
+    let model = reported.unwrap_or_else(|| clean(&d.product));
     let opened = list.iter().find_map(|p| match &p.got {
         Probed::Driver(_, _, a, _) => Some((p.target.clone(), Some(a))),
         Probed::Status(..) => Some((p.target.clone(), None)),
@@ -286,7 +293,7 @@ fn data_block(d: &DeviceInfo, list: &[Probe]) -> Vec<String> {
     };
     out.push("[[mouse]]".into());
     out.push(format!("brand = {brand}"));
-    out.push(format!("model = \"{}\"", clean(&d.product)));
+    out.push(format!("model = \"{model}\""));
     out.push(format!("vid = 0x{:04X}", d.vid));
     out.push(format!("pids = 0x{:04X}", d.pid));
     out.push(format!("family = {family}"));
@@ -392,7 +399,7 @@ mod tests {
     fn report_keeps_private_data_out() {
         let dev = device(Some("B66B18D71E00"));
         let ident = Ident { name: "Glide".into(), firmware: "1.2".into(), serial: "IDENT-SERIAL-7".into(), protocol: "X".into() };
-        let probes = [Probe { target: Target::Razer, got: Probed::Driver(dev.info.clone(), ident, Ability::default(), None) }];
+        let probes = [Probe { target: Target::Razer, got: Probed::Driver(dev.info.clone(), ident, Ability::default(), None), notes: Vec::new() }];
         let t = report(&dev, &probes);
         assert!(!t.contains("SN-SECRET-42") && !t.contains("IDENT-SERIAL-7"), "{t}");
         assert!(!t.contains("secret") && !t.contains(r"\\?\"), "no paths: {t}");
@@ -403,12 +410,27 @@ mod tests {
     }
 
     #[test]
+    fn probe_notes_and_the_mouse_name_reach_the_report() {
+        // Issues #2 and #4: a Logitech receiver calls itself "USB Receiver".
+        let dev = device(None);
+        let ident = Ident { name: "G502 X PLUS".into(), ..Ident::default() };
+        let notes = vec!["features (index:id): 00:0000, 01:0001".to_string(), "onboard mode: `x`".to_string()];
+        let probes = [Probe { target: Target::Hidpp, got: Probed::Driver(dev.info.clone(), ident, Ability::default(), None), notes }];
+        let t = report(&dev, &probes);
+
+        assert!(t.contains("  - features (index:id): 00:0000, 01:0001"), "{t}");
+        // Cleaned like every string from a device.
+        assert!(t.contains("  - onboard mode:  x"), "{t}");
+        assert!(t.contains("model = \"G502 X PLUS\""), "{t}");
+    }
+
+    #[test]
     fn report_lists_collections_probe_and_data_block() {
         let dev = device(None);
         let a = Ability { dpi: Some(DpiRange::Steps { min: 100, max: 8000, step: 50 }), rates: vec![125, 1000], battery: true, stages: None };
         let probes = [
-            Probe { target: Target::Corsair, got: Probed::Refused },
-            Probe { target: Target::Razer, got: Probed::Driver(dev.info.clone(), Ident::default(), a, None) },
+            Probe { target: Target::Corsair, got: Probed::Refused, notes: Vec::new() },
+            Probe { target: Target::Razer, got: Probed::Driver(dev.info.clone(), Ident::default(), a, None), notes: Vec::new() },
         ];
         let t = report(&dev, &probes);
         assert!(t.starts_with("### Mouse report: Acme Glide  Pro (1234:5678)"), "{t}");
