@@ -80,6 +80,7 @@ clicks. It never leaves your computer unless you copy or send it yourself.
 *Send*, in the mouse report and after a crash, uploads exactly the text
 shown above the button to `whisker.emlynix.com` (HTTPS), together with
 your IP address and the app version. Nothing is sent without that click.
+Sent reports are kept for 12 months, then deleted.
 A proxy set in the system (or `HTTPS_PROXY` on Linux) sees these requests
 like any other.
 
