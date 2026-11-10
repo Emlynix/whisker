@@ -19,8 +19,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  # Where dl.emlynix.com mirrors the release files.
-  DL_BASE: https://dl.emlynix.com/whisker
+  # Where dl.emlynix.com mirrors the release files: <base>/<version>/<asset>.
+  DL_BASE: https://dl.emlynix.com/whisker/stable
 
 jobs:
   build:
