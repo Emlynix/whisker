@@ -16,7 +16,7 @@
 //!    210 px          content x = 234 .. 796
 //! ```
 
-use crate::gfx::{Align, Color, Gfx, Rect, Size, Weight};
+use crate::gfx::{Align, Color, Face, Gfx, Rect, Size, Weight};
 use crate::i18n::{Lang, T, fill, tr};
 use crate::protocol::{
     Action, BRIGHTNESS_MAX, BUTTON_COUNT, DPI_COLOR_SLOTS, Direction, Effect, Lighting, Lod, MacroEvent, MacroMode, Power,
@@ -54,11 +54,10 @@ const CW: f32 = 562.0;
 const TOP: f32 = 70.0;
 /// Spacing on a 4 px grid (8 / 12 / 16 / 24).
 const GAP: f32 = 16.0;
-/// Corner radii: inner parts, controls and tiles, cards and dialogs;
-/// toggles and chips are pills (half their height).
-const R_INNER: f32 = 4.0;
-const R_CTRL: f32 = 8.0;
-const RADIUS: f32 = 12.0;
+/// Sharp and thin: no corner radius anywhere.
+const R_INNER: f32 = 0.0;
+const R_CTRL: f32 = 0.0;
+const RADIUS: f32 = 0.0;
 
 const LOW: u8 = 20;
 const MID: u8 = 50;
@@ -703,14 +702,18 @@ fn name_lines(name: &str, width: f32, size: Size) -> (String, Option<String>) {
     (name[..at].trim_end().to_string(), Some(name[at..].trim_start().to_string()))
 }
 
-/// Rough text width in em: a Latin glyph is ~0.56 em, CJK ~1 em.
-fn ems(text: &str) -> f32 {
-    text.chars().map(|c| if (c as u32) < 0x2E80 { 0.56 } else { 1.0 }).sum()
+/// Rough text width in em: an Inter glyph is ~0.56 em on average, a
+/// JetBrains Mono one exactly 0.6 em, CJK ~1 em in either.
+fn ems(text: &str, face: Face) -> f32 {
+    const UI_EM: f32 = 0.56;
+    const MONO_EM: f32 = 0.6;
+    let latin = if face == Face::Mono { MONO_EM } else { UI_EM };
+    text.chars().map(|c| if (c as u32) < 0x2E80 { latin } else { 1.0 }).sum()
 }
 
 /// Rough width of a one-line text in DIPs.
 fn text_w(text: &str, size: Size) -> f32 {
-    ems(text) * size.px()
+    ems(text, size.face()) * size.px() + text.chars().count() as f32 * size.tracking()
 }
 
 /// "56 %", or "≈ 50 %" for a coarse level.

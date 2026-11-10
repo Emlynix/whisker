@@ -2,14 +2,49 @@
 //! drawing area's context. GTK hands the context in logical pixels with
 //! the monitor scale already applied, so coordinates are DIPs as is.
 
-use crate::gfx::{Align, Color, Rect, Seg, Size, Weight};
+use crate::gfx::{Align, Color, Face, Rect, Seg, Size, Weight};
 use gtk::cairo::{self, LineCap, LineJoin};
 use gtk::prelude::*;
 use gtk::pango::{self, AttrInt, AttrList, EllipsizeMode, FontDescription, Layout, WrapMode};
 use std::f64::consts::{FRAC_PI_2, PI};
 
-/// Used when GTK reports no UI font.
-const FALLBACK_FAMILY: &str = "Sans";
+/// Folder under the user's cache dir the bundled fonts are unpacked to.
+const FONT_DIR: &str = "whisker/fonts";
+
+#[link(name = "fontconfig")]
+unsafe extern "C" {
+    /// Adds a font file to the app's own fonts; a null config is the current one.
+    fn FcConfigAppFontAddFile(config: *mut std::ffi::c_void, file: *const std::ffi::c_char) -> std::ffi::c_int;
+}
+
+/// `$XDG_CACHE_HOME`, else `~/.cache`.
+fn cache_dir() -> Option<std::path::PathBuf> {
+    let set = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty()).map(std::path::PathBuf::from);
+    set("XDG_CACHE_HOME").or_else(|| set("HOME").map(|h| h.join(".cache")))
+}
+
+/// Makes the bundled fonts known to fontconfig, which reads fonts from
+/// files only: they are unpacked into the cache folder once. Without a
+/// folder to write to, Pango falls back to the desktop's fonts.
+fn load_fonts() {
+    let Some(dir) = cache_dir().map(|d| d.join(FONT_DIR)) else {
+        return;
+    };
+    let _ = std::fs::create_dir_all(&dir);
+    for (name, data) in crate::fonts::FILES {
+        let path = dir.join(name);
+        // A file of another size is from another version.
+        let fresh = std::fs::metadata(&path).is_ok_and(|m| m.len() == data.len() as u64);
+        if !fresh && std::fs::write(&path, data).is_err() {
+            continue;
+        }
+        let Ok(c_path) = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()) else {
+            continue;
+        };
+        // SAFETY: a NUL-terminated path; fontconfig copies it.
+        unsafe { FcConfigAppFontAddFile(std::ptr::null_mut(), c_path.as_ptr()) };
+    }
+}
 
 /// `(r, g, b, a)` in `0.0..=1.0`.
 fn channels(c: Color) -> (f64, f64, f64, f64) {
@@ -32,13 +67,13 @@ pub struct Gfx {
     text: Option<pango::Context>,
     width: f32,
     height: f32,
-    /// Desktop UI font family, read once.
-    family: Option<String>,
 }
 
 impl Gfx {
     pub fn new() -> Self {
-        Self { cr: None, text: None, width: 0.0, height: 0.0, family: None }
+        // Before the first text layout: Pango lists fonts once.
+        load_fonts();
+        Self { cr: None, text: None, width: 0.0, height: 0.0 }
     }
 
     /// Starts a frame on the context GTK prepared for `draw`.
@@ -53,10 +88,8 @@ impl Gfx {
         self.text = None;
     }
 
-    /// Re-reads the UI font while the window is hidden (it may change).
-    pub fn release(&mut self) {
-        self.family = None;
-    }
+    /// Nothing to free between frames: the context is per frame.
+    pub fn release(&mut self) {}
 
     fn set_fill(&self, c: Color) -> Option<&cairo::Context> {
         let cr = self.cr.as_ref()?;
@@ -179,27 +212,18 @@ impl Gfx {
         let _ = cr.stroke();
     }
 
-    /// Family of the desktop UI font (`gtk-font-name`, e.g. "Ubuntu 11").
-    fn family(&mut self) -> String {
-        if let Some(f) = &self.family {
-            return f.clone();
-        }
-        let name = gtk::Settings::default().and_then(|s| s.gtk_font_name()).map(|n| n.to_string());
-        let family = name.and_then(|n| FontDescription::from_string(&n).family().map(|f| f.to_string())).filter(|f| !f.is_empty());
-        let family = family.unwrap_or_else(|| FALLBACK_FAMILY.to_string());
-        self.family = Some(family.clone());
-        family
-    }
-
     fn font(&mut self, size: Size, weight: Weight) -> FontDescription {
         let mut fd = FontDescription::new();
-        fd.set_family(&self.family());
+        fd.set_family(match size.face() {
+            Face::Ui => crate::fonts::UI_FAMILY,
+            Face::Mono => crate::fonts::MONO_FAMILY,
+        });
         // Absolute: the type ramp is in DIPs, independent of font DPI.
         fd.set_absolute_size(size.px() as f64 * pango::SCALE as f64);
         fd.set_weight(match weight {
             Weight::Normal => pango::Weight::Normal,
-            Weight::Semibold => pango::Weight::Semibold,
-            Weight::Bold => pango::Weight::Bold,
+            Weight::Medium => pango::Weight::Medium,
+            Weight::Semibold | Weight::Bold => pango::Weight::Semibold,
         });
         fd
     }
@@ -212,7 +236,7 @@ impl Gfx {
         let layout = Layout::new(ctx);
         layout.set_font_description(Some(&font));
         layout.set_width(units(r.w.max(0.0)));
-        if size.tracking() > 0.0 {
+        if size.tracking() != 0.0 {
             let attrs = AttrList::new();
             attrs.insert(AttrInt::new_letter_spacing(units(size.tracking())));
             layout.set_attributes(Some(&attrs));

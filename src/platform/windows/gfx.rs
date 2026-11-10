@@ -7,13 +7,15 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Direct2D::Common::*;
 use windows::Win32::Graphics::Direct2D::*;
 use windows::Win32::Graphics::DirectWrite::*;
-use windows::core::{BOOL, Interface, PCWSTR, w};
+use windows::core::{Interface, PCWSTR, w};
 use windows_numerics::Vector2;
 
-/// Windows 11 UI font in its optical cuts; Windows 10 has only Segoe UI.
-const FONT_TEXT: PCWSTR = w!("Segoe UI Variable Text");
-const FONT_DISPLAY: PCWSTR = w!("Segoe UI Variable Display");
-const FONT_FALLBACK: PCWSTR = w!("Segoe UI");
+/// The bundled families (`crate::fonts`), and the system ones used when
+/// they cannot be loaded (Windows 10 before 1703).
+const FONT_UI: PCWSTR = w!("Inter");
+const FONT_MONO: PCWSTR = w!("JetBrains Mono");
+const FALLBACK_UI: PCWSTR = w!("Segoe UI");
+const FALLBACK_MONO: PCWSTR = w!("Consolas");
 const LOCALE: PCWSTR = w!("sk-SK");
 const BASE_DPI: f32 = 96.0;
 
@@ -30,20 +32,22 @@ fn pt(x: f32, y: f32) -> Vector2 {
     Vector2 { X: x, Y: y }
 }
 
-/// `name` if the system has that font family, else Segoe UI.
-fn family_or_fallback(dw: &IDWriteFactory, name: PCWSTR) -> PCWSTR {
-    let mut fonts = None;
-    if unsafe { dw.GetSystemFontCollection(&mut fonts, false) }.is_err() {
-        return FONT_FALLBACK;
+/// The bundled fonts as a DirectWrite collection, read straight from
+/// the exe's memory; `None` where the system cannot do that.
+fn bundled_fonts(dw: &IDWriteFactory) -> Option<IDWriteFontCollection> {
+    let dw5 = dw.cast::<IDWriteFactory5>().ok()?;
+    unsafe {
+        let loader = dw5.CreateInMemoryFontFileLoader().ok()?;
+        dw5.RegisterFontFileLoader(&loader).ok()?;
+        let builder = dw5.CreateFontSetBuilder().ok()?;
+        for (_, data) in crate::fonts::FILES {
+            // The bytes are part of the exe: they outlive every use.
+            let file = loader.CreateInMemoryFontFileReference(dw, data.as_ptr().cast(), data.len() as u32, None).ok()?;
+            builder.AddFontFile(&file).ok()?;
+        }
+        let set = builder.CreateFontSet().ok()?;
+        dw5.CreateFontCollectionFromFontSet(&set).ok()?.cast().ok()
     }
-    let Some(fonts) = fonts else {
-        return FONT_FALLBACK;
-    };
-    let (mut index, mut exists) = (0u32, BOOL(0));
-    if unsafe { fonts.FindFamilyName(name, &mut index, &mut exists) }.is_err() || !exists.as_bool() {
-        return FONT_FALLBACK;
-    }
-    name
 }
 
 pub struct Gfx {
@@ -53,9 +57,8 @@ pub struct Gfx {
     rt: Option<ID2D1HwndRenderTarget>,
     brush: Option<ID2D1SolidColorBrush>,
     formats: HashMap<(Size, Weight, Align), IDWriteTextFormat>,
-    /// Font family of `Face::Text` and `Face::Display`.
-    text_font: PCWSTR,
-    display_font: PCWSTR,
+    /// The bundled fonts; `None` = system fonts.
+    fonts: Option<IDWriteFontCollection>,
     /// Round caps and joins for paths and polylines.
     round: Option<ID2D1StrokeStyle>,
     dpi: f32,
@@ -65,7 +68,7 @@ impl Gfx {
     pub fn new(hwnd: HWND) -> Option<Self> {
         let d2d = unsafe { D2D1CreateFactory::<ID2D1Factory>(D2D1_FACTORY_TYPE_SINGLE_THREADED, None).ok()? };
         let dw = unsafe { DWriteCreateFactory::<IDWriteFactory>(DWRITE_FACTORY_TYPE_SHARED).ok()? };
-        let (text_font, display_font) = (family_or_fallback(&dw, FONT_TEXT), family_or_fallback(&dw, FONT_DISPLAY));
+        let fonts = bundled_fonts(&dw);
         let props = D2D1_STROKE_STYLE_PROPERTIES {
             startCap: D2D1_CAP_STYLE_ROUND,
             endCap: D2D1_CAP_STYLE_ROUND,
@@ -75,7 +78,7 @@ impl Gfx {
             ..Default::default()
         };
         let round = unsafe { d2d.CreateStrokeStyle(&props, None).ok() };
-        Some(Self { hwnd, d2d, dw, rt: None, brush: None, formats: HashMap::new(), text_font, display_font, round, dpi: BASE_DPI })
+        Some(Self { hwnd, d2d, dw, rt: None, brush: None, formats: HashMap::new(), fonts, round, dpi: BASE_DPI })
     }
 
     /// Frees the render target while the window is hidden; rebuilt on next paint.
@@ -251,14 +254,18 @@ impl Gfx {
 
         let w = match weight {
             Weight::Normal => DWRITE_FONT_WEIGHT_NORMAL,
-            Weight::Semibold => DWRITE_FONT_WEIGHT_SEMI_BOLD,
-            Weight::Bold => DWRITE_FONT_WEIGHT_BOLD,
+            Weight::Medium => DWRITE_FONT_WEIGHT_MEDIUM,
+            Weight::Semibold | Weight::Bold => DWRITE_FONT_WEIGHT_SEMI_BOLD,
         };
-        let family = match size.face() {
-            Face::Text => self.text_font,
-            Face::Display => self.display_font,
+        let family = match (size.face(), self.fonts.is_some()) {
+            (Face::Ui, true) => FONT_UI,
+            (Face::Mono, true) => FONT_MONO,
+            (Face::Ui, false) => FALLBACK_UI,
+            (Face::Mono, false) => FALLBACK_MONO,
         };
-        let f = unsafe { self.dw.CreateTextFormat(family, None, w, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size.px(), LOCALE).ok()? };
+        let f = unsafe {
+            self.dw.CreateTextFormat(family, self.fonts.as_ref(), w, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size.px(), LOCALE).ok()?
+        };
 
         let (ta, pa, wrap) = match align {
             Align::Left => (DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_WORD_WRAPPING_NO_WRAP),
@@ -287,7 +294,7 @@ impl Gfx {
             return;
         };
         let utf16: Vec<u16> = s.encode_utf16().collect();
-        if size.tracking() > 0.0 {
+        if size.tracking() != 0.0 {
             self.tracked(&utf16, &f, r, size.tracking(), c);
             return;
         }

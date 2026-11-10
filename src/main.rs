@@ -11,6 +11,7 @@ mod app;
 mod devices;
 mod drivers;
 mod feedback;
+mod fonts;
 mod gfx;
 mod hid_link;
 mod i18n;
