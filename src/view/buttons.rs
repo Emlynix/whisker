@@ -11,7 +11,7 @@
 //!  Hovering or focusing a row lights its marker, and the other way round.
 //! ```
 
-use super::{Act, BODY, Frame, GAP, Glyph, HEIGHT, Mark, PAGE_H, R_CTRL, RADIUS, View, WIDTH, X0, CW, art, glyph, th, Squares};
+use super::{Act, BODY, CW, Frame, Glyph, HEIGHT, Mark, PAGE_H, PANEL_GAP, PANEL_PAD, R_CTRL, RADIUS, SEGMENT_H, Segment, Squares, View, WIDTH, X0, art, glyph, text_w, th};
 use crate::gfx::{Align, Color, Rect, Size, Weight};
 use crate::i18n::{T, fill, tr};
 use crate::keys;
@@ -220,10 +220,22 @@ fn mouse_chip_label(t: T, a: Action) -> String {
 
 // ---- buttons page ----------------------------------------------------------
 
+/// Buttons: one panel. On the left the mouse with its buttons numbered,
+/// on the right a row per button with the action it has; a click opens
+/// the picker.
+///
+/// ```text
+///  +-----------+----------------------------------------+
+///  |    ___    | [1] Left button        [Left click  v] |
+///  |  1/ | \2  | [2] Right button       [Right click v] |
+///  |   |3|     | …                                      |
+///  +-----------+----------------------------------------+
+/// ```
 pub(super) fn buttons_page(f: &mut Frame, v: &View) {
     const ART_W: f32 = 190.0;
-    const ART_PAD: f32 = 16.0;
-    let h = ROW * v.buttons.len() as f32 + 12.0;
+    const ART_PAD: f32 = 20.0;
+    const BTN_ROW: f32 = 41.0;
+    let h = BTN_ROW * v.buttons.len() as f32;
 
     // The button under the pointer or the keyboard focus, lit on both sides.
     let lit = [f.hot, v.focus.map(|x| x.act)].into_iter().flatten().find_map(|a| match a {
@@ -231,21 +243,21 @@ pub(super) fn buttons_page(f: &mut Frame, v: &View) {
         _ => None,
     });
 
-    let art_card = Rect::new(X0, BODY, ART_W, h);
-    f.card(art_card);
-    let art_r = art_card.inset(ART_PAD);
-
-    let card = Rect::new(X0 + ART_W + GAP, BODY, CW - ART_W - GAP, h);
-    f.card(card);
+    let panel = Rect::new(X0, BODY, CW, h);
+    f.card(panel);
+    f.g.fill(Rect::new(panel.x + ART_W, panel.y, 1.0, h), 0.0, th().line);
+    let rows_x = panel.x + ART_W + 1.0;
     for (i, a) in v.buttons.iter().enumerate() {
-        button_row(f, Rect::new(card.x + 6.0, card.y + 6.0 + i as f32 * ROW, card.w - 12.0, ROW), i, *a, lit == Some(i));
+        let r = Rect::new(rows_x, panel.y + i as f32 * BTN_ROW, panel.w - ART_W - 1.0, BTN_ROW);
+        button_row(f, r, i, *a, lit == Some(i));
     }
     // Drawn after the rows: Tab visits the list first.
+    let art_r = Rect::new(panel.x + ART_PAD, panel.y + ART_PAD, ART_W - 2.0 * ART_PAD, h - 2.0 * ART_PAD);
     art::mouse(f, art_r, art::Marks::Buttons { lit });
 
-    let y = card.y + card.h + GAP;
+    let y = panel.y + panel.h + PANEL_GAP;
     // Nothing to reset while the layout is the default one.
-    let reset = Rect::new(X0, y, 200.0, 36.0);
+    let reset = Rect::new(X0, y, 200.0, 28.0);
     if v.buttons == DEFAULT_ACTIONS {
         f.dead_button(reset, tr(T::ResetAll));
     } else {
@@ -259,25 +271,36 @@ pub(super) fn buttons_page(f: &mut Frame, v: &View) {
     }
 }
 
-/// "① Left button / Left click  • ›": marker, name, action; a dot marks
-/// an action changed from the default.
+/// "[1] Left button            [Left click v]": number badge, name, and
+/// the action in a select box; an accent square marks an action changed
+/// from the default.
 fn button_row(f: &mut Frame, r: Rect, i: usize, a: Action, lit: bool) {
+    const SELECT_W: f32 = 190.0;
+    const SELECT_H: f32 = 28.0;
+    const CHANGED: f32 = 3.5;
     let hot = f.button(Act::EditButton(i), r);
     if hot || lit {
-        f.g.fill(r, R_CTRL, th().hover);
+        f.g.fill(r, 0.0, th().sel);
     }
-    art::marker(f, r.x + 20.0, r.y + r.h / 2.0, i, lit);
+    if i > 0 {
+        f.g.fill(Rect::new(r.x, r.y, r.w, 1.0), 0.0, th().line);
+    }
+    let cy = r.y + r.h / 2.0;
+    art::marker(f, r.x + PANEL_PAD + 10.0, cy, i, lit);
 
-    let text_w = r.w - 40.0 - 44.0;
-    let name = Rect::new(r.x + 40.0, r.y + 6.0, text_w, 20.0);
+    let name_x = r.x + PANEL_PAD + 32.0;
+    let select = Rect::new(r.x + r.w - PANEL_PAD - SELECT_W, cy - SELECT_H / 2.0, SELECT_W, SELECT_H);
+    let name = Rect::new(name_x, r.y, select.x - name_x - 20.0, r.h);
     f.g.text(button_name(i), name, Size::Body, Weight::Semibold, Align::Left, th().text);
-    let label = Rect::new(r.x + 40.0, r.y + 26.0, text_w, 18.0);
-    f.g.text(&action_label(a), label, Size::Caption, Weight::Normal, Align::Left, th().muted);
-
     if a != DEFAULT_ACTIONS[i] {
-        f.g.dot(r.x + r.w - 34.0, r.y + r.h / 2.0, 3.5, th().accent);
+        f.g.dot(select.x - 12.0, cy, CHANGED, th().acc_fill);
     }
-    glyph(f.g, Glyph::ChevronRight, r.x + r.w - 16.0, r.y + r.h / 2.0, th().subtle);
+
+    f.g.fill(select, 0.0, th().input);
+    f.g.stroke(select, 0.0, 1.0, if hot || lit { th().acc } else { th().line2 });
+    let label = Rect::new(select.x + 10.0, select.y, select.w - 40.0, select.h);
+    f.g.text(&action_label(a), label, Size::Body, Weight::Normal, Align::Left, th().text);
+    glyph(f.g, Glyph::ChevronDown, select.x + select.w - 15.0, cy, th().muted);
 }
 
 // ---- macros page -----------------------------------------------------------
@@ -313,72 +336,96 @@ fn users_of(v: &View, index: usize) -> Vec<&'static str> {
         .collect()
 }
 
+/// Macros: the list on the left, the selected macro on the right.
+///
+/// ```text
+///  +-------------+  +-------------------------------------------+
+///  | Macro 1     |  | Macro 2                [Assign to button…] |
+///  |▌Macro 2     |  | [Record] [Clear]        Delay [Recorded|…] |
+///  | Macro 3     |  | steps …                                    |
+///  +-------------+  +-------------------------------------------+
+/// ```
 pub(super) fn macros_page(f: &mut Frame, v: &View) {
     const LIST_W: f32 = 170.0;
-    for i in 0..MACRO_COUNT {
-        let r = Rect::new(X0, BODY + i as f32 * 52.0, LIST_W, 44.0);
-        let steps = steps_label(&v.macros[i], tr(T::MacroEmptyHint));
-        f.choice(Act::MacroSel(i), r, &fill(tr(T::ActMacro), &[&(i + 1).to_string()]), &steps, v.macro_sel == i);
-    }
-
-    let card = Rect::new(X0 + LIST_W + GAP, BODY, CW - LIST_W - GAP, PAGE_H - BODY - 4.0);
-    f.card(card);
-    let x = card.x + PAD;
-    let w = card.w - 2.0 * PAD;
+    const LIST_ROW: f32 = 44.0;
     let sel = v.macro_sel;
 
-    // Title with "Assign to button…" on the right.
-    const ASSIGN_W: f32 = 180.0;
-    let title = fill(tr(T::ActMacro), &[&(sel + 1).to_string()]);
-    f.g.text(&title, Rect::new(x, card.y + 14.0, w - ASSIGN_W, 26.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
-    let assign = Rect::new(x + w - ASSIGN_W, card.y + 12.0, ASSIGN_W, 32.0);
-    if v.macros[sel].is_empty() {
-        f.dead_button(assign, tr(T::AssignMacro));
-    } else {
-        f.push_button(Act::AssignMacro, assign, tr(T::AssignMacro), false);
+    // The list: one row per macro, the selected one tinted with a bar.
+    let list = Rect::new(X0, BODY, LIST_W, LIST_ROW * MACRO_COUNT as f32);
+    f.card(list);
+    for i in 0..MACRO_COUNT {
+        let r = Rect::new(list.x, list.y + i as f32 * LIST_ROW, LIST_W, LIST_ROW);
+        let hot = f.button(Act::MacroSel(i), r);
+        if i == sel {
+            f.g.fill(Rect::new(r.x + 1.0, r.y + 1.0, r.w - 2.0, r.h - 1.0), 0.0, th().acc_soft);
+            f.g.fill(Rect::new(r.x, r.y, 2.0, r.h), 0.0, th().acc_fill);
+        } else if hot {
+            f.g.fill(Rect::new(r.x + 1.0, r.y + 1.0, r.w - 2.0, r.h - 1.0), 0.0, th().sel);
+        }
+        if i > 0 {
+            f.g.fill(Rect::new(r.x + 1.0, r.y, r.w - 2.0, 1.0), 0.0, th().line);
+        }
+        let weight = if i == sel { Weight::Semibold } else { Weight::Normal };
+        let name = fill(tr(T::ActMacro), &[&(i + 1).to_string()]);
+        f.g.text(&name, Rect::new(r.x + PANEL_PAD, r.y + 5.0, r.w - 2.0 * PANEL_PAD, 18.0), Size::Body, weight, Align::Left, th().text);
+        let steps = steps_label(&v.macros[i], tr(T::MacroEmptyHint));
+        f.g.text(&steps, Rect::new(r.x + PANEL_PAD, r.y + 23.0, r.w - 2.0 * PANEL_PAD, 16.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
     }
+
+    // The editor panel: its header names the macro and assigns it.
+    let panel = Rect::new(X0 + LIST_W + PANEL_GAP, BODY, CW - LIST_W - PANEL_GAP, PAGE_H - BODY - 12.0);
+    let body = f.panel(panel, &fill(tr(T::ActMacro), &[&(sel + 1).to_string()]));
+    let (x, w) = (body.x + PANEL_PAD, body.w - 2.0 * PANEL_PAD);
+
+    let assign_label = tr(T::AssignMacro);
+    let assign_w = text_w(assign_label, Size::Body) + 28.0;
+    let assign = Rect::new(panel.x + panel.w - PANEL_PAD - assign_w, panel.y + 4.0, assign_w, 28.0);
+    if v.macros[sel].is_empty() {
+        f.dead_button(assign, assign_label);
+    } else {
+        f.push_button(Act::AssignMacro, assign, assign_label, false);
+    }
+
     let users = users_of(v, sel);
     let used = if users.is_empty() { tr(T::MacroUnused).to_string() } else { fill(tr(T::MacroUsedBy), &[&users.join(", ")]) };
-    f.g.text(&used, Rect::new(x, card.y + 40.0, w, 18.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
+    f.g.text(&used, Rect::new(x, body.y + PANEL_PAD, w, 18.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
 
-    let y = card.y + 68.0;
+    let y = body.y + PANEL_PAD + 26.0;
     let rec = if v.recording { tr(T::StopRec) } else { tr(T::Record) };
-    f.push_button(Act::MacroRecord, Rect::new(x, y, 130.0, 36.0), rec, true);
-    let clear = Rect::new(x + 140.0, y, 110.0, 36.0);
+    f.push_button(Act::MacroRecord, Rect::new(x, y, 130.0, 28.0), rec, true);
+    let clear = Rect::new(x + 140.0, y, 110.0, 28.0);
     if v.macros[sel].is_empty() {
         f.dead_button(clear, tr(T::Clear));
     } else {
         f.push_button(Act::MacroClear, clear, tr(T::Clear), false);
     }
-    if v.recording {
-        f.g.dot(x + 122.0, y + 8.0, 4.0, Color(th().bad.0, v.pulse));
-    }
 
-    let y = y + 52.0;
+    // Delay between steps: as recorded, or one fixed value.
+    let y = y + 28.0 + 14.0;
     f.caption_in(tr(T::DelayCaption), x, y, w);
-    for (i, d) in DELAY_CHOICES.iter().enumerate() {
-        let label = match d {
-            DelayMode::Recorded => tr(T::DelayRecorded).to_string(),
-            DelayMode::Fixed(ms) => format!("{ms} ms"),
-        };
-        let cw = if i == 0 { 140.0 } else { 58.0 };
-        let cx = x + if i == 0 { 0.0 } else { 148.0 + (i - 1) as f32 * 64.0 };
-        f.choice(Act::MacroDelay(*d), Rect::new(cx, y + 22.0, cw, 32.0), &label, "", v.delay_mode == *d);
-    }
+    let items: Vec<Segment> = DELAY_CHOICES
+        .iter()
+        .map(|d| match d {
+            DelayMode::Recorded => Segment::named(Act::MacroDelay(*d), tr(T::DelayRecorded), v.delay_mode == *d),
+            DelayMode::Fixed(ms) => Segment::new(Act::MacroDelay(*d), format!("{ms} ms"), v.delay_mode == *d),
+        })
+        .collect();
+    f.segments(Rect::new(x, y + 20.0, w, SEGMENT_H), &items);
 
     // Recorded steps as a wrapped line of tokens.
-    let area = Rect::new(x, y + 70.0, w, card.y + card.h - (y + 70.0) - PAD);
-    f.g.fill(area, R_CTRL, th().bg);
+    let top = y + 20.0 + SEGMENT_H + 14.0;
+    let area = Rect::new(x, top, w, panel.y + panel.h - top - PANEL_PAD);
+    f.g.fill(area, 0.0, th().input);
+    f.g.stroke(area, 0.0, 1.0, if v.recording { th().acc } else { th().line2 });
     let events = &v.macros[sel];
     let mut inner = area.inset(12.0);
 
-    // Recording: accent border and "● Recording… N steps" with a pulsing dot.
+    // Recording: accent border and "■ Recording… N steps" with a pulsing mark.
     if v.recording {
-        f.g.stroke(area, R_CTRL, 2.0, th().accent);
-        f.g.dot(inner.x + 5.0, inner.y + 9.0, 5.0, Color(th().bad.0, v.pulse));
+        f.g.dot(inner.x + 4.0, inner.y + 9.0, 4.0, Color(th().bad.0, v.pulse));
         let head = fill(tr(T::RecordingSteps), &[&events.len().to_string()]);
         let r = Rect::new(inner.x + 16.0, inner.y, inner.w - 16.0, 18.0);
-        f.g.text(&head, r, Size::Body, Weight::Semibold, Align::Left, th().accent);
+        f.g.text(&head, r, Size::Body, Weight::Semibold, Align::Left, th().acc);
         inner = Rect::new(inner.x, inner.y + 26.0, inner.w, inner.h - 26.0);
     }
 
@@ -389,7 +436,7 @@ pub(super) fn macros_page(f: &mut Frame, v: &View) {
     } else {
         tr(T::MacroEmpty).into()
     };
-    let color = if events.is_empty() { th().subtle } else { th().text };
+    let color = if events.is_empty() { th().muted } else { th().text };
     // Room for a three-line warning below (long translations).
     const WARN_H: f32 = 48.0;
     f.g.text(&text, Rect::new(inner.x, inner.y, inner.w, inner.h - WARN_H - 2.0), Size::Body, Weight::Normal, Align::Wrap, color);

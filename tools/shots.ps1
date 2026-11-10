@@ -43,8 +43,8 @@ $scenes = @(
     @{ name = "03-performance"; clicks = @(, @(80, $NAV.performance)) }
     @{ name = "04-lighting"; clicks = @(, @(80, $NAV.lighting)) }
     @{ name = "05-buttons"; clicks = @(, @(80, $NAV.buttons)) }
-    @{ name = "06-buttons-action"; clicks = @(@(80, $NAV.buttons), @(600, 247)) }
-    @{ name = "07-buttons-macros"; clicks = @(@(80, $NAV.buttons), @(352, 84)) }
+    @{ name = "06-buttons-action"; clicks = @(@(80, $NAV.buttons), @(600, 152)) }
+    @{ name = "07-buttons-macros"; clicks = @(@(80, $NAV.buttons), @(307, 99)) }
     @{ name = "08-statistics"; clicks = @(, @(80, $NAV.statistics)) }
     @{ name = "09-statistics-week"; clicks = @(@(80, $NAV.statistics), @(386, 89)) }
     @{ name = "10-settings-general"; clicks = @(, @(80, $NAV.settings)) }
