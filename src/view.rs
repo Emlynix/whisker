@@ -70,6 +70,95 @@ const PANEL_GAP: f32 = 12.0;
 /// Height of a segmented control.
 const SEGMENT_H: f32 = 30.0;
 
+/// Setting rows: a 170 px label column, 16 px to the control column, 12 px
+/// padding all around.
+const LABEL_W: f32 = 170.0;
+const ROW_PAD: f32 = 12.0;
+const ROW_GAP: f32 = 16.0;
+/// Line height of a wrapped caption.
+const CAPTION_LINE: f32 = 16.0;
+
+/// One cell of a segmented control.
+struct Segment {
+    act: Act,
+    label: String,
+    /// Second, smaller line; empty for a one-line cell.
+    sub: String,
+    selected: bool,
+    /// Values are set in mono; names ("Breathing") in the text face.
+    kind: Label,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Label {
+    Value,
+    Name,
+}
+
+impl Segment {
+    fn new(act: Act, label: impl Into<String>, selected: bool) -> Segment {
+        Segment { act, label: label.into(), sub: String::new(), selected, kind: Label::Value }
+    }
+
+    fn named(act: Act, label: impl Into<String>, selected: bool) -> Segment {
+        Segment { kind: Label::Name, ..Segment::new(act, label, selected) }
+    }
+}
+
+/// The main pattern of a settings page: a row with its name and a short
+/// description on the left and the control on the right.
+///
+/// ```text
+///  | Debounce            | [4 ms][6 ms][8 ms][12 ms]…  |
+///  | Filters double      |                             |
+///  | clicks.             |                             |
+/// ```
+struct SettingRow<'a> {
+    title: &'a str,
+    desc: &'a str,
+    /// Height of the control itself.
+    control_h: f32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RowPlace {
+    First,
+    Next,
+}
+
+impl SettingRow<'_> {
+    /// Lines the description takes when wrapped to `width`; a little
+    /// generous, the width of text is an estimate.
+    fn lines(&self, width: f32) -> f32 {
+        const SAFETY: f32 = 1.15;
+        (text_w(self.desc, Size::Caption) * SAFETY / width).ceil().max(1.0)
+    }
+
+    fn control_w(w: f32) -> f32 {
+        w - 2.0 * ROW_PAD - LABEL_W - ROW_GAP
+    }
+
+    /// More than two lines in the label column: it goes under the control.
+    fn desc_under(&self) -> bool {
+        const LABEL_LINES_MAX: f32 = 2.0;
+        !self.desc.is_empty() && self.lines(LABEL_W) > LABEL_LINES_MAX
+    }
+
+    fn height(&self, w: f32) -> f32 {
+        let (mut label, mut control) = (18.0, self.control_h);
+        if self.desc_under() {
+            control += 6.0 + self.lines(Self::control_w(w)) * CAPTION_LINE;
+        } else if !self.desc.is_empty() {
+            label += 3.0 + self.lines(LABEL_W) * CAPTION_LINE;
+        }
+        2.0 * ROW_PAD + f32::max(label, control)
+    }
+
+    fn control(&self, x: f32, y: f32, w: f32) -> Rect {
+        Rect::new(x + ROW_PAD + LABEL_W + ROW_GAP, y + ROW_PAD, Self::control_w(w), self.control_h)
+    }
+}
+
 /// Sharp and thin: no corner radius anywhere.
 const R_INNER: f32 = 0.0;
 const R_CTRL: f32 = 0.0;
@@ -527,17 +616,18 @@ impl Frame<'_> {
 
     /// Segmented control: equal cells in one frame, a hairline between
     /// them. The selected one has a soft accent ground, a 1 px accent
-    /// outline inside and accent text. Labels are values: mono.
-    fn segments(&mut self, r: Rect, items: &[(Act, String, bool)]) {
+    /// outline inside and accent text. Labels are values: mono. A cell
+    /// may carry a second, smaller line ("500 Hz" over "2 ms").
+    fn segments(&mut self, r: Rect, items: &[Segment]) {
         if items.is_empty() {
             return;
         }
         self.g.fill(r, 0.0, th().input);
         let w = r.w / items.len() as f32;
-        for (k, (act, label, selected)) in items.iter().enumerate() {
+        for (k, item) in items.iter().enumerate() {
             let cell = Rect::new(r.x + k as f32 * w, r.y, w, r.h);
-            let hot = self.button(*act, cell);
-            if *selected {
+            let hot = self.button(item.act, cell);
+            if item.selected {
                 self.g.fill(cell, 0.0, th().acc_soft);
             } else if hot {
                 self.g.fill(cell, 0.0, th().sel);
@@ -545,16 +635,46 @@ impl Frame<'_> {
             if k > 0 {
                 self.g.fill(Rect::new(cell.x, r.y, 1.0, r.h), 0.0, th().line2);
             }
-            let (color, weight) = if *selected { (th().acc, Weight::Semibold) } else { (th().text, Weight::Medium) };
-            self.g.text(label, cell, Size::Value, weight, Align::Center, color);
+            let (color, weight) = if item.selected { (th().acc, Weight::Semibold) } else { (th().text, Weight::Medium) };
+            if item.sub.is_empty() {
+                let size = if item.kind == Label::Name { Size::Body } else { Size::Value };
+                self.g.text(&item.label, Rect::new(cell.x + 4.0, cell.y, cell.w - 8.0, cell.h), size, weight, Align::Center, color);
+                continue;
+            }
+            let half = cell.h / 2.0;
+            self.g.text(&item.label, Rect::new(cell.x, cell.y + 3.0, cell.w, half), Size::Value, weight, Align::Center, color);
+            let sub_c = if item.selected { th().acc } else { th().muted };
+            self.g.text(&item.sub, Rect::new(cell.x, cell.y + half - 2.0, cell.w, half), Size::Fine, Weight::Medium, Align::Center, sub_c);
         }
         self.g.stroke(r, 0.0, 1.0, th().line2);
         // Drawn last, over the dividers and the frame.
-        for (k, (_, _, selected)) in items.iter().enumerate() {
-            if *selected {
+        for (k, item) in items.iter().enumerate() {
+            if item.selected {
                 self.g.stroke(Rect::new(r.x + k as f32 * w, r.y, w + 1.0, r.h), 0.0, 1.0, th().acc);
             }
         }
+    }
+
+    /// Title and description of a setting row at `y`, with a hairline
+    /// above every row but the first. Returns where its control goes.
+    fn row(&mut self, x: f32, y: f32, w: f32, r: &SettingRow, place: RowPlace) -> Rect {
+        if place == RowPlace::Next {
+            self.g.fill(Rect::new(x + 1.0, y, w - 2.0, 1.0), 0.0, th().line);
+        }
+        let label_x = x + ROW_PAD;
+        self.g.text(r.title, Rect::new(label_x, y + ROW_PAD, LABEL_W, 18.0), Size::Body, Weight::Semibold, Align::Left, th().text);
+        let control = r.control(x, y, w);
+        if r.desc.is_empty() {
+            return control;
+        }
+        // A short description sits under the title; a long one under the
+        // control, where the lines are longer.
+        let desc = match r.desc_under() {
+            false => Rect::new(label_x, y + ROW_PAD + 21.0, LABEL_W, r.height(w)),
+            true => Rect::new(control.x, control.y + r.control_h + 6.0, control.w, r.height(w)),
+        };
+        self.g.text(r.desc, desc, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
+        control
     }
 
     fn caption(&mut self, s: &str, x: f32, y: f32) {
@@ -1469,8 +1589,8 @@ fn overview(f: &mut Frame, v: &View) {
         let panel = Rect::new(X0, y, CW, PANEL_HEAD + SEGMENT_H + 2.0 * PANEL_PAD);
         let body = f.panel(panel, tr(T::QuickDpi));
         f.panel_link(panel, Act::Nav(Page::Dpi), tr(T::EditStages));
-        let items: Vec<(Act, String, bool)> =
-            v.stages.iter().enumerate().filter(|(_, s)| s.enabled).map(|(i, s)| (Act::Activate(i), s.dpi.to_string(), i == v.active)).collect();
+        let items: Vec<Segment> =
+            v.stages.iter().enumerate().filter(|(_, s)| s.enabled).map(|(i, s)| Segment::new(Act::Activate(i), s.dpi.to_string(), i == v.active)).collect();
         f.segments(Rect::new(body.x + PANEL_PAD, body.y + PANEL_PAD, body.w - 2.0 * PANEL_PAD, SEGMENT_H), &items);
         y += panel.h + PANEL_GAP;
     }
@@ -1650,64 +1770,58 @@ fn protocol_dpi(index: usize) -> u32 {
     crate::protocol::dpi_of(index)
 }
 
+/// Performance: one panel of setting rows. Polling rate for every
+/// mouse that can set it; debounce, lift-off distance and the sleep
+/// timer for those that have them.
 fn performance(f: &mut Frame, v: &View) {
-    const TILE_Y: f32 = TOP + 22.0;
-    const TILE_H: f32 = 56.0;
-    f.caption(tr(T::PollingRate), X0, TOP);
-    if v.caps.extras {
-        let w = (CW - 3.0 * 12.0) / 4.0;
-        for (i, hz) in RATES.iter().enumerate() {
-            let r = Rect::new(X0 + i as f32 * (w + 12.0), TILE_Y, w, TILE_H);
-            f.choice(Act::Polling(i), r, &format!("{hz} Hz"), &format!("{} ms", 1000 / hz), v.polling == i);
-        }
+    const TWO_LINE_H: f32 = 42.0;
+    const NARROW_CELL: f32 = 60.0;
+    // Under the rate segments: what Raw Input measures right now.
+    const MEASURED_H: f32 = 8.0 + 18.0;
+    let (x, w) = (X0, CW);
+
+    let polling = SettingRow { title: tr(T::PollingRate), desc: tr(T::PollingHelp), control_h: TWO_LINE_H + MEASURED_H };
+    let debounce = SettingRow { title: tr(T::Debounce), desc: tr(T::DebounceHelp), control_h: SEGMENT_H };
+    let lift_off = SettingRow { title: tr(T::LiftOff), desc: "", control_h: SEGMENT_H };
+    let minutes = fill(tr(T::Minutes), &[""]);
+    let sleep = SettingRow { title: tr(T::SleepAfter), desc: minutes.trim(), control_h: SEGMENT_H };
+
+    let extras = if v.caps.extras { debounce.height(w) + lift_off.height(w) + sleep.height(w) } else { 0.0 };
+    f.card(Rect::new(x, TOP, w, polling.height(w) + extras));
+
+    // Rates: the Lionel family's four, else what the mouse reported.
+    let mut y = TOP;
+    let c = f.row(x, y, w, &polling, RowPlace::First);
+    let rates: Vec<Segment> = if v.caps.extras {
+        RATES.iter().enumerate().map(|(i, hz)| Segment { act: Act::Polling(i), label: format!("{hz} Hz"), sub: format!("{} ms", 1000 / hz), selected: v.polling == i, kind: Label::Value }).collect()
     } else {
-        // Rates the mouse reported, e.g. 125 / 250 / 500 / 1000 Hz.
-        let n = v.basic.rates.len().max(1) as f32;
-        let w = (CW - (n - 1.0) * 12.0) / n;
-        for (i, hz) in v.basic.rates.iter().enumerate() {
-            let r = Rect::new(X0 + i as f32 * (w + 12.0), TILE_Y, w, TILE_H);
+        let rate = |hz: &u32| {
             let ms = format!("{:.1} ms", 1000.0 / *hz as f32).replace(".0 ", " ");
-            f.choice(Act::BasicRate(*hz), r, &format!("{hz} Hz"), &ms, v.basic.rate == Some(*hz));
-        }
-    }
-
-    // Measured rate: one line, then how to measure it.
-    let y = TILE_Y + TILE_H + 10.0;
+            Segment { act: Act::BasicRate(*hz), label: format!("{hz} Hz"), sub: ms, selected: v.basic.rate == Some(*hz), kind: Label::Value }
+        };
+        v.basic.rates.iter().map(rate).collect()
+    };
+    f.segments(Rect::new(c.x, c.y, c.w, TWO_LINE_H), &rates);
     let line = fill(tr(T::MeasuredValue), &[&measured(v)]);
-    f.g.text(&line, Rect::new(X0, y, CW, 20.0), Size::Body, Weight::Semibold, Align::Left, th().text);
-    let hint = Rect::new(X0, y + 22.0, CW, 32.0);
-    f.g.text(tr(T::PollingHelp), hint, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
-
+    f.g.text(&line, Rect::new(c.x, c.y + TWO_LINE_H + 8.0, c.w, 18.0), Size::Caption, Weight::Semibold, Align::Left, th().text);
+    y += polling.height(w);
     if !v.caps.extras {
         return;
     }
 
-    // Debounce.
-    let card = Rect::new(X0, hint.y + hint.h + GAP, CW, 112.0);
-    f.card(card);
-    f.caption(tr(T::Debounce), card.x + 20.0, card.y + 16.0);
-    let help = Rect::new(card.x + 20.0, card.y + 34.0, card.w - 40.0, 32.0);
-    f.g.text(tr(T::DebounceHelp), help, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
-    for (i, ms) in DEBOUNCE_CHOICES.iter().enumerate() {
-        let r = Rect::new(card.x + 20.0 + i as f32 * 86.0, card.y + 68.0, 78.0, 32.0);
-        f.choice(Act::Debounce(i), r, &format!("{ms} ms"), "", v.debounce == *ms);
-    }
+    let c = f.row(x, y, w, &debounce, RowPlace::Next);
+    let items: Vec<Segment> = DEBOUNCE_CHOICES.iter().enumerate().map(|(i, ms)| Segment::new(Act::Debounce(i), format!("{ms} ms"), v.debounce == *ms)).collect();
+    f.segments(c, &items);
+    y += debounce.height(w);
 
-    // Lift-off distance and sleep timer.
-    let card = Rect::new(X0, card.y + card.h + GAP, CW, 84.0);
-    f.card(card);
-    f.caption_in(tr(T::LiftOff), card.x + 20.0, card.y + 14.0, 186.0);
-    for (k, lod) in [Lod::Mm1, Lod::Mm2].into_iter().enumerate() {
-        let r = Rect::new(card.x + 20.0 + k as f32 * 70.0, card.y + 38.0, 62.0, 32.0);
-        f.choice(Act::Lod(lod), r, &format!("{} mm", lod as u8), "", v.lod == lod);
-    }
-    let sx = card.x + 222.0;
-    let caption = format!("{} ({})", tr(T::SleepAfter), fill(tr(T::Minutes), &[""]).trim());
-    f.caption_in(&caption, sx, card.y + 14.0, card.w - 242.0);
-    for (i, m) in SLEEP_CHOICES.iter().enumerate() {
-        let r = Rect::new(sx + i as f32 * 40.0, card.y + 38.0, 36.0, 32.0);
-        f.choice(Act::Sleep(i), r, &m.to_string(), "", v.power.sleep_min == *m);
-    }
+    let c = f.row(x, y, w, &lift_off, RowPlace::Next);
+    let items: Vec<Segment> = [Lod::Mm1, Lod::Mm2].into_iter().map(|lod| Segment::new(Act::Lod(lod), format!("{} mm", lod as u8), v.lod == lod)).collect();
+    f.segments(Rect::new(c.x, c.y, NARROW_CELL * items.len() as f32, c.h), &items);
+    y += lift_off.height(w);
+
+    let c = f.row(x, y, w, &sleep, RowPlace::Next);
+    let items: Vec<Segment> = SLEEP_CHOICES.iter().enumerate().map(|(i, m)| Segment::new(Act::Sleep(i), m.to_string(), v.power.sleep_min == *m)).collect();
+    f.segments(c, &items);
 }
 
 /// Color swatch: a bordered square; the selected one gets a ring in the
@@ -1723,86 +1837,80 @@ fn swatch(f: &mut Frame, act: Act, cx: f32, cy: f32, color: u32, selected: bool)
     f.g.frame(cx, cy, HALF, 1.0, th().line2);
 }
 
-/// Segment with an arrow glyph before its label, e.g. "→ Forward".
-fn direction_chip(f: &mut Frame, act: Act, r: Rect, arrow: Glyph, label: &str, selected: bool) {
-    const GLYPH_W: f32 = 16.0;
-    f.choice(act, r, "", "", selected);
-    let c = if selected { th().text } else { th().muted };
-    let label_w = text_w(label, Size::Body).min(r.w - GLYPH_W - 24.0);
-    let x = r.x + (r.w - label_w - GLYPH_W - 6.0) / 2.0;
-    glyph(f.g, arrow, x + GLYPH_W / 2.0, r.y + r.h / 2.0, c);
-    let label_r = Rect::new(x + GLYPH_W + 6.0, r.y, label_w + 8.0, r.h);
-    f.g.text(label, label_r, Size::Body, Weight::Semibold, Align::Left, c);
-}
-
+/// Lighting: one panel of setting rows. Rows an effect has no use for
+/// are left out, not greyed.
 fn lighting(f: &mut Frame, v: &View) {
-    const PAD: f32 = 20.0;
+    const EFFECT_COLS: usize = 3;
+    const NARROW_CELL: f32 = 44.0;
+    const SWATCH_STEP: f32 = 34.0;
+    const SWATCH_H: f32 = 28.0;
+    const CHECK_H: f32 = 22.0;
     let l = &v.lighting;
+    let (x, w) = (X0, CW);
 
-    // Effect picker: 4 x 2 chips.
-    let card = Rect::new(X0, TOP, CW, 132.0);
-    f.card(card);
-    f.caption(tr(T::EffectCaption), card.x + PAD, card.y + 14.0);
-    let w = (CW - 2.0 * PAD - 3.0 * 8.0) / 4.0;
-    for (i, e) in Effect::ALL.iter().enumerate() {
-        let (row, col) = ((i / 4) as f32, (i % 4) as f32);
-        let r = Rect::new(card.x + PAD + col * (w + 8.0), card.y + 36.0 + row * 44.0, w, 36.0);
-        f.choice(Act::Effect(i), r, tr(EFFECT_NAMES[i]), "", l.effect == *e);
-    }
+    let effect_rows = Effect::ALL.len().div_ceil(EFFECT_COLS) as f32;
+    let effect = SettingRow { title: tr(T::EffectCaption), desc: "", control_h: effect_rows * (SEGMENT_H - 1.0) + 1.0 };
+    let brightness = SettingRow { title: tr(T::Brightness), desc: "", control_h: SEGMENT_H };
+    let speed = SettingRow { title: tr(T::Speed), desc: "", control_h: SEGMENT_H };
+    let direction = SettingRow { title: tr(T::DirectionCaption), desc: "", control_h: SEGMENT_H };
+    let multi = l.effect == Effect::Breathing;
+    let colors = SettingRow { title: tr(if multi { T::ColorsCaption } else { T::ColorCaption }), desc: "", control_h: SWATCH_H };
+    let dark = SettingRow { title: tr(T::DarkMoving), desc: tr(T::LightingNote), control_h: CHECK_H };
 
-    // Brightness, speed, direction.
-    let card = Rect::new(X0, card.y + card.h + GAP, CW, 84.0);
-    f.card(card);
-    const CHIP: f32 = 32.0;
-    const CHIP_STEP: f32 = CHIP + 6.0;
-    let chip = |i: usize, x: f32| Rect::new(x + i as f32 * CHIP_STEP, card.y + 38.0, CHIP, CHIP);
-    let x = card.x + PAD;
-    f.caption_in(tr(T::Brightness), x, card.y + 14.0, 4.0 * CHIP_STEP);
-    for b in 1..=BRIGHTNESS_MAX {
-        f.choice(Act::Brightness(b), chip(b as usize - 1, x), &b.to_string(), "", l.brightness == b);
+    let has_colors = matches!(l.effect, Effect::Steady | Effect::Breathing);
+    let shown: [(&SettingRow, bool); 6] =
+        [(&effect, true), (&brightness, true), (&speed, l.effect.has_speed()), (&direction, l.effect == Effect::Streaming), (&colors, has_colors), (&dark, true)];
+    let total: f32 = shown.iter().filter(|(_, on)| *on).map(|(r, _)| r.height(w)).sum();
+    f.card(Rect::new(x, TOP, w, total));
+
+    // Effects: a grid of segments, four to a line.
+    let mut y = TOP;
+    let c = f.row(x, y, w, &effect, RowPlace::First);
+    for (line, chunk) in Effect::ALL.chunks(EFFECT_COLS).enumerate() {
+        let first = line * EFFECT_COLS;
+        let mut items: Vec<Segment> = chunk.iter().enumerate().map(|(k, e)| Segment::named(Act::Effect(first + k), tr(EFFECT_NAMES[first + k]), l.effect == *e)).collect();
+        // A short last line keeps the cell width of the full ones.
+        let cell_w = c.w / EFFECT_COLS as f32;
+        let r = Rect::new(c.x, c.y + line as f32 * (SEGMENT_H - 1.0), cell_w * items.len() as f32, SEGMENT_H);
+        f.segments(r, &items);
+        items.clear();
     }
-    let x = card.x + PAD + 164.0;
+    y += effect.height(w);
+
+    let c = f.row(x, y, w, &brightness, RowPlace::Next);
+    let items: Vec<Segment> = (1..=BRIGHTNESS_MAX).map(|b| Segment::new(Act::Brightness(b), b.to_string(), l.brightness == b)).collect();
+    f.segments(Rect::new(c.x, c.y, NARROW_CELL * items.len() as f32, c.h), &items);
+    y += brightness.height(w);
+
     if l.effect.has_speed() {
-        f.caption_in(tr(T::Speed), x, card.y + 14.0, 3.0 * CHIP_STEP + 8.0);
-        for sp in 1..=SPEED_MAX {
-            f.choice(Act::Speed(sp), chip(sp as usize - 1, x), &sp.to_string(), "", l.speed == sp);
-        }
+        let c = f.row(x, y, w, &speed, RowPlace::Next);
+        let items: Vec<Segment> = (1..=SPEED_MAX).map(|sp| Segment::new(Act::Speed(sp), sp.to_string(), l.speed == sp)).collect();
+        f.segments(Rect::new(c.x, c.y, NARROW_CELL * items.len() as f32, c.h), &items);
+        y += speed.height(w);
     }
-    let x = card.x + PAD + 288.0;
+
     if l.effect == Effect::Streaming {
-        let w = card.x + card.w - PAD - x;
-        f.caption_in(tr(T::DirectionCaption), x, card.y + 14.0, w);
-        let dirs = [(Direction::Forward, Glyph::ArrowRight, T::DirForward), (Direction::Reverse, Glyph::ArrowLeft, T::DirReverse)];
-        let chip_w = (w - 8.0) / 2.0;
-        for (k, (d, arrow, name)) in dirs.into_iter().enumerate() {
-            let r = Rect::new(x + k as f32 * (chip_w + 8.0), card.y + 38.0, chip_w, CHIP);
-            direction_chip(f, Act::Direction(d), r, arrow, tr(name), l.direction == d);
-        }
+        let c = f.row(x, y, w, &direction, RowPlace::Next);
+        let dirs = [(Direction::Forward, "→", T::DirForward), (Direction::Reverse, "←", T::DirReverse)];
+        let items: Vec<Segment> = dirs.into_iter().map(|(d, arrow, name)| Segment::named(Act::Direction(d), format!("{arrow} {}", tr(name)), l.direction == d)).collect();
+        f.segments(Rect::new(c.x, c.y, c.w / 2.0, c.h), &items);
+        y += direction.height(w);
     }
 
     // Colors: one for steady, several for breathing.
-    let mut y = card.y + card.h + GAP;
-    if matches!(l.effect, Effect::Steady | Effect::Breathing) {
-        let card = Rect::new(X0, y, CW, 84.0);
-        f.card(card);
-        let multi = l.effect == Effect::Breathing;
-        f.caption(tr(if multi { T::ColorsCaption } else { T::ColorCaption }), card.x + PAD, card.y + 14.0);
-        for (i, &c) in PALETTE.iter().enumerate() {
-            let cx = card.x + PAD + 15.0 + i as f32 * 40.0;
-            let (act, sel) = if multi { (Act::Breath(i), l.breathing.contains(&c)) } else { (Act::Steady(i), l.steady == c) };
-            swatch(f, act, cx, card.y + 54.0, c, sel);
+    if has_colors {
+        let c = f.row(x, y, w, &colors, RowPlace::Next);
+        for (i, &color) in PALETTE.iter().enumerate() {
+            let cx = c.x + SWATCH_H / 2.0 + i as f32 * SWATCH_STEP;
+            let (act, sel) = if multi { (Act::Breath(i), l.breathing.contains(&color)) } else { (Act::Steady(i), l.steady == color) };
+            swatch(f, act, cx, c.y + SWATCH_H / 2.0, color, sel);
         }
-        y = card.y + card.h + GAP;
+        y += colors.height(w);
     }
 
-    // Lights off while moving, plus the wake-up note.
-    let card = Rect::new(X0, y, CW, 56.0);
-    f.card(card);
-    let label = Rect::new(card.x + PAD, card.y, card.w - 100.0, card.h);
-    f.g.text(tr(T::DarkMoving), label, Size::Body, Weight::Semibold, Align::Left, th().text);
-    f.toggle(Some(Act::DarkMoving), card.x + card.w - 58.0, card.y + 17.0, v.power.dark_while_moving);
-    let note = Rect::new(X0, card.y + card.h + 10.0, CW, 34.0);
-    f.g.text(tr(T::LightingNote), note, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
+    // Lights off while moving, with the wake-up note as its description.
+    let c = f.row(x, y, w, &dark, RowPlace::Next);
+    f.toggle(Some(Act::DarkMoving), c.x, c.y, v.power.dark_while_moving);
 }
 
 fn stats(f: &mut Frame, v: &View) {
