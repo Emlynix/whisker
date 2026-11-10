@@ -60,9 +60,12 @@ pub enum Pane {
     Models,
 }
 
-/// Step of the dialog: the detected mice, or the whole catalogue.
+/// Step of the dialog: the mice still being listed, the detected mice,
+/// or the whole catalogue.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DetectStep {
+    /// Listing the mice runs on its thread; nothing to choose yet.
+    Searching,
     Found,
     List,
 }
@@ -90,6 +93,8 @@ pub struct Detect {
     pub model_top: usize,
     /// Arrow keys were used: outline the list they move in.
     pub keys: bool,
+    /// A scan is listing the mice again: the rows shown are the last list.
+    pub refetching: bool,
 }
 
 /// "New mouse connected: Logitech G305 (Supported)  [Not now] [Switch]".
@@ -204,6 +209,16 @@ fn diagnostics(f: &mut Frame, d: &DeviceView, y: f32) {
 //  |                                |     | ● Experimental   Help add …    |
 //  |              [Cancel] [Use]    |     | [‹ Back]       [Cancel] [Use]  |
 //  +--------------------------------+     +--------------------------------+
+//
+//  While the mice are still being listed (the first scan of the session):
+//  +--------------------------------+
+//  | Which mouse do you use?        |
+//  | Looking for mice…              |
+//  |                        [Cancel]|
+//  +--------------------------------+
+//
+//  Steps 1 and 2 opened from "Change mouse" also note "Refetching HID
+//  devices…" in the top right, until the scan they started brings its list.
 
 const DLG_W: f32 = 700.0;
 const DLG_H: f32 = 520.0;
@@ -271,11 +286,41 @@ pub(super) fn detect_dialog(f: &mut Frame, d: &Detect) {
     let inner = l.inner;
     f.g.text(tr(T::DetectTitle), Rect::new(inner.x, inner.y, inner.w, 28.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
     match d.step {
-        DetectStep::Found => found_step(f, d, inner),
-        DetectStep::List => list_step(f, d, &l),
+        DetectStep::Searching => searching_step(f, inner),
+        DetectStep::Found => {
+            found_step(f, d, inner);
+            refetch_note(f, d, inner);
+            buttons(f, d, inner);
+        }
+        DetectStep::List => {
+            list_step(f, d, &l);
+            refetch_note(f, d, inner);
+            buttons(f, d, inner);
+        }
     }
+}
 
-    // Buttons: "‹ Back" on step 2 when step 1 exists; Cancel, Use.
+/// Top right, where the "Help add your mouse" dialog shows its step: the
+/// rows are the last list and the one "Change mouse" started is on its way.
+fn refetch_note(f: &mut Frame, d: &Detect, inner: Rect) {
+    if !d.refetching {
+        return;
+    }
+    let label = tr(T::DetectRefetching);
+    let w = text_w(label, Size::Caption);
+    f.g.text(label, Rect::new(inner.x + inner.w - w, inner.y + 4.0, w, 20.0), Size::Caption, Weight::Normal, Align::Right, th().muted);
+}
+
+/// While the first list of mice is on its thread: the caption the "Help add
+/// your mouse" dialog shows in the same situation, and nothing but Cancel.
+fn searching_step(f: &mut Frame, inner: Rect) {
+    f.g.text(tr(T::ReportFinding), Rect::new(inner.x, inner.y + 44.0, inner.w, 22.0), Size::Body, Weight::Normal, Align::Left, th().muted);
+    let by = inner.y + inner.h - BTN_H;
+    f.push_button(Act::DetectCancel, Rect::new(inner.x + inner.w - CANCEL_W, by, CANCEL_W, BTN_H), tr(T::Cancel), true);
+}
+
+/// Buttons: "‹ Back" on step 2 when step 1 exists; Cancel, Use.
+fn buttons(f: &mut Frame, d: &Detect, inner: Rect) {
     let by = inner.y + inner.h - BTN_H;
     if d.step == DetectStep::List && !d.found.is_empty() {
         let label = tr(T::BackToDetected);

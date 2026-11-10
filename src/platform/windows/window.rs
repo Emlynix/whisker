@@ -69,6 +69,8 @@ pub fn show() {
 }
 
 pub fn quit() {
+    // Drawing objects go first, while the window they draw to still exists.
+    free_shell();
     unsafe { DestroyWindow(hwnd()) };
 }
 
@@ -234,6 +236,19 @@ fn trim_memory() {
 
 pub fn run() {
     super::win::pump_messages();
+    free_shell();
+}
+
+/// Frees the drawing objects once the window is gone. They must not wait for
+/// the thread-local destructor at process exit: Direct2D then destroys its
+/// software rasterizer after the thread pool it schedules on has been shut
+/// down, and the resulting exception kills an otherwise clean exit.
+fn free_shell() {
+    SHELL.with(|s| {
+        let Ok(mut cell) = s.try_borrow_mut() else { return };
+        let Some(mut shell) = cell.take() else { return };
+        shell.gfx.release();
+    });
 }
 
 fn with_shell<R>(f: impl FnOnce(&mut Shell) -> R) -> Option<R> {
@@ -429,4 +444,93 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         _ => return unsafe { DefWindowProcW(hwnd, msg, wp, lp) },
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    //! The bug this covers only shows in a process that really exits: the
+    //! drawing objects sat in a thread-local, so Direct2D destroyed its
+    //! software rasterizer during process teardown, when the thread pool it
+    //! schedules on is already gone (0xc000000d from ntdll, an Application
+    //! Error in the event log). The test therefore runs `child_paints_and_exits`
+    //! in a second process and reads that process' exit code.
+
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// Set only in the child, which paints a frame and then exits.
+    const CHILD_VAR: &str = "WHISKER_EXIT_CHILD";
+    const CHILD_TEST: &str = "platform::windows::window::tests::child_paints_and_exits";
+    /// The child found no window to draw in, so there was nothing to check.
+    const SKIPPED: i32 = 7;
+    const CHILD_LIMIT: Duration = Duration::from_secs(30);
+
+    fn stubs() -> Hooks {
+        Hooks {
+            draw: |_, _| Vec::new(),
+            act: |_| {},
+            drag: |_, _, _| {},
+            wheel: |_, _, _| {},
+            timer: |_| {},
+            tray: |_| {},
+            hidden: || {},
+            settings: || {},
+            key: |_| false,
+            focus_lost: || {},
+        }
+    }
+
+    /// A window that drew one frame, which is what makes Direct2D build the
+    /// software render target the bug needs, then quits like the app does.
+    #[test]
+    fn child_paints_and_exits() {
+        if std::env::var_os(CHILD_VAR).is_none() {
+            return;
+        }
+        if !create("Whisker test", 240.0, 160.0, stubs()) {
+            std::process::exit(SKIPPED);
+        }
+        with_shell(|s| {
+            s.gfx.begin(240, 160);
+            s.gfx.end();
+        });
+        quit();
+        run();
+        // Ends the process from this thread, as the app's main does, so the
+        // teardown that used to destroy the drawing objects is the one under test.
+        std::process::exit(0);
+    }
+
+    #[test]
+    fn exit_after_a_frame_releases_the_drawing() {
+        let spawned = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg(CHILD_TEST)
+            .arg("--exact")
+            .env(CHILD_VAR, "1")
+            .spawn();
+        let mut child = match spawned {
+            Ok(c) => c,
+            Err(e) => panic!("could not start the child process: {e}"),
+        };
+
+        // The child ends itself; a crash or a WER dialog would leave it alive,
+        // so the wait is bounded.
+        let started = Instant::now();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => {
+                    if started.elapsed() > CHILD_LIMIT {
+                        let _ = child.kill();
+                        panic!("the child did not exit within {} s", CHILD_LIMIT.as_secs());
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err(e) => panic!("waiting for the child failed: {e}"),
+            }
+        };
+
+        let code = status.code().unwrap_or(0);
+        assert!(code == 0 || code == SKIPPED, "child exited with {code:#x}: the drawing objects were still held when the process ended");
+    }
 }
