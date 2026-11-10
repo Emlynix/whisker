@@ -1,7 +1,7 @@
 //! Settings › Mouse tab (hardware info, diagnostics), the "which mouse
 //! do you use?" dialog and the new-mouse banner.
 
-use super::{Act, BODY, CW, Frame, GAP, Glyph, HEIGHT, Mark, Page, Place, R_CTRL, RADIUS, View, WIDTH, X0, glyph, icon, name_lines, text_link, text_w, th};
+use super::{Act, BODY, CW, Frame, GAP, Glyph, HEIGHT, Mark, Page, Place, R_CTRL, RADIUS, View, WIDTH, X0, glyph, icon, name_lines, text_link, text_w, th, Squares};
 use crate::devices::Support;
 use crate::gfx::{Align, Color, Rect, Size, Weight};
 use crate::i18n::{T, fill, tr};
@@ -362,9 +362,9 @@ fn found_row(f: &mut Frame, m: &Found, act: Act, r: Rect, mark: Mark) {
 
     // Radio marker: a ring, filled with a dot when picked.
     let (cx, cy) = (r.x + 26.0, r.y + r.h / 2.0);
-    f.g.ring(cx, cy, RADIO_R, 1.5, if sel { th().accent } else { th().subtle });
+    f.g.frame(cx, cy, RADIO_R, 1.5, if sel { th().accent } else { th().subtle });
     if sel {
-        f.g.circle(cx, cy, RADIO_R / 2.0, th().accent);
+        f.g.dot(cx, cy, RADIO_R / 2.0, th().accent);
     }
 
     // Name on top; support dot and level below.
@@ -377,7 +377,7 @@ fn found_row(f: &mut Frame, m: &Found, act: Act, r: Rect, mark: Mark) {
     if let Some(via) = m.via {
         sub = format!("{sub} · {}", tr(via));
     }
-    f.g.circle(x + 4.0, r.y + 39.0, 3.5, badge_color(m.kind));
+    f.g.dot(x + 4.0, r.y + 39.0, 3.5, badge_color(m.kind));
     f.g.text(&sub, Rect::new(x + 14.0, r.y + 30.0, w - 14.0, 18.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
 }
 
@@ -421,7 +421,7 @@ fn list_row(f: &mut Frame, act: Act, r: Rect, selected: bool) {
         f.g.fill(r, R_CTRL, if selected { th().accent_soft } else { th().hover });
     }
     if selected {
-        f.g.fill(Rect::new(r.x, r.y + 7.0, 3.0, r.h - 14.0), 1.5, th().accent);
+        f.g.fill(Rect::new(r.x, r.y + 7.0, 3.0, r.h - 14.0), 0.0, th().accent);
     }
 }
 
@@ -462,8 +462,8 @@ fn scroll_cue(f: &mut Frame, area: Rect, top: usize, count: usize) {
         return;
     }
     let track = Rect::new(area.x + area.w - FRAME_PAD - SCROLL_W, area.y + FRAME_PAD, SCROLL_W, area.h - 2.0 * FRAME_PAD);
-    f.g.fill(track, SCROLL_W / 2.0, th().border);
-    f.g.fill(thumb(track, top, count), SCROLL_W / 2.0, th().subtle);
+    f.g.fill(track, 0.0, th().border);
+    f.g.fill(thumb(track, top, count), 0.0, th().subtle);
     if !more_below(top, count) {
         return;
     }
@@ -488,7 +488,7 @@ fn brand_list(f: &mut Frame, d: &Detect, area: Rect) {
         let r = row_rect(area, k, d.brand_top, count);
         let sel = k == d.brand;
         list_row(f, Act::DetectBrand(k), r, sel);
-        f.g.circle(r.x + 16.0, r.y + r.h / 2.0, 4.0, badge_color(b.kind));
+        f.g.dot(r.x + 16.0, r.y + r.h / 2.0, 4.0, badge_color(b.kind));
         let weight = if sel { Weight::Semibold } else { Weight::Normal };
         let label = Rect::new(r.x + 28.0, r.y, r.w - 34.0, r.h);
         f.g.text(&b.name, label, Size::Body, weight, Align::Left, if sel { th().text } else { th().muted });
@@ -505,7 +505,7 @@ fn model_list(f: &mut Frame, d: &Detect, area: Rect) {
         let r = row_rect(area, k, d.model_top, count);
         let sel = k == d.model;
         list_row(f, Act::DetectSel(k), r, sel);
-        f.g.circle(r.x + 16.0, r.y + r.h / 2.0, 4.0, badge_color(m.kind));
+        f.g.dot(r.x + 16.0, r.y + r.h / 2.0, 4.0, badge_color(m.kind));
         let weight = if sel { Weight::Semibold } else { Weight::Normal };
         let name = Rect::new(r.x + 28.0, r.y, r.w - 34.0, r.h);
         f.g.text(&m.title, name, Size::Body, weight, Align::Left, if sel { th().text } else { th().muted });
@@ -521,7 +521,7 @@ fn support_line(f: &mut Frame, d: &Detect, r: Rect) {
         return;
     };
     let color = badge_color(m.kind);
-    f.g.circle(r.x + 4.0, r.y + r.h / 2.0, 4.0, color);
+    f.g.dot(r.x + 4.0, r.y + r.h / 2.0, 4.0, color);
     let badge_w = text_w(&m.badge, SIZE) + 12.0;
     f.g.text(&m.badge, Rect::new(r.x + 14.0, r.y, badge_w, r.h), SIZE, Weight::Semibold, Align::Left, color);
     if !matches!(m.kind, Badge::Warn | Badge::Muted) {

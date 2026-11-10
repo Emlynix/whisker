@@ -13,7 +13,7 @@
 //!
 //! Marker numbers are button indices + 1, as listed on the Buttons page.
 
-use super::{Act, Frame, th};
+use super::{Act, Frame, th, Squares};
 use crate::gfx::{Align, Color, Rect, Seg, Size, Weight};
 use crate::protocol::BUTTON_COUNT;
 
@@ -147,10 +147,9 @@ pub(super) fn mouse(f: &mut Frame, r: Rect, marks: Marks) {
     f.g.stroke_path(&body, OUTLINE, line);
     for (i, part) in [(MIDDLE, WHEEL), (DPI, DPI_KEY), (FORWARD, FORWARD_KEY), (BACK, BACK_KEY)] {
         let pr = fit.rect(part);
-        let radius = pr.w.min(pr.h) / 2.0;
-        let c = if lit == Some(i) { th().accent } else { fill };
-        f.g.fill(pr, radius, c);
-        f.g.stroke(pr, radius, OUTLINE, line);
+        let c = if lit == Some(i) { th().acc_fill } else { fill };
+        f.g.fill(pr, 0.0, c);
+        f.g.stroke(pr, 0.0, OUTLINE, line);
     }
 
     if let Marks::Buttons { .. } = marks {
@@ -168,12 +167,12 @@ fn markers(f: &mut Frame, fit: Fit, lit: Option<usize>) {
     }
 }
 
-/// Round number badge "1".."6"; accent when its button is lit.
+/// Square number badge "1".."6"; accent when its button is lit.
 pub(super) fn marker(f: &mut Frame, cx: f32, cy: f32, index: usize, lit: bool) {
     let (bg, fg): (Color, Color) = if lit { (th().accent, th().on_accent) } else { (th().card, th().text) };
-    f.g.circle(cx, cy, MARK_R, bg);
+    f.g.dot(cx, cy, MARK_R, bg);
     if !lit {
-        f.g.ring(cx, cy, MARK_R, 1.0, th().muted);
+        f.g.frame(cx, cy, MARK_R, 1.0, th().muted);
     }
     let r = Rect::new(cx - MARK_R, cy - MARK_R, 2.0 * MARK_R, 2.0 * MARK_R);
     f.g.text(&(index + 1).to_string(), r, Size::Caption, Weight::Semibold, Align::Center, fg);

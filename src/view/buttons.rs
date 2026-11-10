@@ -11,7 +11,7 @@
 //!  Hovering or focusing a row lights its marker, and the other way round.
 //! ```
 
-use super::{Act, BODY, Frame, GAP, Glyph, HEIGHT, Mark, PAGE_H, R_CTRL, RADIUS, View, WIDTH, X0, CW, art, glyph, th};
+use super::{Act, BODY, Frame, GAP, Glyph, HEIGHT, Mark, PAGE_H, R_CTRL, RADIUS, View, WIDTH, X0, CW, art, glyph, th, Squares};
 use crate::gfx::{Align, Color, Rect, Size, Weight};
 use crate::i18n::{T, fill, tr};
 use crate::keys;
@@ -275,7 +275,7 @@ fn button_row(f: &mut Frame, r: Rect, i: usize, a: Action, lit: bool) {
     f.g.text(&action_label(a), label, Size::Caption, Weight::Normal, Align::Left, th().muted);
 
     if a != DEFAULT_ACTIONS[i] {
-        f.g.circle(r.x + r.w - 34.0, r.y + r.h / 2.0, 3.5, th().accent);
+        f.g.dot(r.x + r.w - 34.0, r.y + r.h / 2.0, 3.5, th().accent);
     }
     glyph(f.g, Glyph::ChevronRight, r.x + r.w - 16.0, r.y + r.h / 2.0, th().subtle);
 }
@@ -351,7 +351,7 @@ pub(super) fn macros_page(f: &mut Frame, v: &View) {
         f.push_button(Act::MacroClear, clear, tr(T::Clear), false);
     }
     if v.recording {
-        f.g.circle(x + 122.0, y + 8.0, 4.0, Color(th().bad.0, v.pulse));
+        f.g.dot(x + 122.0, y + 8.0, 4.0, Color(th().bad.0, v.pulse));
     }
 
     let y = y + 52.0;
@@ -375,7 +375,7 @@ pub(super) fn macros_page(f: &mut Frame, v: &View) {
     // Recording: accent border and "● Recording… N steps" with a pulsing dot.
     if v.recording {
         f.g.stroke(area, R_CTRL, 2.0, th().accent);
-        f.g.circle(inner.x + 5.0, inner.y + 9.0, 5.0, Color(th().bad.0, v.pulse));
+        f.g.dot(inner.x + 5.0, inner.y + 9.0, 5.0, Color(th().bad.0, v.pulse));
         let head = fill(tr(T::RecordingSteps), &[&events.len().to_string()]);
         let r = Rect::new(inner.x + 16.0, inner.y, inner.w - 16.0, 18.0);
         f.g.text(&head, r, Size::Body, Weight::Semibold, Align::Left, th().accent);
@@ -496,7 +496,7 @@ fn category(f: &mut Frame, act: Act, r: Rect, label: &str, mark: Mark) {
         f.g.fill(r, R_CTRL, if selected { th().accent_soft } else { th().hover });
     }
     if selected {
-        f.g.fill(Rect::new(r.x, r.y + 8.0, 3.0, r.h - 16.0), 1.5, th().accent);
+        f.g.fill(Rect::new(r.x, r.y + 8.0, 3.0, r.h - 16.0), 0.0, th().accent);
     }
     let label_r = Rect::new(r.x + 16.0, r.y, r.w - 20.0, r.h);
     let weight = if selected { Weight::Semibold } else { Weight::Normal };

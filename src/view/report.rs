@@ -241,7 +241,7 @@ fn pick(f: &mut Frame, r: &ReportView, body: Rect, right: f32, by: f32) {
             f.g.fill(rr, R_CTRL, if sel { th().accent_soft } else { th().hover });
         }
         if sel {
-            f.g.fill(Rect::new(rr.x, rr.y + 9.0, 3.0, rr.h - 18.0), 1.5, th().accent);
+            f.g.fill(Rect::new(rr.x, rr.y + 9.0, 3.0, rr.h - 18.0), 0.0, th().accent);
         }
         let weight = if sel { Weight::Semibold } else { Weight::Normal };
         let half = (rr.w - 28.0) / 2.0;
@@ -312,7 +312,7 @@ fn scroll_bar(f: &mut Frame, area: Rect, top: usize, count: usize) {
     let track = Rect::new(area.x + area.w - 6.0, area.y + 6.0, 3.0, area.h - 12.0);
     let h = track.h * REPORT_ROWS as f32 / count as f32;
     let y = track.y + (track.h - h) * top as f32 / (count - REPORT_ROWS) as f32;
-    f.g.fill(Rect::new(track.x, y, track.w, h), 1.5, th().subtle);
+    f.g.fill(Rect::new(track.x, y, track.w, h), 0.0, th().subtle);
 }
 
 /// A guided check: what changed, the question, the answers.

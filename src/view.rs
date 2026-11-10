@@ -485,20 +485,13 @@ impl Frame<'_> {
     }
 
     fn card(&self, r: Rect) {
-        self.surface(r, th().card);
+        self.surface(r, th().panel);
     }
 
-    /// Card-like area: a 1 px border in dark themes; in light ones a cheap
-    /// shadow, since a border there is barely visible (1.3:1).
+    /// Panel: a flat fill with a 1 px hairline border, no radius, no shadow.
     fn surface(&self, r: Rect, c: Color) {
-        if th().dark {
-            self.g.fill(r, RADIUS, c);
-            self.g.stroke(r, RADIUS, 1.0, th().border);
-            return;
-        }
-        const SHADOW: Color = Color(0x000000, 0x0f);
-        self.g.fill(Rect::new(r.x, r.y + 1.0, r.w, r.h), RADIUS, SHADOW);
-        self.g.fill(r, RADIUS, c);
+        self.g.fill(r, 0.0, c);
+        self.g.stroke(r, 0.0, 1.0, th().line);
     }
 
     fn caption(&mut self, s: &str, x: f32, y: f32) {
@@ -510,43 +503,52 @@ impl Frame<'_> {
         self.g.text(s, Rect::new(x, y, w, 16.0), Size::Label, Weight::Semibold, Align::Left, th().muted);
     }
 
+    /// Progress bar: a flat track with the fill from the left.
     fn bar(&self, r: Rect, pct: u8, c: Color) {
-        self.g.fill(r, r.h / 2.0, th().border);
+        self.g.fill(r, 0.0, th().track);
         let w = r.w * pct.min(100) as f32 / 100.0;
         if w > 0.0 {
-            self.g.fill(Rect::new(r.x, r.y, w.max(r.h), r.h), r.h / 2.0, c);
+            self.g.fill(Rect::new(r.x, r.y, w, r.h), 0.0, c);
         }
     }
 
-    /// Pill switch, 40 x 22.
+    /// On/off as a 14 x 14 checkbox (the design has no switches), in the
+    /// 40 x 22 box rows reserve for it. `None` = cannot be changed now.
     fn toggle(&mut self, act: Option<Act>, x: f32, y: f32, on: bool) {
-        let r = Rect::new(x, y, 40.0, 22.0);
-        let hot = act.is_some_and(|a| self.button(a, r));
-        let dim = act.is_none();
+        const BOX: f32 = 14.0;
+        const DIMMED: u8 = 0x73;
+        let area = Rect::new(x, y, 40.0, 22.0);
+        let hot = act.is_some_and(|a| self.button(a, area));
+        let alpha = if act.is_none() { DIMMED } else { 0xff };
+        let b = Rect::new(x, y + (area.h - BOX) / 2.0, BOX, BOX);
 
         if on {
-            let c = if dim { th().faint } else if hot { th().accent_hover } else { th().accent };
-            self.g.fill(r, 11.0, c);
-            self.g.circle(x + 29.0, y + 11.0, 7.0, th().on_accent);
-        } else {
-            // Disabled: fainter outline and knob.
-            let (edge, knob) = if dim { (th().border, th().faint) } else { (th().faint, th().muted) };
-            self.g.fill(r, 11.0, if hot { th().hover } else { th().card });
-            self.g.stroke(r, 11.0, 1.5, edge);
-            self.g.circle(x + 11.0, y + 11.0, 6.0, knob);
+            self.g.fill(b, 0.0, Color(th().acc_fill.0, alpha));
+            glyph(self.g, Glyph::Check, b.x + BOX / 2.0, b.y + BOX / 2.0, Color(th().acc_on.0, alpha));
+            return;
         }
+        self.g.fill(b, 0.0, Color(th().input.0, alpha));
+        let edge = if hot { th().acc } else { th().line2 };
+        self.g.stroke(b, 0.0, 1.0, Color(edge.0, alpha));
     }
 
+    /// Button: 1 px border on a transparent ground; the primary one is
+    /// filled with the accent. At most one primary per panel or dialog.
     fn push_button(&mut self, act: Act, r: Rect, label: &str, primary: bool) {
         let hot = self.button(act, r);
         let label_r = Rect::new(r.x + 8.0, r.y, r.w - 16.0, r.h);
         if primary {
-            self.g.fill(r, R_CTRL, if hot { th().accent_hover } else { th().accent });
-            self.g.text(label, label_r, Size::Body, Weight::Semibold, Align::Center, th().on_accent);
+            self.g.fill(r, 0.0, th().acc_fill);
+            if hot {
+                self.g.stroke(r, 0.0, 1.0, th().text);
+            }
+            self.g.text(label, label_r, Size::Body, Weight::Semibold, Align::Center, th().acc_on);
             return;
         }
-        self.g.fill(r, R_CTRL, if hot { th().hover } else { th().card });
-        self.g.stroke(r, R_CTRL, 1.0, th().border);
+        if hot {
+            self.g.fill(r, 0.0, th().sel);
+        }
+        self.g.stroke(r, 0.0, 1.0, th().line2);
         self.g.text(label, label_r, Size::Body, Weight::Semibold, Align::Center, th().text);
     }
 
@@ -554,8 +556,10 @@ impl Frame<'_> {
     fn glyph_button(&mut self, act: Act, r: Rect, label: &str, g: Glyph, place: Place) {
         const GLYPH_W: f32 = 16.0;
         let hot = self.button(act, r);
-        self.g.fill(r, R_CTRL, if hot { th().hover } else { th().card });
-        self.g.stroke(r, R_CTRL, 1.0, th().border);
+        if hot {
+            self.g.fill(r, 0.0, th().sel);
+        }
+        self.g.stroke(r, 0.0, 1.0, th().line2);
 
         // Label and glyph centered as one group.
         let label_w = text_w(label, Size::Body).min(r.w - GLYPH_W - 24.0);
@@ -571,8 +575,8 @@ impl Frame<'_> {
 
     /// Button that can't be pressed now, e.g. "Clear" on an empty macro.
     fn dead_button(&mut self, r: Rect, label: &str) {
-        self.g.stroke(r, R_CTRL, 1.0, th().border);
-        self.g.text(label, Rect::new(r.x + 8.0, r.y, r.w - 16.0, r.h), Size::Body, Weight::Semibold, Align::Center, th().faint);
+        self.g.stroke(r, 0.0, 1.0, th().line);
+        self.g.text(label, Rect::new(r.x + 8.0, r.y, r.w - 16.0, r.h), Size::Body, Weight::Semibold, Align::Center, th().line2);
     }
 
     /// Underlined text tabs, e.g. "Buttons | Macros"; a tab is a page.
@@ -591,62 +595,62 @@ impl Frame<'_> {
             let weight = if sel { Weight::Semibold } else { Weight::Normal };
             self.g.text(label, Rect::new(r.x, r.y, r.w, r.h - 4.0), Size::Body, weight, Align::Center, color);
             if sel {
-                self.g.fill(Rect::new(r.x + 4.0, r.y + r.h - 3.0, r.w - 8.0, 3.0), 1.5, th().accent);
+                self.g.fill(Rect::new(r.x, r.y + r.h - 2.0, r.w, 2.0), 0.0, th().acc_fill);
             }
             x += r.w + 4.0;
         }
     }
 
-    /// Selectable chip or tile with a title and optional subtitle. Selected:
-    /// 2 px accent border, soft fill, and a check badge on tiles.
+    /// One option of a set: a cell of a segmented control. Selected: soft
+    /// accent ground, a 1 px accent outline, accent text; nothing else.
     fn choice(&mut self, act: Act, r: Rect, title: &str, sub: &str, selected: bool) {
         let hot = self.button(act, r);
-        let shape = Shape::of(r);
-        let radius = shape.radius(r);
-        let bg = if selected { th().accent_soft } else if hot { th().hover } else { th().card };
-        self.g.fill(r, radius, th().card);
-        self.g.fill(r, radius, bg);
-        let (bw, bc) = if selected { (2.0, th().accent) } else { (1.0, th().border) };
-        self.g.stroke(r, radius, bw, bc);
-        if selected && shape == Shape::Tile {
-            check_badge(self.g, r);
-        }
+        let bg = if selected { th().acc_soft } else if hot { th().sel } else { th().input };
+        self.g.fill(r, 0.0, bg);
+        self.g.stroke(r, 0.0, 1.0, if selected { th().acc } else { th().line2 });
 
-        let color = if selected { th().text } else { th().muted };
+        let color = if selected { th().acc } else { th().text };
+        let weight = if selected { Weight::Semibold } else { Weight::Medium };
         let (x, w) = (r.x + 6.0, r.w - 12.0);
         if sub.is_empty() {
-            self.g.text(title, Rect::new(x, r.y, w, r.h), Size::Body, Weight::Semibold, Align::Center, color);
+            self.g.text(title, Rect::new(x, r.y, w, r.h), Size::Body, weight, Align::Center, color);
             return;
         }
-        // Compact tiles (< 56 px) keep body type so the two lines don't touch.
-        let (title_size, pad) = if r.h < 56.0 { (Size::Body, 3.0) } else { (Size::Large, 6.0) };
-        let top = Rect::new(x, r.y + pad, w, r.h / 2.0 - pad + 2.0);
-        let bottom = Rect::new(x, r.y + r.h / 2.0 + 2.0, w, r.h / 2.0 - pad - 2.0);
-        self.g.text(title, top, title_size, Weight::Semibold, Align::Center, color);
-        self.g.text(sub, bottom, Size::Caption, Weight::Normal, Align::Center, th().subtle);
+        let top = Rect::new(x, r.y + 3.0, w, r.h / 2.0 - 1.0);
+        let bottom = Rect::new(x, r.y + r.h / 2.0 + 1.0, w, r.h / 2.0 - 4.0);
+        self.g.text(title, top, Size::Body, weight, Align::Center, color);
+        self.g.text(sub, bottom, Size::Caption, Weight::Normal, Align::Center, if selected { th().acc } else { th().muted });
     }
 }
 
-/// Look of a `choice`: short ones are pill chips, taller ones tiles.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Shape {
-    Chip,
-    Tile,
+/// The design has no round shapes: what used to be a disc or a ring is a
+/// square of the same extent (`r` = half its side).
+pub(self) trait Squares {
+    fn dot(&self, cx: f32, cy: f32, r: f32, c: Color);
+    fn frame(&self, cx: f32, cy: f32, r: f32, width: f32, c: Color);
 }
 
-impl Shape {
-    const TILE_MIN_H: f32 = 44.0;
-
-    fn of(r: Rect) -> Shape {
-        if r.h >= Self::TILE_MIN_H { Shape::Tile } else { Shape::Chip }
+impl Squares for Gfx {
+    fn dot(&self, cx: f32, cy: f32, r: f32, c: Color) {
+        self.fill(Rect::new(cx - r, cy - r, 2.0 * r, 2.0 * r), 0.0, c);
     }
 
-    fn radius(self, r: Rect) -> f32 {
-        match self {
-            Shape::Chip => r.h / 2.0,
-            Shape::Tile => R_CTRL,
-        }
+    fn frame(&self, cx: f32, cy: f32, r: f32, width: f32, c: Color) {
+        self.stroke(Rect::new(cx - r, cy - r, 2.0 * r, 2.0 * r), 0.0, width, c);
     }
+}
+
+/// Slider: a 2 px track, filled from the left up to the thumb, a 10 x 14
+/// thumb outlined in the fill's color.
+fn slider_mark(g: &Gfx, x0: f32, x1: f32, kx: f32, cy: f32, fill: Color) {
+    const TRACK: f32 = 2.0;
+    const THUMB_W: f32 = 10.0;
+    const THUMB_H: f32 = 14.0;
+    g.fill(Rect::new(x0, cy - TRACK / 2.0, x1 - x0, TRACK), 0.0, th().track);
+    g.fill(Rect::new(x0, cy - TRACK / 2.0, kx - x0, TRACK), 0.0, fill);
+    let thumb = Rect::new(kx - THUMB_W / 2.0, cy - THUMB_H / 2.0, THUMB_W, THUMB_H);
+    g.fill(thumb, 0.0, th().panel);
+    g.stroke(thumb, 0.0, 1.0, fill);
 }
 
 /// Where a glyph sits next to a label.
@@ -686,19 +690,9 @@ fn glyph(gfx: &Gfx, g: Glyph, cx: f32, cy: f32, c: Color) {
     gfx.polyline(&pts.map(|(x, y)| (cx + x * mirror, cy + y)), W, c);
 }
 
-/// "Selected" mark: a 16 px accent disc with a check, centered just inside
-/// a tile's top-right corner so it stays clear of centered text.
-fn check_badge(g: &Gfx, r: Rect) {
-    const R: f32 = 8.0;
-    const INSET: f32 = 6.0;
-    let (cx, cy) = (r.x + r.w - INSET, r.y + INSET);
-    g.circle(cx, cy, R, th().accent);
-    glyph(g, Glyph::Check, cx, cy, th().on_accent);
-}
-
 /// Placeholder bar while a value from the mouse is still on its way.
 fn skeleton(g: &Gfx, r: Rect) {
-    g.fill(r, R_INNER, th().border);
+    g.fill(r, 0.0, th().track);
 }
 
 /// Mouse name for the sidebar in up to two lines: breaks after a space or
@@ -873,7 +867,7 @@ fn header_status(f: &mut Frame, v: &View) {
     let r = Rect::new(X0 + CW - w, TITLE_Y - 2.0, w, H);
     f.g.fill(r, 0.0, Color(th().panel.0, alpha));
     f.g.stroke(r, 0.0, 1.0, Color(th().line.0, alpha));
-    f.g.circle(r.x + 15.0, r.y + H / 2.0, 4.0, Color(dot.0, alpha));
+    f.g.dot(r.x + 15.0, r.y + H / 2.0, 4.0, Color(dot.0, alpha));
     let label = Rect::new(r.x + 26.0, r.y, r.w - 34.0, H);
     f.g.text(text, label, Size::Caption, Weight::Normal, Align::Left, Color(th().muted.0, alpha));
 }
@@ -913,12 +907,12 @@ fn icon(g: &Gfx, page: Page, x: f32, y: f32, c: Color) {
         Page::Overview => {
             for (a, b) in [(4.0, 4.0), (13.0, 4.0), (4.0, 13.0), (13.0, 13.0)] {
                 let (px, py) = p(a, b);
-                g.stroke(Rect::new(px, py, 7.0 * s, 7.0 * s), 1.0, w, c);
+                g.stroke(Rect::new(px, py, 7.0 * s, 7.0 * s), 0.0, w, c);
             }
         }
         Page::Dpi => {
             let (cx, cy) = p(12.0, 12.0);
-            g.ring(cx, cy, 4.0 * s, w, c);
+            g.frame(cx, cy, 4.0 * s, w, c);
             for (a, b, d, e) in [(12.0, 2.0, 12.0, 6.0), (12.0, 18.0, 12.0, 22.0), (2.0, 12.0, 6.0, 12.0), (18.0, 12.0, 22.0, 12.0)] {
                 let ((x0, y0), (x1, y1)) = (p(a, b), p(d, e));
                 g.line(x0, y0, x1, y1, w, c);
@@ -931,7 +925,7 @@ fn icon(g: &Gfx, page: Page, x: f32, y: f32, c: Color) {
         Page::Lighting => {
             // Sun: lighting.
             let (cx, cy) = p(12.0, 12.0);
-            g.ring(cx, cy, 4.5 * s, w, c);
+            g.frame(cx, cy, 4.5 * s, w, c);
             for k in 0..8 {
                 let a = k as f32 * std::f32::consts::FRAC_PI_4;
                 let (x0, y0) = (cx + a.cos() * 7.5 * s, cy + a.sin() * 7.5 * s);
@@ -942,7 +936,7 @@ fn icon(g: &Gfx, page: Page, x: f32, y: f32, c: Color) {
         Page::Buttons => {
             // Mouse outline: buttons.
             let (x0, y0) = p(7.0, 3.0);
-            g.stroke(Rect::new(x0, y0, 10.0 * s, 18.0 * s), 5.0 * s, w, c);
+            g.stroke(Rect::new(x0, y0, 10.0 * s, 18.0 * s), 0.0, w, c);
             let ((lx, ly0), (_, ly1)) = (p(12.0, 4.0), p(12.0, 10.0));
             g.line(lx, ly0, lx, ly1, w, c);
         }
@@ -961,18 +955,18 @@ fn icon(g: &Gfx, page: Page, x: f32, y: f32, c: Color) {
                 let gap = (KNOB + 1.5) * s;
                 g.line(x0, y0, kx - gap, y0, w, c);
                 g.line(kx + gap, y0, x1, y0, w, c);
-                g.ring(kx, ky, KNOB * s, w, c);
+                g.frame(kx, ky, KNOB * s, w, c);
             }
         }
     }
 }
 
-/// Circled "i" (About), on the same 20 px grid as `icon`.
+/// Boxed "i" (About), on the same 20 px grid as `icon`.
 fn info_icon(g: &Gfx, x: f32, y: f32, c: Color) {
     const S: f32 = ICON_SCALE;
     let (cx, cy) = (x + 12.0 * S, y + 12.0 * S);
-    g.ring(cx, cy, 9.0 * S, ICON_STROKE, c);
-    g.circle(cx, cy - 4.0 * S, 1.3, c);
+    g.frame(cx, cy, 9.0 * S, ICON_STROKE, c);
+    g.dot(cx, cy - 4.0 * S, 1.3, c);
     g.line(cx, cy - 1.0 * S, cx, cy + 5.0 * S, ICON_STROKE, c);
 }
 
@@ -1457,10 +1451,7 @@ fn dpi_single(f: &mut Frame, v: &View) {
     let (x0, x1, cy) = (card.x + 30.0, card.x + card.w - 30.0, card.y + 106.0);
     let idx = v.basic.dpi.and_then(|d| vals.iter().position(|&x| x >= d)).unwrap_or(0);
     let kx = x0 + (x1 - x0) * idx as f32 / (vals.len() - 1) as f32;
-    f.g.fill(Rect::new(x0, cy - 2.0, x1 - x0, 4.0), 2.0, th().border);
-    f.g.fill(Rect::new(x0, cy - 2.0, kx - x0, 4.0), 2.0, th().accent);
-    f.g.circle(kx, cy, 9.0, th().card_hi);
-    f.g.circle(kx, cy, 6.5, th().accent);
+    slider_mark(f.g, x0, x1, kx, cy, th().acc_fill);
     let area = Rect::new(x0 - 10.0, cy - 16.0, x1 - x0 + 20.0, 32.0);
     f.hits.push(Hit { act: Act::BasicDpi, rect: area, kind: Kind::Slider { x0, x1, steps: vals.len() } });
 
@@ -1503,9 +1494,9 @@ fn dpi(f: &mut Frame, v: &View) {
         if s.enabled {
             f.button(Act::Activate(i), radio);
         }
-        f.g.ring(card.x + 30.0, cy, 8.0, 2.0, if active { th().accent } else { th().faint });
+        f.g.frame(card.x + 30.0, cy, 8.0, 2.0, if active { th().accent } else { th().faint });
         if active {
-            f.g.circle(card.x + 30.0, cy, 4.0, th().accent);
+            f.g.dot(card.x + 30.0, cy, 4.0, th().accent);
         }
 
         let num_c = if s.enabled { th().text } else { th().faint };
@@ -1519,20 +1510,17 @@ fn dpi(f: &mut Frame, v: &View) {
         let (dx, dot) = (card.x + COL_COLOR + 12.0, Color::rgb(v.dpi_colors[i]));
         let hot = f.button(Act::DpiColor(i), Rect::new(dx - 12.0, cy - 12.0, 24.0, 24.0));
         if hot {
-            f.g.ring(dx, cy, 10.0, 1.5, th().muted);
+            f.g.frame(dx, cy, 10.0, 1.5, th().muted);
         }
-        f.g.circle(dx, cy, 7.0, dot);
-        f.g.ring(dx, cy, 7.0, 1.0, th().border);
+        f.g.dot(dx, cy, 7.0, dot);
+        f.g.frame(dx, cy, 7.0, 1.0, th().border);
 
         // Slider.
         let (x0, x1) = (card.x + COL_DPI + 8.0, card.x + card.w - 120.0);
         let t = s.index as f32 / (v.steps - 1).max(1) as f32;
         let kx = x0 + (x1 - x0) * t;
-        let track_c = if s.enabled { th().accent } else { th().faint };
-        f.g.fill(Rect::new(x0, cy - 2.0, x1 - x0, 4.0), 2.0, th().border);
-        f.g.fill(Rect::new(x0, cy - 2.0, kx - x0, 4.0), 2.0, track_c);
-        f.g.circle(kx, cy, 9.0, th().card_hi);
-        f.g.circle(kx, cy, 6.5, track_c);
+        let track_c = if s.enabled { th().acc_fill } else { th().line2 };
+        slider_mark(f.g, x0, x1, kx, cy, track_c);
         if s.enabled {
             let area = Rect::new(x0 - 10.0, y + 6.0, x1 - x0 + 20.0, ROW - 12.0);
             f.hits.push(Hit { act: Act::Slider(i), rect: area, kind: Kind::Slider { x0, x1, steps: v.steps } });
@@ -1607,17 +1595,20 @@ fn performance(f: &mut Frame, v: &View) {
     }
 }
 
-/// Color swatch; `selected` draws a ring around it.
+/// Color swatch: a bordered square; the selected one gets a ring in the
+/// text color at a 2 px gap.
 fn swatch(f: &mut Frame, act: Act, cx: f32, cy: f32, color: u32, selected: bool) {
+    const HALF: f32 = 11.0;
+    const GAP: f32 = 3.0;
     let hot = f.button(act, Rect::new(cx - 15.0, cy - 15.0, 30.0, 30.0));
     if selected || hot {
-        f.g.ring(cx, cy, 14.5, 2.0, if selected { th().text } else { th().muted });
+        f.g.frame(cx, cy, HALF + GAP, 1.0, if selected { th().text } else { th().muted });
     }
-    f.g.circle(cx, cy, 11.0, Color::rgb(color));
-    f.g.ring(cx, cy, 11.0, 1.0, th().border);
+    f.g.dot(cx, cy, HALF, Color::rgb(color));
+    f.g.frame(cx, cy, HALF, 1.0, th().line2);
 }
 
-/// Pill chip with an arrow glyph before its label, e.g. "→ Forward".
+/// Segment with an arrow glyph before its label, e.g. "→ Forward".
 fn direction_chip(f: &mut Frame, act: Act, r: Rect, arrow: Glyph, label: &str, selected: bool) {
     const GLYPH_W: f32 = 16.0;
     f.choice(act, r, "", "", selected);
@@ -1906,12 +1897,9 @@ fn theme_tile(f: &mut Frame, act: Act, r: Rect, t: &Theme, name: &str, selected:
     f.g.fill(r, R_CTRL, t.bg);
     let (bw, bc) = if selected { (2.0, th().accent) } else if hot { (1.5, th().muted) } else { (1.0, th().border) };
     f.g.stroke(r, R_CTRL, bw, bc);
-    if selected {
-        check_badge(f.g, r);
-    }
 
     for (k, c) in [t.card, t.accent, t.text].into_iter().enumerate() {
-        f.g.circle(r.x + 16.0 + k as f32 * 14.0, r.y + 18.0, 5.5, c);
+        f.g.dot(r.x + 16.0 + k as f32 * 14.0, r.y + 18.0, 5.5, c);
     }
     let label = Rect::new(r.x + 10.0, r.y + 30.0, r.w - 20.0, 22.0);
     f.g.text(name, label, Size::Caption, Weight::Semibold, Align::Left, t.text);
