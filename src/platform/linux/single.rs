@@ -103,7 +103,12 @@ pub fn listen(on_show: impl Fn() + Send + 'static, on_quit: impl Fn() + Send + '
     std::thread::Builder::new()
         .name("single".into())
         .spawn(move || {
-            for mut s in listener.incoming().flatten() {
+            for conn in listener.incoming() {
+                // A lasting error (no file descriptors left) must not spin a core.
+                let Ok(mut s) = conn else {
+                    std::thread::sleep(RETRY_GAP);
+                    continue;
+                };
                 // A client that never writes must not block the next one.
                 let _ = s.set_read_timeout(Some(READ_LIMIT));
                 let mut b = [0u8; 1];
