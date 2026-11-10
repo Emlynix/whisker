@@ -64,9 +64,10 @@ const HTTP_REDIRECTS: [u16; 5] = [301, 302, 303, 307, 308];
 
 /// Hosts the manifests may come from (redirects included).
 const MANIFEST_HOSTS: [&str; 2] = ["whisker.emlynix.com", "api.github.com"];
-/// Hosts a binary may be downloaded from (redirects included).
+/// Hosts a binary may be downloaded from (redirects included):
+/// dl.emlynix.com mirrors the GitHub release files.
 const DOWNLOAD_HOSTS: [&str; 4] =
-    ["whisker.emlynix.com", "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"];
+    ["dl.emlynix.com", "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"];
 
 /// Suffixes of the files next to the exe during a swap.
 const NEW_SUFFIX: &str = ".new";
@@ -543,15 +544,24 @@ mod tests {
     }
 
     #[test]
+    fn binaries_come_from_the_download_server() {
+        // Manifest on the web, files on dl.emlynix.com (mirror of GitHub).
+        let dl = Url::parse("https://dl.emlynix.com/whisker/0.9.1/whisker-windows-x86_64.exe").unwrap();
+        assert!(Purpose::Binary.allows(&dl) && Purpose::Signature.allows(&dl));
+        assert!(!Purpose::Manifest.allows(&dl));
+        assert!(!Purpose::Binary.allows(&Url::parse("https://whisker.emlynix.com/w.exe").unwrap()));
+    }
+
+    #[test]
     fn latest_json_is_read() {
         let text = format!(
             r#"{{"version":"0.9.1","date":"2026-11-20","notes":"Fixes.\r\n- a\u0007b\u202e","assets":{{
-                "windows-x86_64":{{"url":"https://whisker.emlynix.com/whisker.exe","sha256":"{HEX}"}},
+                "windows-x86_64":{{"url":"https://dl.emlynix.com/whisker/0.9.1/whisker.exe","sha256":"{HEX}"}},
                 "macos-universal":{{"url":"https://evil.example/w.zip","sha256":"{HEX}"}}}}}}"#
         );
         let m = parse_manifest(&text, "windows-x86_64").unwrap();
         assert_eq!((m.version, m.date.as_str(), m.notes.as_str()), (v("0.9.1"), "2026-11-20", "Fixes.\n- ab"));
-        assert_eq!(m.asset.unwrap().url.host, "whisker.emlynix.com");
+        assert_eq!(m.asset.unwrap().url.host, "dl.emlynix.com");
         // A base64 signature next to the hash; unsigned when absent.
         let signed = text.replacen(r#""sha256":"#, r#""sig":"aGVsbG8=","sha256":"#, 1);
         assert_eq!(parse_manifest(&signed, "windows-x86_64").unwrap().asset.unwrap().sig, Signature::Inline(b"hello".to_vec()));
