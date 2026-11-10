@@ -85,7 +85,7 @@ pub struct ReportLayout {
     /// Report ids of input, output and feature reports, sorted, distinct;
     /// empty for unnumbered reports.
     pub report_ids: Vec<u8>,
-    /// Raw report descriptor where the OS exposes it (macOS; not Windows).
+    /// Raw report descriptor where the OS exposes it (Linux; not Windows).
     pub descriptor: Option<Vec<u8>>,
     /// Short caps lines, e.g. `"input id 2: buttons 0x09:0x01-0x05"`.
     /// Never holds paths or serials.
@@ -146,8 +146,8 @@ pub fn mouse_devices() -> Vec<HidDevice> {
     out
 }
 
-/// `mouse` and the other collections of its device, each once (macOS
-/// shares one path per device, so usage keeps them apart), mouse first.
+/// `mouse` and the other collections of its device, each once (Linux
+/// shares one hidraw node per device, so usage keeps them apart), mouse first.
 fn siblings(mouse: Interface, info: &DeviceInfo) -> Vec<Interface> {
     let same = |i: &Interface| (i.info.vid, i.info.pid) == (info.vid, info.pid) && bt_address(&i.path) == info.bt_address;
     let key = |i: &Interface| (i.path.clone(), i.usage_page, i.usage);
@@ -167,7 +167,7 @@ fn siblings(mouse: Interface, info: &DeviceInfo) -> Vec<Interface> {
 /// Report ids declared in a raw report descriptor, sorted, distinct.
 /// Walks short items for Report ID (`0x85 id`); skips long items; stops
 /// at a truncated item, so garbage never panics.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))] // Windows reads ids from caps
+#[cfg_attr(windows, allow(dead_code))] // Windows reads ids from caps
 pub fn report_ids(desc: &[u8]) -> Vec<u8> {
     let mut ids = Vec::new();
     let mut at = 0;

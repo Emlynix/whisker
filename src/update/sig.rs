@@ -172,6 +172,6 @@ mod tests {
         assert!(check("windows-x86_64", "0.9.1"));
         // The same file claimed as another version or platform: refused.
         assert!(!check("windows-x86_64", "99.0.0"));
-        assert!(!check("macos-universal", "0.9.1"));
+        assert!(!check("linux-x86_64", "0.9.1"));
     }
 }

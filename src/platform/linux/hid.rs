@@ -3,9 +3,8 @@
 //! with `read`/`write` and the `HIDIOC*FEATURE` ioctls. Knows nothing
 //! about any protocol.
 //!
-//! One hidraw node carries all top-level collections of a device; as on
-//! macOS each collection becomes its own `Interface`, all with the node's
-//! path. Bluetooth devices get their address appended in the shape
+//! One hidraw node carries all top-level collections of a device; each
+//! collection becomes its own `Interface`, all with the node's path. Bluetooth devices get their address appended in the shape
 //! `hid_link` reads from Windows paths:
 //!
 //! ```text

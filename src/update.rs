@@ -19,8 +19,8 @@
 //!   "date": "2026-11-20",                  YYYY-MM-DD
 //!   "notes": "plain text changelog",       shown as plain text, capped
 //!   "assets": {
-//!     "windows-x86_64":  { "url": "https://…/whisker.exe", "sha256": "<64 hex>" },
-//!     "macos-universal": { "url": "https://…/whisker-macos.zip", "sha256": "<64 hex>" }
+//!     "windows-x86_64": { "url": "https://…/whisker.exe", "sha256": "<64 hex>" },
+//!     "linux-x86_64":   { "url": "https://…/whisker-linux", "sha256": "<64 hex>" }
 //!   }
 //! }
 //! ```
@@ -84,11 +84,9 @@ struct Target {
 
 #[cfg(all(windows, target_arch = "x86_64"))]
 const TARGET: Option<Target> = Some(Target { key: "windows-x86_64", asset: "whisker-windows-x86_64.exe" });
-#[cfg(target_os = "macos")]
-const TARGET: Option<Target> = Some(Target { key: "macos-universal", asset: "whisker-macos-universal.zip" });
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const TARGET: Option<Target> = Some(Target { key: "linux-x86_64", asset: "whisker-linux-x86_64" });
-#[cfg(not(any(all(windows, target_arch = "x86_64"), target_os = "macos", all(target_os = "linux", target_arch = "x86_64"))))]
+#[cfg(not(any(all(windows, target_arch = "x86_64"), all(target_os = "linux", target_arch = "x86_64"))))]
 const TARGET: Option<Target> = None;
 
 /// `major.minor.patch`; ordered.
@@ -557,7 +555,7 @@ mod tests {
         let text = format!(
             r#"{{"version":"0.9.1","date":"2026-11-20","notes":"Fixes.\r\n- a\u0007b\u202e","assets":{{
                 "windows-x86_64":{{"url":"https://dl.emlynix.com/whisker/0.9.1/whisker.exe","sha256":"{HEX}"}},
-                "macos-universal":{{"url":"https://evil.example/w.zip","sha256":"{HEX}"}}}}}}"#
+                "linux-x86_64":{{"url":"https://evil.example/w","sha256":"{HEX}"}}}}}}"#
         );
         let m = parse_manifest(&text, "windows-x86_64").unwrap();
         assert_eq!((m.version, m.date.as_str(), m.notes.as_str()), (v("0.9.1"), "2026-11-20", "Fixes.\n- ab"));
@@ -567,7 +565,7 @@ mod tests {
         assert_eq!(parse_manifest(&signed, "windows-x86_64").unwrap().asset.unwrap().sig, Signature::Inline(b"hello".to_vec()));
         assert_eq!(parse_manifest(&text, "windows-x86_64").unwrap().asset.unwrap().sig, Signature::Missing);
         // Disallowed host or missing platform: release known, nothing to download.
-        assert_eq!(parse_manifest(&text, "macos-universal").unwrap().asset, None);
+        assert_eq!(parse_manifest(&text, "linux-x86_64").unwrap().asset, None);
         assert_eq!(parse_manifest(&text, "linux-x86_64").unwrap().asset, None);
         // Bad hash or version.
         assert_eq!(parse_manifest(&text.replace(HEX, "abc"), "windows-x86_64").unwrap().asset, None);

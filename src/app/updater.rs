@@ -121,7 +121,7 @@ impl Controller {
         }
     }
 
-    /// Downloads and installs off the UI thread; macOS opens the page.
+    /// Downloads and installs off the UI thread; Linux opens the page.
     pub(super) fn install_update(&mut self) {
         if install_kind() == Install::Page {
             platform::open_url(SITE_URL);

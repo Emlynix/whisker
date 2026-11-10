@@ -1,7 +1,7 @@
 # Whisker
 
 A lightweight control app for gaming mice. One small native program for
-Windows, Linux and macOS instead of a heavy vendor suite: set DPI, report
+Windows and Linux instead of a heavy vendor suite: set DPI, report
 rate, lighting and buttons, watch the battery, and see how much you click.
 An open-source alternative to Razer Synapse, Logitech G Hub and similar
 mouse software.
@@ -63,9 +63,6 @@ exact command when access is missing; it installs
 [bundle/linux/70-whisker.rules](bundle/linux/70-whisker.rules), which gives
 the logged-in user access to mice of the supported brands only.
 
-**macOS** – `whisker-macos-universal.zip`. Not yet signed: open it the first
-time with right click → Open.
-
 ## Privacy
 
 Whisker works offline. Its only network connection is a daily update check
@@ -85,8 +82,6 @@ cargo build --release
 
 - **Linux:** install the GTK 3 development package first
   (`libgtk-3-dev` on Debian / Ubuntu, `gtk3-devel` on Fedora).
-- **macOS:** `cargo build --release --target aarch64-apple-darwin`, then
-  `bundle/macos/make-app.sh aarch64-apple-darwin` builds `Whisker.app`.
 
 Run the tests with `cargo test`.
 

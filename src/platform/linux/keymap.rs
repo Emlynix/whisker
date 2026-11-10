@@ -123,7 +123,7 @@ const TABLE: &[(u16, u16, bool)] = &[
     (192, 0x85, false),
     (193, 0x86, false),
     (194, 0x87, false),
-    // Modifiers (left/right kept apart like macOS).
+    // Modifiers (left/right kept apart).
     (42, 0xA0, false),  // Left Shift
     (54, 0xA1, false),  // Right Shift
     (29, 0x11, false),  // Left Control

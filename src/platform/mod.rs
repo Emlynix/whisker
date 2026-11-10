@@ -8,20 +8,20 @@
 //!        |  gfx::Gfx, hid::Channel, window::post, …
 //!   platform  (this module: contract types + cfg switch)
 //!        |
-//!   windows (Win32, D2D)  |  linux (GTK 3, Cairo)  |  macos (AppKit, IOKit)
+//!   windows (Win32, D2D)  |  linux (GTK 3, Cairo)
 //! ```
 //!
 //! # Contract
 //!
 //! Root functions:
 //! - `config_dir() -> Option<PathBuf>`: per-user settings base folder
-//!   (`%APPDATA%`, `~/.config`, `~/Library/Application Support`).
+//!   (`%APPDATA%`, `~/.config`).
 //! - `dark_mode() -> bool`: the OS asks apps for a dark theme.
 //! - `user_locale() -> Option<String>`: UI language as a locale name,
 //!   e.g. `"sk-SK"`; `i18n` maps it to a `Lang`.
 //! - `today() -> (i64, i64, i64)`: local date as (year, month, day).
 //! - `os_version() -> String`: OS name and version for bug reports, e.g.
-//!   `"Windows 11 26300"`, `"macOS 15.1.0"`.
+//!   `"Windows 11 26300"`, `"Ubuntu 26.04 LTS (Linux 6.6.87)"`.
 //! - `open_url(url) -> bool`: opens an `http(s)` link in the default
 //!   browser; any other scheme is refused (`is_web_url`).
 //!
@@ -34,9 +34,7 @@
 //! - `set_timer(id, ms)`, `kill_timer(id)`: repeating timer to `Hooks::timer`.
 //! - `set_title_colors(TitleColors)`: title bar in the theme's colours.
 //!   Windows 11 sets caption, text and border colours; Windows 10 only
-//!   switches dark/light (`shade`). macOS draws a transparent title bar
-//!   over the window background with the matching appearance. Linux: the
-//!   GTK header bar styled in the colours, plus the dark/light variant.
+//!   switches dark/light (`shade`). Linux: the GTK header bar styled in the colours, plus the dark/light variant.
 //! - `modifiers() -> shell::Mods`: modifier keys held now.
 //! - `set_clipboard(text) -> bool`: replaces the clipboard with plain text
 //!   (the window owns it on Windows).
@@ -44,8 +42,7 @@
 //!   Tray clicks arrive as `Hooks::tray` (left = open, menu = open/about/quit).
 //! - `notify(title, text)`: system notification from the tray icon; a click
 //!   on it arrives as `TrayAction::Open`. Windows: tray balloon (`NIF_INFO`,
-//!   shown as a toast). macOS: no-op (needs a signed bundle). Linux:
-//!   `org.freedesktop.Notifications`.
+//!   shown as a toast). Linux: `org.freedesktop.Notifications`.
 //!
 //! `gfx::Gfx` — drawing in DIPs, given to `Hooks::draw` per frame:
 //! `clear(c)`, `fill(r, radius, c)`, `stroke(r, radius, width, c)` (inside
@@ -55,7 +52,7 @@
 //! move / line / cubic curve / close; round caps and joins),
 //! `text(s, r, size, weight, align, c)`: system UI font at a `gfx::Size` of
 //! the type ramp, in its `Face` (Windows: Segoe UI Variable Text / Display,
-//! Segoe UI where missing; macOS: system font), with the size's letter
+//! Segoe UI where missing; Linux: Pango's UI font), with the size's letter
 //! spacing; a one-line text wider than `r` ends in "…".
 //!
 //! `hid` — HID collections, descriptors read without sending anything:
@@ -64,9 +61,9 @@
 //! - `layout(path) -> Option<hid_link::ReportLayout>`: transport, USB
 //!   interface number, report sizes and ids of a collection, for bug
 //!   reports; never opened for I/O. Windows: `HidP_*` caps as `summary`
-//!   lines, no raw descriptor. macOS: registry properties and the raw
-//!   `ReportDescriptor` (ids parsed by `hid_link::report_ids`), shared by
-//!   all collections of the device.
+//!   lines, no raw descriptor. Linux: the hidraw node's raw report
+//!   descriptor (ids parsed by `hid_link::report_ids`), shared by all
+//!   collections of the device.
 //! - `Channel` (`Send`): `open(path) -> Option<Channel>`,
 //!   `write(report, timeout) -> bool` (output report, byte 0 = id),
 //!   `read(len, timeout) -> Option<Vec<u8>>` (next input report),
@@ -74,7 +71,7 @@
 //!   `set_feature(report) -> bool`, `get_feature(buf) -> bool` (`buf[0]` = id).
 //! - `access(vid) -> Access`: whether the user may open the vendor's
 //!   devices. Linux: `Denied` when a hidraw node exists but none is
-//!   readable and writable (no udev rule). Windows, macOS: `Granted`.
+//!   readable and writable (no udev rule). Windows: `Granted`.
 //! - `grant_command(dir) -> Option<String>`: Linux writes the bundled
 //!   udev rule into `dir` and returns the shell command installing it;
 //!   `None` elsewhere.
@@ -101,13 +98,11 @@
 //! `net` — `get(&Fetch) -> Result<Reply, NetError>`: one HTTPS GET to port
 //! 443 (blocking), certificate checked by the OS, no redirects followed, no
 //! cookies or credentials sent; body cut off past `limit` (`TooLarge`),
-//! whole request bounded by `timeout`. Windows: WinHTTP. macOS, Linux:
+//! whole request bounded by `timeout`. Windows: WinHTTP. Linux:
 //! `/usr/bin/curl` with fixed arguments.
 //!
 //! `UPDATE_KIND: UpdateKind` — how a downloaded update is installed:
-//! Windows swaps the exe in place, macOS opens the release page (a signed
-//! bundle can't be replaced file by file yet).
-//! Linux opens the release page too.
+//! Windows swaps the exe in place, Linux opens the release page.
 
 use crate::gfx::Color;
 
@@ -132,10 +127,7 @@ fn is_web_url(url: &str) -> bool {
 #[derive(Clone, Copy)]
 pub struct TitleColors {
     pub bg: Color,
-    // macOS draws title text and border itself.
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
     pub text: Color,
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
     pub border: Color,
     /// Fallback where custom colours are not supported.
     pub shade: Shade,
@@ -213,7 +205,7 @@ pub enum NetError {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum UpdateKind {
     /// Download, verify, replace the exe, restart.
-    #[cfg_attr(any(target_os = "macos", target_os = "linux"), allow(dead_code))]
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     InPlace,
     /// Open the release page in the browser.
     #[cfg_attr(windows, allow(dead_code))]
@@ -230,10 +222,6 @@ mod linux;
 #[cfg(target_os = "linux")]
 pub use self::linux::*;
 
-#[cfg(target_os = "macos")]
-mod macos;
-#[cfg(target_os = "macos")]
-pub use self::macos::*;
 
 #[cfg(test)]
 mod tests {

@@ -70,7 +70,7 @@ const REPO_URL: &str = "https://github.com/Emlynix/whisker";
 const SITE_URL: &str = "https://whisker.emlynix.com";
 const NEW_ISSUE_URL: &str = "https://github.com/Emlynix/whisker/issues/new";
 
-/// Windows virtual-key codes the controller reacts to (macOS maps to them).
+/// Windows virtual-key codes the controller reacts to (Linux maps to them).
 const VK_TAB: u16 = 0x09;
 const VK_RETURN: u16 = 0x0D;
 const VK_ESCAPE: u16 = 0x1B;
@@ -1050,9 +1050,9 @@ fn mask_address(value: &str) -> String {
     format!("{head}{sep}{}", masked.join(":"))
 }
 
-/// Ctrl (Cmd on macOS) is the shortcut modifier.
+/// Ctrl is the shortcut modifier.
 fn command_key(m: Mods) -> bool {
-    m.ctrl || (cfg!(target_os = "macos") && m.win)
+    m.ctrl
 }
 
 /// Ctrl+1..6 opens the nth page of the sidebar, Ctrl+, Settings.
