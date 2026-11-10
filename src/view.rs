@@ -1308,8 +1308,8 @@ fn dpi(f: &mut Frame, v: &View) {
     const HEAD: f32 = 34.0;
     // Column x offsets: active radio, cycle switch, color dot, slider.
     const COL_CYCLE: f32 = 84.0;
-    const COL_COLOR: f32 = 144.0;
-    const COL_DPI: f32 = 204.0;
+    const COL_COLOR: f32 = 162.0;
+    const COL_DPI: f32 = 222.0;
     let card = Rect::new(X0, TOP, CW, HEAD + ROW * v.stages.len() as f32 + 8.0);
     f.card(card);
 

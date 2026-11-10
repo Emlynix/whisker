@@ -1686,8 +1686,8 @@ impl Controller {
     }
 
     /// Debug builds: `WHISKER_OPEN=detect | detect-pick | detect-list | detect-none`
-    /// opens the "which mouse" dialog at start with sample mice, for
-    /// screenshots without clicking.
+    /// opens the "which mouse" dialog at start with sample mice, `dpi` the
+    /// DPI page; for screenshots without clicking.
     #[cfg(debug_assertions)]
     fn debug_open(&mut self) {
         const OPEN_VAR: &str = "WHISKER_OPEN";
@@ -1695,6 +1695,10 @@ impl Controller {
         let Ok(what) = std::env::var(OPEN_VAR) else {
             return;
         };
+        if what == "dpi" {
+            self.on_act(Act::Nav(Page::Dpi));
+            return;
+        }
         let sample = |m: &Model, product: &str| DeviceInfo { vid: m.vid, pid: m.pids[0].0, product: product.into(), ..DeviceInfo::default() };
         let unknown = DeviceInfo { vid: 0x1234, pid: 1, product: "USB Optical Mouse".into(), ..DeviceInfo::default() };
         let mut mice = vec![sample(devices::default_model(), "Lionel"), unknown];
