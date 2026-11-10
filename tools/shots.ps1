@@ -46,10 +46,10 @@ $scenes = @(
     @{ name = "06-buttons-action"; clicks = @(@(80, $NAV.buttons), @(600, 152)) }
     @{ name = "07-buttons-macros"; clicks = @(@(80, $NAV.buttons), @(307, 99)) }
     @{ name = "08-statistics"; clicks = @(, @(80, $NAV.statistics)) }
-    @{ name = "09-statistics-week"; clicks = @(@(80, $NAV.statistics), @(386, 89)) }
+    @{ name = "09-statistics-week"; clicks = @(@(80, $NAV.statistics), @(346, 104)) }
     @{ name = "10-settings-general"; clicks = @(, @(80, $NAV.settings)) }
-    @{ name = "11-settings-appearance"; clicks = @(@(80, $NAV.settings), @(368, 84)) }
-    @{ name = "12-settings-mouse"; clicks = @(@(80, $NAV.settings), @(455, 84)) }
+    @{ name = "11-settings-appearance"; clicks = @(@(80, $NAV.settings), @(320, 99)) }
+    @{ name = "12-settings-mouse"; clicks = @(@(80, $NAV.settings), @(405, 99)) }
     @{ name = "13-about"; clicks = @(, @(80, $NAV.about)) }
     @{ name = "14-picker"; open = "detect" }
     @{ name = "15-picker-list"; open = "detect-list" }
