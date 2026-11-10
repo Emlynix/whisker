@@ -1,7 +1,7 @@
 //! Settings › Mouse tab (hardware info, diagnostics), the "which mouse
 //! do you use?" dialog and the new-mouse banner.
 
-use super::{Act, BODY, CW, Frame, GAP, Glyph, HEIGHT, Mark, Page, Place, R_CTRL, RADIUS, View, WIDTH, X0, glyph, icon, name_lines, text_w, th};
+use super::{Act, BODY, CW, Frame, GAP, Glyph, HEIGHT, Mark, Page, Place, R_CTRL, RADIUS, View, WIDTH, X0, glyph, icon, name_lines, text_link, text_w, th};
 use crate::devices::Support;
 use crate::gfx::{Align, Color, Rect, Size, Weight};
 use crate::i18n::{T, fill, tr};
@@ -172,12 +172,17 @@ pub(super) fn device_page(f: &mut Frame, v: &View) {
     }
 }
 
-/// Raw status bytes and "Copy for support".
+/// Raw status bytes, "Copy for support", and the way to the
+/// diagnostic log (to read, copy or send it at any time).
 fn diagnostics(f: &mut Frame, d: &DeviceView, y: f32) {
     const BTN_W: f32 = 190.0;
+    const LINK_GAP: f32 = 24.0;
     let card = Rect::new(X0, y, CW, 56.0);
     f.card(card);
-    f.caption(tr(T::DevStatus), card.x + PAD, card.y + 8.0);
+    let caption = tr(T::DevStatus);
+    f.caption(caption, card.x + PAD, card.y + 8.0);
+    let link_x = card.x + PAD + text_w(caption, Size::Label) + LINK_GAP;
+    text_link(f, Act::ShowLog, tr(T::ShowLog), link_x, card.y + 6.0);
     let (text, color) = if d.status.is_empty() { (tr(T::NotReported), th().subtle) } else { (d.status.as_str(), th().text) };
     let r = Rect::new(card.x + PAD, card.y + 26.0, card.w - 2.0 * PAD - BTN_W - 12.0, 22.0);
     f.g.text(text, r, Size::Caption, Weight::Normal, Align::Left, color);

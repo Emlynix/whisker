@@ -191,7 +191,8 @@ pub(super) fn report_dialog(f: &mut Frame, r: &ReportView) {
     f.g.stroke(d, RADIUS, 1.0, th().border);
 
     let inner = d.inset(PAD);
-    let title = if r.kind == Kind::Log { T::CrashTitle } else { T::HelpAddMouse };
+    // The log is also opened from Diagnostics, with no crash behind it.
+    let title = if r.kind == Kind::Log { T::Diagnostics } else { T::HelpAddMouse };
     f.g.text(tr(title), Rect::new(inner.x, inner.y, inner.w - 160.0, 28.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
     let step = match r.step {
         Step::Finding | Step::Pick => 1,
