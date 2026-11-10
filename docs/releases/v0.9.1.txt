@@ -1,0 +1,6 @@
+Fixes and bug reporting.
+- "Change mouse" no longer freezes the window
+- No more error in the Windows event log when Whisker closes
+- Tray icon opens the window on a double click
+- Mouse reports and a new diagnostic log can be sent with one click
+- Logitech M510 is supported
