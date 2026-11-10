@@ -1464,6 +1464,14 @@ impl Controller {
             }
             Act::About => self.view.dialog = Some(Dialog::About),
             Act::AssignMacro => self.view.dialog = Some(Dialog::AssignMacro),
+            Act::StageNudge(by) => {
+                let i = self.view.active;
+                let last = protocol::dpi_steps().saturating_sub(1) as i64;
+                let index = self.cfg.dpi.stages.get(i).map(|&at| (at as i64 + by as i64).clamp(0, last) as usize);
+                if let Some(index) = index {
+                    self.set_stage(i, index);
+                }
+            }
             Act::CloseDialog => self.view.dialog = None,
             // Moving the window is the platform's business.
             Act::Caption => {}

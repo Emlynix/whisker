@@ -63,6 +63,13 @@ const TITLE_Y: f32 = TITLE_H + 16.0;
 const TOP: f32 = TITLE_Y + 24.0 + 14.0;
 /// Spacing on a 4 px grid (8 / 12 / 16 / 24).
 const GAP: f32 = 16.0;
+/// Panels: a 36 px header row, 12 px padding, 12 px between panels.
+const PANEL_HEAD: f32 = 36.0;
+const PANEL_PAD: f32 = 12.0;
+const PANEL_GAP: f32 = 12.0;
+/// Height of a segmented control.
+const SEGMENT_H: f32 = 30.0;
+
 /// Sharp and thin: no corner radius anywhere.
 const R_INNER: f32 = 0.0;
 const R_CTRL: f32 = 0.0;
@@ -165,6 +172,8 @@ pub enum Act {
     Activate(usize),
     Toggle(usize),
     Slider(usize),
+    /// DPI page: the active stage one step down (-1) or up (1).
+    StageNudge(i8),
     Polling(usize),
     Period(usize),
     Autostart,
@@ -492,6 +501,60 @@ impl Frame<'_> {
     fn surface(&self, r: Rect, c: Color) {
         self.g.fill(r, 0.0, c);
         self.g.stroke(r, 0.0, 1.0, th().line);
+    }
+
+    /// Panel with a header row: the title on the left, a hairline under
+    /// it. Returns the body below the header.
+    fn panel(&mut self, r: Rect, title: &str) -> Rect {
+        self.card(r);
+        self.g.fill(Rect::new(r.x, r.y + PANEL_HEAD - 1.0, r.w, 1.0), 0.0, th().line);
+        let label = Rect::new(r.x + PANEL_PAD, r.y, r.w - 2.0 * PANEL_PAD, PANEL_HEAD - 1.0);
+        self.g.text(title, label, Size::Body, Weight::Semibold, Align::Left, th().text);
+        Rect::new(r.x, r.y + PANEL_HEAD, r.w, r.h - PANEL_HEAD)
+    }
+
+    /// Caption on the right of a panel header.
+    fn panel_note(&mut self, r: Rect, note: &str) {
+        let label = Rect::new(r.x + r.w / 3.0, r.y, r.w * 2.0 / 3.0 - PANEL_PAD, PANEL_HEAD - 1.0);
+        self.g.text(note, label, Size::Caption, Weight::Normal, Align::Right, th().muted);
+    }
+
+    /// Text link on the right of a panel header.
+    fn panel_link(&mut self, r: Rect, act: Act, label: &str) {
+        let w = text_w(label, Size::Caption) + 4.0;
+        text_link(self, act, label, r.x + r.w - PANEL_PAD - w, r.y + (PANEL_HEAD - 18.0) / 2.0);
+    }
+
+    /// Segmented control: equal cells in one frame, a hairline between
+    /// them. The selected one has a soft accent ground, a 1 px accent
+    /// outline inside and accent text. Labels are values: mono.
+    fn segments(&mut self, r: Rect, items: &[(Act, String, bool)]) {
+        if items.is_empty() {
+            return;
+        }
+        self.g.fill(r, 0.0, th().input);
+        let w = r.w / items.len() as f32;
+        for (k, (act, label, selected)) in items.iter().enumerate() {
+            let cell = Rect::new(r.x + k as f32 * w, r.y, w, r.h);
+            let hot = self.button(*act, cell);
+            if *selected {
+                self.g.fill(cell, 0.0, th().acc_soft);
+            } else if hot {
+                self.g.fill(cell, 0.0, th().sel);
+            }
+            if k > 0 {
+                self.g.fill(Rect::new(cell.x, r.y, 1.0, r.h), 0.0, th().line2);
+            }
+            let (color, weight) = if *selected { (th().acc, Weight::Semibold) } else { (th().text, Weight::Medium) };
+            self.g.text(label, cell, Size::Value, weight, Align::Center, color);
+        }
+        self.g.stroke(r, 0.0, 1.0, th().line2);
+        // Drawn last, over the dividers and the frame.
+        for (k, (_, _, selected)) in items.iter().enumerate() {
+            if *selected {
+                self.g.stroke(Rect::new(r.x + k as f32 * w, r.y, w + 1.0, r.h), 0.0, 1.0, th().acc);
+            }
+        }
     }
 
     fn caption(&mut self, s: &str, x: f32, y: f32) {
@@ -1159,7 +1222,7 @@ fn status_bar(f: &mut Frame, v: &View) {
     f.g.fill(Rect::new(0.0, PAGE_H, WIDTH, 1.0), 0.0, th().line);
     update::status_notice(f, &v.update);
 
-    let (text, c) = status_text(v);
+    let (text, c) = status_line(v);
     let w = text_w(&text, Size::Caption) + DOT + 8.0 + 2.0 * PAD;
     let area = Rect::new(0.0, PAGE_H + 1.0, w, STATUS_H - 1.0);
     if f.button(Act::Nav(Page::Mouse), area) {
@@ -1183,6 +1246,15 @@ fn status_text(v: &View) -> (String, Color) {
         let c = if v.battery < LOW_PCT { th().warn } else { th().good };
         (format!("{} · {}{charging}", tr(T::LinkConnected), battery_text(v)), c)
     }
+}
+
+/// The status text with the firmware version after it, when known.
+fn status_line(v: &View) -> (String, Color) {
+    let (text, c) = status_text(v);
+    if !v.connected || v.device.firmware.is_empty() {
+        return (text, c);
+    }
+    (format!("{text} · FW {}", v.device.firmware), c)
 }
 
 /// Sidebar entry: a page, or About (opens its dialog).
@@ -1257,110 +1329,173 @@ fn pro_item(f: &mut Frame, label: T, icon: ProIcon, r: Rect) {
 /// Value not known yet (no answer from the mouse, no measurement).
 const UNKNOWN: &str = "—";
 
-/// Caption, big value, note; an `UNKNOWN` value shows a skeleton bar.
-fn stat_card(f: &mut Frame, r: Rect, label: &str, value: &str, note: &str) {
-    f.card(r);
-    f.caption_in(label, r.x + 16.0, r.y + 16.0, r.w - 32.0);
-    let value_r = Rect::new(r.x + 16.0, r.y + 34.0, r.w - 32.0, 36.0);
-    if value == UNKNOWN {
-        skeleton(f.g, Rect::new(value_r.x, value_r.y + 8.0, 88.0, 22.0));
-    } else {
-        f.g.text(value, value_r, Size::Title, Weight::Bold, Align::Left, th().text);
-    }
-    f.g.text(note, Rect::new(r.x + 16.0, r.y + 74.0, r.w - 32.0, 32.0), Size::Caption, Weight::Normal, Align::Wrap, th().muted);
+/// One cell of a stat strip: caption, big number with its unit, then a
+/// progress bar and a note.
+struct Stat<'a> {
+    label: &'a str,
+    /// `UNKNOWN` shows a skeleton bar; empty shows the note alone.
+    value: String,
+    unit: &'a str,
+    note: String,
+    /// Percent and color of the bar under the number.
+    bar: Option<(u8, Color)>,
 }
 
+/// The numbers of a page at a glance: equal cells in one panel, split by
+/// hairlines, with "+" marks on the outer corners.
+///
+/// ```text
+///  +                                              +
+///   Battery     | DPI          | Polling rate | Today
+///   78 %        | 2400         | 500 Hz       | 1 853
+///   ━━━━━━──    | Stage 3 of 6 |              | clicks · 36 m moved
+///   ≈ 21 days
+///  +                                              +
+/// ```
+fn stat_strip(f: &mut Frame, r: Rect, cells: &[Stat]) {
+    const PAD_X: f32 = 14.0;
+    const PAD_Y: f32 = 12.0;
+    const VALUE_Y: f32 = 30.0;
+    const VALUE_H: f32 = 34.0;
+    const BAR_H: f32 = 4.0;
+    f.card(r);
+    corner_marks(f.g, r);
+
+    let w = r.w / cells.len().max(1) as f32;
+    for (k, c) in cells.iter().enumerate() {
+        let x = r.x + k as f32 * w;
+        if k > 0 {
+            f.g.fill(Rect::new(x, r.y, 1.0, r.h), 0.0, th().line);
+        }
+        let (cx, cw) = (x + PAD_X, w - 2.0 * PAD_X);
+        f.g.text(c.label, Rect::new(cx, r.y + PAD_Y, cw, 16.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
+
+        let value = Rect::new(cx, r.y + VALUE_Y, cw, VALUE_H);
+        let mut below = value.y + VALUE_H + 6.0;
+        if c.value == UNKNOWN {
+            skeleton(f.g, Rect::new(value.x, value.y + 8.0, 72.0, 20.0));
+        } else if c.value.is_empty() {
+            // No number to show: the note takes its place.
+            below = value.y + 8.0;
+        } else {
+            f.g.text(&c.value, value, Size::Hero, Weight::Medium, Align::Left, th().text);
+            let unit_x = value.x + text_w(&c.value, Size::Hero) + 6.0;
+            f.g.text(c.unit, Rect::new(unit_x, value.y + 13.0, cw, 16.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
+        }
+        if let Some((pct, color)) = c.bar {
+            f.bar(Rect::new(cx, below, cw, BAR_H), pct, color);
+            below += BAR_H + 6.0;
+        }
+        f.g.text(&c.note, Rect::new(cx, below, cw, 32.0), Size::Caption, Weight::Normal, Align::Wrap, th().muted);
+    }
+}
+
+/// Crosshair marks "+" centered on the outer corners of `r`: the one
+/// ornament of the Overview strip.
+fn corner_marks(g: &Gfx, r: Rect) {
+    const ARM: f32 = 4.5;
+    for (x, y) in [(r.x, r.y), (r.x + r.w, r.y), (r.x, r.y + r.h), (r.x + r.w, r.y + r.h)] {
+        let (x, y) = (x - 0.5, y - 0.5);
+        g.line(x - ARM, y + 0.5, x + ARM + 1.0, y + 0.5, 1.0, th().line2);
+        g.line(x + 0.5, y - ARM, x + 0.5, y + ARM + 1.0, 1.0, th().line2);
+    }
+}
+
+/// "500 Hz" -> ("500", "Hz"); a value without a unit keeps it empty.
+fn split_unit(value: &str) -> (String, &str) {
+    match value.rsplit_once(' ') {
+        Some((number, unit)) if number.chars().any(|c| c.is_ascii_digit()) && !unit.chars().any(|c| c.is_ascii_digit()) => (number.to_string(), unit),
+        _ => (value.to_string(), ""),
+    }
+}
+
+/// Overview: what the mouse reports, as one strip of numbers; then the
+/// quick DPI switch and the profile switch of the PRO version.
 fn overview(f: &mut Frame, v: &View) {
-    if !v.caps.battery {
-        overview_basic(f, v);
-        return;
+    const STRIP_H: f32 = 108.0;
+    let mut cells = Vec::new();
+
+    // Battery: from the mouse's driver, or from the OS for a Bluetooth mouse.
+    if v.caps.battery || (v.connected && v.has_battery) {
+        let shown = v.connected && v.has_battery;
+        // "78 %" or "≈ 50 %": the number, then its unit.
+        let (value, unit) = if shown { (battery_text(v).trim_end_matches(" %").to_string(), "%") } else { (UNKNOWN.to_string(), "") };
+        let note = if shown { battery_hint(v) } else { v.link.as_str() };
+        cells.push(Stat { label: tr(T::Battery), value, unit, note: note.to_string(), bar: Some((if shown { v.battery } else { 0 }, battery_color(v))) });
     }
-    let tint = battery_color(v);
 
-    // Hero: battery level, bar and note, the mouse drawing on the right.
-    const ART_W: f32 = 52.0;
-    const ART_H: f32 = 78.0;
-    const SIDE_PAD: f32 = 20.0;
-    let card = Rect::new(X0, TOP, CW, 118.0);
-    f.card(card);
-    f.caption(tr(T::Battery), card.x + SIDE_PAD, card.y + 22.0);
-    let shown = v.connected && v.has_battery;
-    if shown {
-        let big = Rect::new(card.x + SIDE_PAD, card.y + 40.0, 170.0, 56.0);
-        f.g.text(&battery_text(v), big, Size::Hero, Weight::Bold, Align::Left, tint);
-    } else {
-        skeleton(f.g, Rect::new(card.x + SIDE_PAD, card.y + 52.0, 120.0, 34.0));
-    }
-    let art = Rect::new(card.x + card.w - SIDE_PAD - ART_W, card.y + (card.h - ART_H) / 2.0, ART_W, ART_H);
-    art::mouse(f, art, art::Marks::None);
-
-    let note = if shown { battery_hint(v) } else { v.link.as_str() };
-    let bar_w = card.w - 200.0 - 2.0 * SIDE_PAD - ART_W;
-    f.bar(Rect::new(card.x + 200.0, card.y + 46.0, bar_w, 10.0), if shown { v.battery } else { 0 }, tint);
-    f.g.text(note, Rect::new(card.x + 200.0, card.y + 64.0, bar_w, 40.0), Size::Body, Weight::Normal, Align::Wrap, th().muted);
-
-    // No DPI card for a mouse that neither sets nor reports DPI (M705).
-    let dpi_card = v.caps.dpi != DpiUi::None || v.basic.dpi.is_some() || v.basic.stage.is_some();
-    let cards = if dpi_card { 3.0 } else { 2.0 };
-    let w = (CW - (cards - 1.0) * GAP) / cards;
-    let y = TOP + 118.0 + GAP;
+    // No DPI cell for a mouse that neither sets nor reports DPI (M705).
     let stages = v.caps.dpi == DpiUi::Stages;
-    let (dpi, note) = match v.stages.get(v.active) {
-        _ if !stages => {
-            let stage_note = match (v.basic.stage, v.basic.stages) {
-                (Some(s), Some(n)) => fill(tr(T::StageOf), &[&s.to_string(), &n.to_string()]),
-                _ => String::new(),
-            };
-            match (v.basic.dpi, v.basic.stage, v.basic.stages) {
-                (Some(d), ..) => (d.to_string(), stage_note),
-                (None, Some(s), Some(n)) => (format!("{s} / {n}"), stage_note),
-                _ => (UNKNOWN.into(), String::new()),
+    if v.caps.dpi != DpiUi::None || v.basic.dpi.is_some() || v.basic.stage.is_some() {
+        let (dpi, note) = match v.stages.get(v.active) {
+            _ if !stages => {
+                let stage_note = match (v.basic.stage, v.basic.stages) {
+                    (Some(s), Some(n)) => fill(tr(T::StageOf), &[&s.to_string(), &n.to_string()]),
+                    _ => String::new(),
+                };
+                match (v.basic.dpi, v.basic.stage, v.basic.stages) {
+                    (Some(d), ..) => (d.to_string(), stage_note),
+                    (None, Some(s), Some(n)) => (format!("{s} / {n}"), stage_note),
+                    _ => (UNKNOWN.into(), String::new()),
+                }
             }
-        }
-        Some(s) => (s.dpi.to_string(), fill(tr(T::StageOf), &[&(v.active + 1).to_string(), &v.stages.iter().filter(|s| s.enabled).count().to_string()])),
-        None => (UNKNOWN.into(), String::new()),
-    };
-    let mut x = X0;
-    if dpi_card {
-        stat_card(f, Rect::new(x, y, w, 110.0), tr(T::ActiveDpi), &dpi, &note);
-        x += w + GAP;
+            Some(s) => (s.dpi.to_string(), fill(tr(T::StageOf), &[&(v.active + 1).to_string(), &v.stages.iter().filter(|s| s.enabled).count().to_string()])),
+            None => (UNKNOWN.into(), String::new()),
+        };
+        cells.push(Stat { label: tr(T::ActiveDpi), value: dpi, unit: "", note, bar: None });
     }
-    let hz = match stages {
-        true => format!("{} Hz", RATES[v.polling]),
-        false => v.basic.rate.map_or(UNKNOWN.into(), |r| format!("{r} Hz")),
-    };
-    if v.caps.polling {
-        // Only a real measurement is worth a line.
-        let note = v.measured.map(|hz| fill(tr(T::MeasuredValue), &[&format!("{hz} Hz")])).unwrap_or_default();
-        stat_card(f, Rect::new(x, y, w, 110.0), tr(T::PollingRate), &hz, &note);
-    } else {
-        // The mouse doesn't report its rate: show what Raw Input measures.
-        rate_card(f, Rect::new(x, y, w, 110.0), v.last_rate);
-    }
-    let today = fill(tr(T::ClicksMoved), &[&v.today_distance]);
-    stat_card(f, Rect::new(x + w + GAP, y, w, 110.0), tr(T::Today), &v.today_clicks, &today);
 
-    // Quick DPI switch: one chip per enabled stage.
-    let mut y = y + 110.0 + GAP;
-    if stages {
-        let card = Rect::new(X0, y, CW, 96.0);
-        f.card(card);
-        f.caption(tr(T::QuickDpi), card.x + 20.0, card.y + 16.0);
-        let mut x = card.x + 20.0;
-        for (i, s) in v.stages.iter().enumerate().filter(|(_, s)| s.enabled) {
-            f.choice(Act::Activate(i), Rect::new(x, card.y + 40.0, 80.0, 38.0), &s.dpi.to_string(), "", i == v.active);
-            x += 88.0;
+    // Polling rate: what the mouse is set to; where it does not tell,
+    // what Raw Input measures while it moves.
+    let (hz, note) = match (v.caps.polling, stages) {
+        (true, true) => (format!("{} Hz", RATES[v.polling]), measured_note(v)),
+        (true, false) => (v.basic.rate.map_or(UNKNOWN.into(), |r| format!("{r} Hz")), measured_note(v)),
+        (false, _) => {
+            let (value, note) = rate_value(v.last_rate);
+            (value, note.to_string())
         }
-        y += card.h + GAP;
+    };
+    let (value, unit) = split_unit(&hz);
+    cells.push(Stat { label: tr(T::PollingRate), value, unit, note, bar: None });
+
+    let today = fill(tr(T::ClicksMoved), &[&v.today_distance]);
+    cells.push(Stat { label: tr(T::Today), value: v.today_clicks.clone(), unit: "", note: today, bar: None });
+
+    stat_strip(f, Rect::new(X0, TOP, CW, STRIP_H), &cells);
+    let mut y = TOP + STRIP_H + PANEL_GAP;
+
+    // Quick DPI switch: one segment per enabled stage.
+    if stages {
+        let panel = Rect::new(X0, y, CW, PANEL_HEAD + SEGMENT_H + 2.0 * PANEL_PAD);
+        let body = f.panel(panel, tr(T::QuickDpi));
+        f.panel_link(panel, Act::Nav(Page::Dpi), tr(T::EditStages));
+        let items: Vec<(Act, String, bool)> =
+            v.stages.iter().enumerate().filter(|(_, s)| s.enabled).map(|(i, s)| (Act::Activate(i), s.dpi.to_string(), i == v.active)).collect();
+        f.segments(Rect::new(body.x + PANEL_PAD, body.y + PANEL_PAD, body.w - 2.0 * PANEL_PAD, SEGMENT_H), &items);
+        y += panel.h + PANEL_GAP;
     }
-    device_line(f, v, y);
+    pro_panel(f, Rect::new(X0, y, CW, PANEL_HEAD + 42.0), tr(T::PageProfiles));
+}
+
+/// A panel of the PRO version: its title with the tag, and one line
+/// saying where it lives. Nothing to press.
+fn pro_panel(f: &mut Frame, r: Rect, title: &str) {
+    let body = f.panel(r, title);
+    pro_tag(f, r.x + PANEL_PAD + text_w(title, Size::Body) + 10.0, r.y + (PANEL_HEAD - 16.0) / 2.0);
+    let note = Rect::new(body.x + PANEL_PAD, body.y, body.w - 2.0 * PANEL_PAD, body.h);
+    f.g.text(tr(T::ProOnly), note, Size::Caption, Weight::Normal, Align::Left, th().muted);
+}
+
+/// "Measured: 498 Hz" once Raw Input has a real measurement.
+fn measured_note(v: &View) -> String {
+    v.measured.map(|hz| fill(tr(T::MeasuredValue), &[&format!("{hz} Hz")])).unwrap_or_default()
 }
 
 fn measured(v: &View) -> String {
     v.measured.map_or(UNKNOWN.into(), |hz| format!("{hz} Hz"))
 }
 
-/// Measured rate card: (value, note); no value until the mouse moved.
+/// Measured rate: (value, note); no value until the mouse moved.
 fn rate_value(last: Option<u32>) -> (String, &'static str) {
     match last {
         Some(hz) => (format!("{hz} Hz"), tr(T::MeasuredMoving)),
@@ -1368,171 +1503,151 @@ fn rate_value(last: Option<u32>) -> (String, &'static str) {
     }
 }
 
-/// "POLLING RATE  125 Hz  Measured while moving", or a muted "Move the
-/// mouse" before the first measurement (no skeleton: nothing is loading).
-fn rate_card(f: &mut Frame, r: Rect, last: Option<u32>) {
-    let (value, note) = rate_value(last);
-    if !value.is_empty() {
-        stat_card(f, r, tr(T::PollingRate), &value, note);
+/// Big DPI number with its unit, as the head of an editor panel.
+fn dpi_number(f: &mut Frame, x: f32, y: f32, dpi: Option<u32>) {
+    const UNIT: &str = "DPI";
+    let Some(d) = dpi else {
+        skeleton(f.g, Rect::new(x, y + 8.0, 96.0, 22.0));
         return;
-    }
-    f.card(r);
-    f.caption_in(tr(T::PollingRate), r.x + 16.0, r.y + 16.0, r.w - 32.0);
-    let hint = Rect::new(r.x + 16.0, r.y + 34.0, r.w - 32.0, 36.0);
-    f.g.text(note, hint, Size::Large, Weight::Normal, Align::Left, th().muted);
+    };
+    let value = d.to_string();
+    f.g.text(&value, Rect::new(x, y, 200.0, 36.0), Size::Hero, Weight::Medium, Align::Left, th().text);
+    let unit_x = x + text_w(&value, Size::Hero) + 6.0;
+    f.g.text(UNIT, Rect::new(unit_x, y + 14.0, 60.0, 16.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
 }
 
-/// "Name · FW 1.77", or the name alone when both don't fit `width`.
-fn device_text(name: &str, fw: &str, width: f32) -> String {
-    let full = format!("{name} · FW {fw}");
-    if fw.is_empty() || text_w(&full, Size::Body) > width {
-        return name.to_string();
+/// Slider with its scale underneath: `labels` spread evenly from end to end.
+fn dpi_slider(f: &mut Frame, act: Act, r: Rect, index: usize, steps: usize, labels: &[u32]) {
+    let (x0, x1, cy) = (r.x + 5.0, r.x + r.w - 5.0, r.y + 10.0);
+    let kx = x0 + (x1 - x0) * index as f32 / (steps - 1).max(1) as f32;
+    slider_mark(f.g, x0, x1, kx, cy, th().acc_fill);
+    f.hits.push(Hit { act, rect: Rect::new(r.x - 5.0, r.y - 4.0, r.w + 10.0, 28.0), kind: Kind::Slider { x0, x1, steps } });
+
+    let last = labels.len().saturating_sub(1).max(1) as f32;
+    for (k, value) in labels.iter().enumerate() {
+        let x = x0 + (x1 - x0) * k as f32 / last;
+        let (rect, align) = match k {
+            0 => (Rect::new(x - 5.0, r.y + 26.0, 80.0, 16.0), Align::Left),
+            _ if k == labels.len() - 1 => (Rect::new(x - 75.0, r.y + 26.0, 80.0, 16.0), Align::Right),
+            _ => (Rect::new(x - 40.0, r.y + 26.0, 80.0, 16.0), Align::Center),
+        };
+        f.g.text(&value.to_string(), rect, Size::Key, Weight::Medium, align, th().muted);
     }
-    full
-}
-
-/// Compact mouse line, e.g. "White Shark Lionel · FW 1.77      Details ›";
-/// opens Settings › Mouse.
-fn device_line(f: &mut Frame, v: &View, y: f32) {
-    const H: f32 = 40.0;
-    let r = Rect::new(X0, y, CW, H);
-    let hot = f.button(Act::Nav(Page::Mouse), r);
-    f.surface(r, if hot { th().hover } else { th().card });
-
-    let details = tr(T::Details);
-    let link_c = if hot { th().accent_hover } else { th().accent };
-    let link_w = text_w(details, Size::Body) + 20.0;
-    let left = Rect::new(r.x + 18.0, r.y, r.w - 52.0 - link_w, H);
-    let text = device_text(&v.device_name, &v.device.firmware, left.w);
-    f.g.text(&text, left, Size::Body, Weight::Normal, Align::Left, th().muted);
-    let right = Rect::new(r.x + r.w - 34.0 - link_w, r.y, link_w, H);
-    f.g.text(details, right, Size::Body, Weight::Semibold, Align::Right, link_c);
-    glyph(f.g, Glyph::ChevronRight, r.x + r.w - 24.0, r.y + H / 2.0, link_c);
-}
-
-/// Overview for a mouse without a driver: model and today's statistics.
-fn overview_basic(f: &mut Frame, v: &View) {
-    let card = Rect::new(X0, TOP, CW, 96.0);
-    f.card(card);
-    f.caption(tr(T::DevModel), card.x + 20.0, card.y + 20.0);
-    f.g.text(&v.device_name, Rect::new(card.x + 20.0, card.y + 40.0, card.w - 240.0, 36.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
-
-    // Bluetooth battery, when Windows reports one.
-    if v.connected && v.has_battery {
-        let tint = battery_color(v);
-        f.caption(tr(T::Battery), card.x + card.w - 200.0, card.y + 20.0);
-        let pct = Rect::new(card.x + card.w - 200.0, card.y + 36.0, 180.0, 30.0);
-        f.g.text(&battery_text(v), pct, Size::Subtitle, Weight::Bold, Align::Left, tint);
-        f.bar(Rect::new(card.x + card.w - 200.0, card.y + 70.0, 180.0, 8.0), v.battery, tint);
-    }
-
-    let w = (CW - GAP) / 2.0;
-    let y = card.y + card.h + GAP;
-    let today = fill(tr(T::ClicksMoved), &[&v.today_distance]);
-    stat_card(f, Rect::new(X0, y, w, 110.0), tr(T::Today), &v.today_clicks, &today);
-    rate_card(f, Rect::new(X0 + w + GAP, y, w, 110.0), v.last_rate);
-    device_line(f, v, y + 110.0 + GAP);
 }
 
 /// One DPI value for driver-based mice: big number and a slider.
 fn dpi_single(f: &mut Frame, v: &View) {
-    let card = Rect::new(X0, TOP, CW, 140.0);
-    f.card(card);
-    f.caption(tr(T::ActiveDpi), card.x + 20.0, card.y + 18.0);
-    match v.basic.dpi {
-        Some(d) => f.g.text(&format!("{d} DPI"), Rect::new(card.x + 20.0, card.y + 36.0, card.w - 40.0, 44.0), Size::Title, Weight::Bold, Align::Left, th().text),
-        None => skeleton(f.g, Rect::new(card.x + 20.0, card.y + 44.0, 140.0, 28.0)),
-    }
+    let panel = Rect::new(X0, TOP, CW, PANEL_HEAD + 116.0);
+    let body = f.panel(panel, tr(T::ActiveDpi));
+    dpi_number(f, body.x + PANEL_PAD, body.y + PANEL_PAD, v.basic.dpi);
 
     let vals = &v.basic.values;
     if vals.len() < 2 {
         return;
     }
-    let (x0, x1, cy) = (card.x + 30.0, card.x + card.w - 30.0, card.y + 106.0);
     let idx = v.basic.dpi.and_then(|d| vals.iter().position(|&x| x >= d)).unwrap_or(0);
-    let kx = x0 + (x1 - x0) * idx as f32 / (vals.len() - 1) as f32;
-    slider_mark(f.g, x0, x1, kx, cy, th().acc_fill);
-    let area = Rect::new(x0 - 10.0, cy - 16.0, x1 - x0 + 20.0, 32.0);
-    f.hits.push(Hit { act: Act::BasicDpi, rect: area, kind: Kind::Slider { x0, x1, steps: vals.len() } });
-
-    let ends = Rect::new(x0, cy + 10.0, x1 - x0, 18.0);
-    f.g.text(&vals[0].to_string(), ends, Size::Caption, Weight::Normal, Align::Left, th().subtle);
-    f.g.text(&vals[vals.len() - 1].to_string(), ends, Size::Caption, Weight::Normal, Align::Right, th().subtle);
+    let track = Rect::new(body.x + PANEL_PAD, body.y + 62.0, body.w - 2.0 * PANEL_PAD, 20.0);
+    dpi_slider(f, Act::BasicDpi, track, idx, vals.len(), &[vals[0], vals[vals.len() - 1]]);
 }
 
+/// DPI stages: the list (a click makes a stage the active one, the box
+/// on the right keeps it in the cycle of the DPI button), and the editor
+/// of the active stage below.
+///
+/// ```text
+///  Stages
+///  Stage 1   1000  ━━──────────────────── | [x]
+///  Stage 3   2400  ━━━━━━━━────────────── | [x]   active: tinted, bar on the left
+///  Stage 3                                 Color ■
+///  2400 DPI                          [-] [+]
+///  ━━━━━━━━━━▮───────────────────────────────
+///  200     2600      5000      7400     10000
+/// ```
 fn dpi(f: &mut Frame, v: &View) {
     if v.caps.dpi == DpiUi::Single {
         dpi_single(f, v);
         return;
     }
-    const ROW: f32 = 52.0;
-    const HEAD: f32 = 34.0;
-    // Column x offsets: active radio, cycle switch, color dot, slider.
-    const COL_CYCLE: f32 = 84.0;
-    const COL_COLOR: f32 = 162.0;
-    const COL_DPI: f32 = 222.0;
-    let card = Rect::new(X0, TOP, CW, HEAD + ROW * v.stages.len() as f32 + 8.0);
-    f.card(card);
-
-    // Column headers instead of help sentences.
-    let hy = card.y + 14.0;
-    f.caption_in(tr(T::ColActive), card.x + 16.0, hy, COL_CYCLE - 20.0);
-    f.caption_in(tr(T::ColCycle), card.x + COL_CYCLE, hy, COL_COLOR - COL_CYCLE - 4.0);
-    f.caption_in(tr(T::ColorCaption), card.x + COL_COLOR, hy, COL_DPI - COL_COLOR - 4.0);
-    f.caption_in("DPI", card.x + COL_DPI, hy, 60.0);
+    const ROW: f32 = 32.0;
+    const CHECK_W: f32 = 44.0;
+    const NAME_W: f32 = 84.0;
+    const VALUE_W: f32 = 56.0;
+    const BAR_H: f32 = 4.0;
+    let panel = Rect::new(X0, TOP, CW, PANEL_HEAD + ROW * v.stages.len() as f32);
+    let body = f.panel(panel, tr(T::Stages));
+    f.panel_note(panel, tr(T::ColCycle));
+    let top_dpi = protocol_dpi(v.steps.saturating_sub(1)).max(1);
 
     for (i, s) in v.stages.iter().enumerate() {
-        let y = card.y + HEAD + i as f32 * ROW;
+        let y = body.y + i as f32 * ROW;
         let active = i == v.active;
+        let row = Rect::new(body.x, y, body.w - CHECK_W, ROW);
+        // A stage out of the cycle is switched on first; it cannot be active.
+        let act = if s.enabled { Act::Activate(i) } else { Act::Toggle(i) };
+        let hot = !active && f.button(act, row);
         if active {
-            f.g.fill(Rect::new(card.x + 8.0, y, card.w - 16.0, ROW), R_CTRL, th().card_hi);
+            f.g.fill(Rect::new(body.x + 1.0, y, body.w - 2.0, ROW), 0.0, th().acc_soft);
+            f.g.fill(Rect::new(body.x, y, 2.0, ROW), 0.0, th().acc_fill);
+        } else if hot {
+            f.g.fill(Rect::new(body.x + 1.0, y, row.w - 1.0, ROW), 0.0, th().sel);
         }
-        let cy = y + ROW / 2.0;
-
-        // Active-stage radio; only enabled stages can be made active.
-        let radio = Rect::new(card.x + 16.0, y + 10.0, 32.0, 32.0);
-        if s.enabled {
-            f.button(Act::Activate(i), radio);
-        }
-        f.g.frame(card.x + 30.0, cy, 8.0, 2.0, if active { th().accent } else { th().faint });
-        if active {
-            f.g.dot(card.x + 30.0, cy, 4.0, th().accent);
+        if i > 0 {
+            f.g.fill(Rect::new(body.x + 1.0, y, body.w - 2.0, 1.0), 0.0, th().line);
         }
 
-        let num_c = if s.enabled { th().text } else { th().faint };
-        f.g.text(&(i + 1).to_string(), Rect::new(card.x + 50.0, y, 16.0, ROW), Size::Body, Weight::Semibold, Align::Left, num_c);
+        let ink = if s.enabled { th().text } else { th().line2 };
+        let weight = if active { Weight::Semibold } else { Weight::Normal };
+        let name = fill(tr(T::StageN), &[&(i + 1).to_string()]);
+        f.g.text(&name, Rect::new(row.x + PANEL_PAD, y, NAME_W, ROW), Size::Body, weight, Align::Left, ink);
+        let value_x = row.x + PANEL_PAD + NAME_W;
+        f.g.text(&s.dpi.to_string(), Rect::new(value_x, y, VALUE_W, ROW), Size::Value, Weight::Semibold, Align::Left, ink);
 
-        // The active stage can't be switched off (note under the card).
+        // The value against the sensor's top DPI.
+        let bar = Rect::new(value_x + VALUE_W + 8.0, y + (ROW - BAR_H) / 2.0, row.x + row.w - PANEL_PAD - (value_x + VALUE_W + 8.0), BAR_H);
+        let bar_c = if active { th().acc_fill } else if s.enabled { th().line2 } else { th().line };
+        f.g.fill(bar, 0.0, th().track);
+        f.g.fill(Rect::new(bar.x, bar.y, bar.w * s.dpi as f32 / top_dpi as f32, BAR_H), 0.0, bar_c);
+
+        // In the cycle or not; the active stage always is.
+        let cell_x = body.x + body.w - CHECK_W;
+        f.g.fill(Rect::new(cell_x, y, 1.0, ROW), 0.0, th().line);
         let toggle_act = (!active).then_some(Act::Toggle(i));
-        f.toggle(toggle_act, card.x + COL_CYCLE, cy - 11.0, s.enabled);
-
-        // Indicator color; click cycles through the palette.
-        let (dx, dot) = (card.x + COL_COLOR + 12.0, Color::rgb(v.dpi_colors[i]));
-        let hot = f.button(Act::DpiColor(i), Rect::new(dx - 12.0, cy - 12.0, 24.0, 24.0));
-        if hot {
-            f.g.frame(dx, cy, 10.0, 1.5, th().muted);
-        }
-        f.g.dot(dx, cy, 7.0, dot);
-        f.g.frame(dx, cy, 7.0, 1.0, th().border);
-
-        // Slider.
-        let (x0, x1) = (card.x + COL_DPI + 8.0, card.x + card.w - 120.0);
-        let t = s.index as f32 / (v.steps - 1).max(1) as f32;
-        let kx = x0 + (x1 - x0) * t;
-        let track_c = if s.enabled { th().acc_fill } else { th().line2 };
-        slider_mark(f.g, x0, x1, kx, cy, track_c);
-        if s.enabled {
-            let area = Rect::new(x0 - 10.0, y + 6.0, x1 - x0 + 20.0, ROW - 12.0);
-            f.hits.push(Hit { act: Act::Slider(i), rect: area, kind: Kind::Slider { x0, x1, steps: v.steps } });
-        }
-
-        let label = Rect::new(card.x + card.w - 108.0, y, 92.0, ROW);
-        f.g.text(&format!("{} DPI", s.dpi), label, Size::Large, Weight::Semibold, Align::Right, num_c);
+        f.toggle(toggle_act, cell_x + (CHECK_W - 14.0) / 2.0, y + (ROW - 22.0) / 2.0, s.enabled);
     }
 
-    // Why the active stage's switch is greyed out.
-    let r = Rect::new(X0, card.y + card.h + 12.0, CW, 36.0);
-    f.g.text(tr(T::ActiveLocked), r, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
+    let Some(s) = v.stages.get(v.active) else {
+        return;
+    };
+    let editor = Rect::new(X0, panel.y + panel.h + PANEL_GAP, CW, PANEL_HEAD + 124.0);
+    let body = f.panel(editor, &fill(tr(T::StageN), &[&(v.active + 1).to_string()]));
+
+    // Indicator color of the stage; a click steps through the palette.
+    const SWATCH: f32 = 16.0;
+    let sx = editor.x + editor.w - PANEL_PAD - SWATCH;
+    let sy = editor.y + (PANEL_HEAD - SWATCH) / 2.0;
+    let hot = f.button(Act::DpiColor(v.active), Rect::new(sx - 4.0, sy - 4.0, SWATCH + 8.0, SWATCH + 8.0));
+    f.g.fill(Rect::new(sx, sy, SWATCH, SWATCH), 0.0, Color::rgb(v.dpi_colors[v.active]));
+    f.g.stroke(Rect::new(sx, sy, SWATCH, SWATCH), 0.0, 1.0, if hot { th().text } else { th().line2 });
+    let caption = Rect::new(editor.x + editor.w / 2.0, editor.y, editor.w / 2.0 - PANEL_PAD - SWATCH - 10.0, PANEL_HEAD - 1.0);
+    f.g.text(tr(T::ColorCaption), caption, Size::Caption, Weight::Normal, Align::Right, th().muted);
+
+    dpi_number(f, body.x + PANEL_PAD, body.y + PANEL_PAD, Some(s.dpi));
+    // One step down or up, for values the slider is too coarse for.
+    const STEP_W: f32 = 28.0;
+    let right = body.x + body.w - PANEL_PAD;
+    let by = body.y + PANEL_PAD + 4.0;
+    f.push_button(Act::StageNudge(-1), Rect::new(right - 2.0 * STEP_W - 6.0, by, STEP_W, 28.0), "−", false);
+    f.push_button(Act::StageNudge(1), Rect::new(right - STEP_W, by, STEP_W, 28.0), "+", false);
+
+    let last = v.steps.saturating_sub(1);
+    let labels: Vec<u32> = (0..=4).map(|k| protocol_dpi(last * k / 4)).collect();
+    let track = Rect::new(body.x + PANEL_PAD, body.y + 66.0, body.w - 2.0 * PANEL_PAD, 20.0);
+    dpi_slider(f, Act::Slider(v.active), track, s.index, v.steps, &labels);
+}
+
+/// DPI of a step of the sensor's table.
+fn protocol_dpi(index: usize) -> u32 {
+    crate::protocol::dpi_of(index)
 }
 
 fn performance(f: &mut Frame, v: &View) {
@@ -1961,15 +2076,6 @@ mod tests {
         // One unbreakable word: left to the "…" trimming.
         let long = "Superlongmodelnamewithoutspaces";
         assert_eq!(name_lines(long, W, Size::Caption), (long.into(), None));
-    }
-
-    #[test]
-    fn device_line_drops_firmware_that_does_not_fit() {
-        const W: f32 = 400.0;
-        const M705: &str = "Logitech Marathon Mouse/Performance Plus M705";
-        assert_eq!(device_text("White Shark Lionel", "1.77", W), "White Shark Lionel · FW 1.77");
-        assert_eq!(device_text(M705, "RQM 17.01 build 0019", W), M705);
-        assert_eq!(device_text(M705, "", W), M705);
     }
 
     #[test]
