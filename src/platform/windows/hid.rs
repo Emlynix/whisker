@@ -88,7 +88,10 @@ fn interface_paths() -> Vec<String> {
 }
 
 /// Descriptor of one collection, opened for queries only (no reads or writes).
-fn describe(path: String) -> Option<Interface> {
+/// Collections `keep` rejects by (usage page, usage) are dropped before
+/// their strings are read: each string is a request to the device and
+/// can take seconds on a sleeping wireless one.
+fn describe(path: String, keep: impl Fn(u16, u16) -> bool) -> Option<Interface> {
     let name = wide(&path);
     let raw = unsafe { CreateFileW(name.as_ptr(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, std::ptr::null(), OPEN_EXISTING, 0, std::ptr::null_mut()) };
     if raw == INVALID_HANDLE_VALUE {
@@ -104,6 +107,10 @@ fn describe(path: String) -> Option<Interface> {
             let mut caps: HIDP_CAPS = std::mem::zeroed();
             HidP_GetCaps(pp, &mut caps);
             HidD_FreePreparsedData(pp);
+            if !keep(caps.UsagePage, caps.Usage) {
+                CloseHandle(raw);
+                return None;
+            }
             out = Some(Interface {
                 info: read_info(raw, &attr),
                 path,
@@ -258,14 +265,14 @@ fn interface_of(lower: &str) -> Option<u8> {
 /// Collections of devices with vendor id `vid` (descriptors only, nothing sent).
 pub fn interfaces(vid: u16) -> Vec<Interface> {
     let tag = format!("vid_{vid:04x}");
-    interface_paths().into_iter().filter(|p| p.to_lowercase().contains(&tag)).filter_map(describe).collect()
+    interface_paths().into_iter().filter(|p| p.to_lowercase().contains(&tag)).filter_map(|p| describe(p, |_, _| true)).collect()
 }
 
 /// Mouse collections (generic desktop / mouse) of every vendor, USB and
 /// Bluetooth only: a laptop's I²C touchpad is no mouse to configure.
 pub fn mice() -> Vec<Interface> {
-    let mouse = |i: &Interface| (i.usage_page, i.usage) == (USAGE_PAGE_DESKTOP, USAGE_MOUSE);
-    interface_paths().into_iter().filter(|p| external(p)).filter_map(describe).filter(mouse).collect()
+    let mouse = |page, usage| (page, usage) == (USAGE_PAGE_DESKTOP, USAGE_MOUSE);
+    interface_paths().into_iter().filter(|p| external(p)).filter_map(|p| describe(p, mouse)).collect()
 }
 
 /// Connected over USB or Bluetooth, not built in (I²C, SPI, virtual).

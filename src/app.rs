@@ -583,6 +583,12 @@ fn detect_state(mice: &[DeviceInfo], device: Option<&str>, usb: Option<(u16, u16
     d
 }
 
+/// The dialog for a `fresh` list of mice; `None` while the `shown` one
+/// still holds, so the user's pick in it stays.
+fn redetect(shown: &[DeviceInfo], fresh: &[DeviceInfo], device: Option<&str>, usb: Option<(u16, u16)>, reported: &str) -> Option<Detect> {
+    (shown != fresh).then(|| detect_state(fresh, device, usb, reported))
+}
+
 /// The mouse in use as its driver named it, e.g. "Logitech Marathon
 /// Mouse/Performance Plus M705" / "Supported · in use · via receiver"
 /// instead of "Logitech USB Receiver". Unchanged until identified.
@@ -1344,7 +1350,7 @@ impl Controller {
                     self.macros_changed();
                 }
             }
-            Act::ChangeMouse => self.open_detect(hid_link::list_mice()),
+            Act::ChangeMouse => self.change_mouse(),
             Act::BannerSwitch => self.switch_to_offer(),
             Act::BannerDismiss => self.ignore_offer(),
             Act::BasicDpi => {}
@@ -1741,6 +1747,7 @@ impl Controller {
     /// banner when its mouse is unplugged again.
     fn on_scan(&mut self, mice: Vec<DeviceInfo>) {
         self.scanning = false;
+        self.refresh_detect(&mice);
         let keys: Vec<String> = mice.iter().map(mouse_key).collect();
         if self.offer.as_ref().is_some_and(|o| !keys.contains(&mouse_key(o))) {
             self.close_offer();
@@ -1798,6 +1805,31 @@ impl Controller {
         self.close_offer();
         ignore_mouse(&mut self.cfg, &d);
         store::save_config(&self.cfg);
+    }
+
+    /// "Change mouse": the dialog opens with the mice known so far. The
+    /// fresh list follows off the UI thread: listing HID devices can
+    /// take seconds, or never return for a sleeping receiver.
+    fn change_mouse(&mut self) {
+        self.open_detect(self.mice.clone());
+        self.scan();
+    }
+
+    /// The open dialog follows a list of mice that changed under it.
+    fn refresh_detect(&mut self, mice: &[DeviceInfo]) {
+        // Demo mice are made up: a real listing must not replace them.
+        if self.view.detect.is_none() || platform::demo() {
+            return;
+        }
+        let reported = self.ident.as_ref().map_or("", |i| i.name.as_str());
+        let Some(d) = redetect(&self.mice, mice, self.cfg.device.as_deref(), self.cfg.device_usb, reported) else {
+            return;
+        };
+
+        self.mice = mice.to_vec();
+        self.view.detect = Some(d);
+        self.view.focus = None;
+        window::invalidate();
     }
 
     fn open_detect(&mut self, mice: Vec<DeviceInfo>) {
@@ -2871,6 +2903,19 @@ mod tests {
         assert_eq!(cancel_choice(Some("whiteshark/lionel")), None);
         // First run: Cancel means "other mouse", so the question isn't repeated.
         assert_eq!(cancel_choice(None), Some(store::GENERIC_DEVICE));
+    }
+
+    #[test]
+    fn change_mouse_shows_known_mice_then_catches_up() {
+        // Issue #1: the dialog opens from the last known list at once;
+        // the slow HID listing arrives later.
+        let none: [DeviceInfo; 0] = [];
+        let d = redetect(&none, &[lionel()], None, None, "").unwrap();
+        assert!(d.step == DetectStep::Found);
+        assert_eq!(d.chip, Some(0));
+
+        // Nothing changed: the dialog and the user's pick in it stay.
+        assert!(redetect(&[lionel()], &[lionel()], None, None, "").is_none());
     }
 
     /// A catalogue model's device as the OS would list it.
