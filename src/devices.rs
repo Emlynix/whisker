@@ -605,6 +605,7 @@ mod tests {
     #[test]
     fn verified_words_upgrade_named_models() {
         assert_eq!(by_id("logitech/marathon-m705").unwrap().support, Support::Full);
+        assert_eq!(by_id("logitech/m510").unwrap().support, Support::Full);
         assert_eq!(by_id("logitech/mx-master-3").unwrap().support, Support::Experimental);
         assert_eq!(by_id("razer/deathadder-v2").unwrap().support, Support::Experimental);
     }

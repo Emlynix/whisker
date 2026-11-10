@@ -30,8 +30,9 @@ id = logitech
 name = "Logitech"
 family = hidpp
 auto = 0x046D
-# Checked on hardware: name, firmware, battery (2026-11-09).
-verified = "M705"
+# Checked on hardware: name, firmware, battery. M705 by us (2026-11-09),
+# M510 by a user (GitHub issue #4, 2026-11-10).
+verified = "M705", "M510"
 # Bolt, Unifying, Nano, Lightspeed, EX100.
 receivers = 0xC548, 0xC52B, 0xC532, 0xC52F, 0xC518, 0xC51A, 0xC51B, 0xC521, 0xC525, 0xC526, 0xC52E, 0xC531, 0xC534, 0xC535, 0xC537, 0xC539, 0xC53A, 0xC53D, 0xC53F, 0xC541, 0xC545, 0xC547, 0xC54D, 0xC517
 

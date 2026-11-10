@@ -31,7 +31,7 @@ are hidden.
 
 | Level | Meaning | Mice |
 |---|---|---|
-| Supported | Tested on the mouse | White Shark Lionel, Logitech M705 |
+| Supported | Tested on the mouse | White Shark Lionel, Logitech M705, Logitech M510 |
 | Partial | Some functions, tested | Eternico AET-MS480B (battery, DPI stage) |
 | Experimental | Written from protocol documentation, not yet tested on the mouse | 180+ models: Logitech (HID++ 2.0), Razer, SteelSeries, Corsair, ASUS ROG, Roccat, Glorious, ATK, VXE / VGN / Lamzu |
 | Statistics only | Any other mouse | clicks, wheel and distance; battery over Bluetooth where available |
