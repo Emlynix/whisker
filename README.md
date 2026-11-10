@@ -65,7 +65,7 @@ the logged-in user access to mice of the supported brands only.
 
 ## Privacy
 
-Whisker works offline. Its only network connection is a daily update check
+Whisker works offline. The only connection it makes on its own is a daily update check
 (on by default, off in *Settings → General*): an HTTPS request to
 `whisker.emlynix.com`, or GitHub as a fallback, that sends your IP address
 and the app version. Updates are verified against a SHA-256 hash and an
@@ -75,8 +75,13 @@ on your computer.
 Whisker keeps a small diagnostic log (`log.txt` next to its settings, at
 most 256 KB): start-up, connected mice by USB id, what the driver did,
 crashes and hangs. No serial numbers, Bluetooth names, key presses or
-clicks. It never leaves your computer unless you copy it into a bug
-report yourself.
+clicks. It never leaves your computer unless you copy or send it yourself.
+
+*Send*, in the mouse report and after a crash, uploads exactly the text
+shown above the button to `whisker.emlynix.com` (HTTPS), together with
+your IP address and the app version. Nothing is sent without that click.
+A proxy set in the system (or `HTTPS_PROXY` on Linux) sees these requests
+like any other.
 
 ## Build from source
 

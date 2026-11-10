@@ -30,7 +30,7 @@ mod report;
 mod update;
 pub use buttons::{DelayMode, Picker, Tab, button_name};
 pub use device::{Badge, Banner, BrandRow, Detect, DetectRow, DetectStep, DeviceView, Found, LIST_ROWS, Pane, detect_pane_at};
-pub use report::{Answer, Ask, CheckView, PickRow, REPORT_ROWS, ReportView, Step as ReportStep, report_at};
+pub use report::{Answer, Ask, CheckView, Kind as ReportKind, PickRow, REPORT_ROWS, ReportView, Sending, Step as ReportStep, report_at, report_lines};
 pub use update::{Install, Offer, Probe, Step as UpdateStep, UpdateView, note_lines, notes_cut};
 use crate::devices::{Caps, DpiUi};
 use crate::platform::Access;
@@ -225,8 +225,8 @@ pub enum Act {
     About,
     /// Closes the About or "assign macro" dialog.
     CloseDialog,
-    /// Crash notice: the diagnostic log to the clipboard.
-    CopyLog,
+    /// Crash notice: opens the diagnostic log.
+    ShowLog,
     OpenWeb(Web),
     Diagnostics,
     CopyDiagnostics,
@@ -247,6 +247,10 @@ pub enum Act {
     /// Probes the picked mouse (read-only) and shows the report.
     ReportRead,
     ReportCopy,
+    /// Sends the text shown to the developers.
+    ReportSend,
+    /// The id of the sent report to the clipboard.
+    ReportCopyId,
     ReportIssue,
     /// Starts the guided checks of an experimental driver.
     ReportCheck,
@@ -1660,7 +1664,7 @@ fn setup_dialog(f: &mut Frame, v: &View) {
 }
 
 /// The last run ended badly: what the log is for, and a button that
-/// copies it. Nothing leaves the computer on its own.
+/// shows it. Nothing leaves the computer on its own.
 fn crash_dialog(f: &mut Frame) {
     const W: f32 = 460.0;
     const H: f32 = 250.0;
@@ -1679,7 +1683,7 @@ fn crash_dialog(f: &mut Frame) {
     let by = d.y + d.h - 24.0 - 36.0;
     let right = d.x + d.w - 24.0;
     f.push_button(Act::CloseDialog, Rect::new(right - COPY_W - 10.0 - CLOSE_W, by, CLOSE_W, 36.0), tr(T::Close), false);
-    f.push_button(Act::CopyLog, Rect::new(right - COPY_W, by, COPY_W, 36.0), tr(T::CopyLog), true);
+    f.push_button(Act::ShowLog, Rect::new(right - COPY_W, by, COPY_W, 36.0), tr(T::ShowLog), true);
 }
 
 /// About: logo, name and version, copyright, license, project links,

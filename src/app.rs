@@ -14,6 +14,8 @@ mod updater;
 mod verify;
 mod watch;
 
+use crate::feedback;
+
 use crate::devices::{self, CAPS_NONE, Caps, DpiUi, Entry, Family, Link, Match, Model, Support};
 use crate::drivers::{Ability, Ident, Pick};
 use crate::mouse::Target;
@@ -34,7 +36,7 @@ use crate::store::{self, AppConfig};
 use crate::tray::{Level, TrayAction};
 use crate::view::{
     self, Act, Answer, Ask, Badge, Banner, BasicView, BrandRow, Charge, CheckView, DelayMode, Detect, DetectRow, DetectStep, DeviceView, Dialog,
-    Focus, Found, Hit, Page, Pane, PickRow, Picker, ReportStep, ReportView, StageView, Sync, Toast, UpdateView, View, Web,
+    Focus, Found, Hit, Page, Pane, PickRow, Picker, ReportKind, ReportStep, ReportView, Sending, StageView, Sync, Toast, UpdateView, View, Web,
 };
 use updater::{Trigger, Updates};
 use verify::{Check, Knobs, Start, Verify};
@@ -153,6 +155,10 @@ struct Controller {
     /// Values the guided checks must see back on the mouse.
     restore: Option<Restore>,
     updates: Updates,
+    /// Number of the last report sent; a send in flight carries it.
+    send_seq: u64,
+    /// One report is on its way: no second one until it is answered.
+    send_busy: bool,
 }
 
 /// DPI and rate to put back after the checks, re-sent while a reading
@@ -193,6 +199,8 @@ struct Wizard {
     verify: Option<Verify>,
     /// Result lines of finished checks.
     checks: Vec<String>,
+    /// Number of the send started from this dialog, to know its answer.
+    send: Option<u64>,
     /// The report as copied or sent.
     text: String,
 }
@@ -284,6 +292,8 @@ pub fn run(mode: StartMode, last: crate::log::Last) {
         wizard: None,
         restore: None,
         updates: Updates::default(),
+        send_seq: 0,
+        send_busy: false,
     };
     ctrl.stats.set_vendor(stats_vendor(ctrl.cfg.device.as_deref()));
     CTRL.with(|c| *c.borrow_mut() = Some(ctrl));
@@ -961,7 +971,20 @@ fn relabel(v: &mut View, link: T, facts: &MouseFacts) {
 
 /// Empty wizard view at `step`.
 fn report_view(step: ReportStep) -> ReportView {
-    ReportView { step, rows: Vec::new(), sel: 0, lines: Vec::new(), top: 0, note: String::new(), can_check: false, check: None }
+    ReportView {
+        kind: ReportKind::Mouse,
+        step,
+        rows: Vec::new(),
+        sel: 0,
+        lines: Vec::new(),
+        top: 0,
+        note: String::new(),
+        note_bad: false,
+        sending: Sending::Ready,
+        sent: None,
+        can_check: false,
+        check: None,
+    }
 }
 
 /// "Acme Glide" · "1234:5678 · USB · current".
@@ -1381,12 +1404,7 @@ impl Controller {
             Act::About => self.view.dialog = Some(Dialog::About),
             Act::AssignMacro => self.view.dialog = Some(Dialog::AssignMacro),
             Act::CloseDialog => self.view.dialog = None,
-            Act::CopyLog => {
-                self.view.dialog = None;
-                if window::set_clipboard(&crate::log::text()) {
-                    self.show_toast(tr(T::Copied).into(), None);
-                }
-            }
+            Act::ShowLog => self.show_log(),
             Act::AssignTo(b) => self.assign_macro(b),
             Act::OpenWeb(w) => {
                 let url = match w {
@@ -1406,6 +1424,8 @@ impl Controller {
             }
             Act::ReportRead => self.read_report(),
             Act::ReportCopy => self.copy_report(),
+            Act::ReportSend => self.send_report(),
+            Act::ReportCopyId => self.copy_report_id(),
             Act::ReportIssue => self.open_issue(),
             Act::ReportCheck => self.start_checks(),
             Act::ReportAnswer(a) => self.answer_check(a),
@@ -1709,8 +1729,9 @@ impl Controller {
 
     /// Debug builds: `WHISKER_OPEN=detect | detect-pick | detect-list | detect-none`
     /// opens the "which mouse" dialog at start with sample mice, `dpi` the
-    /// DPI page; for screenshots without clicking. `panic | fault | hang`
-    /// fail on purpose, to try the crash notes in the log.
+    /// DPI page, `log` the diagnostic log, `report` a sample mouse report; for
+    /// screenshots without clicking.
+    /// `panic | fault | hang` fail on purpose, to try the crash notes.
     #[cfg(debug_assertions)]
     fn debug_open(&mut self) {
         const OPEN_VAR: &str = "WHISKER_OPEN";
@@ -1725,6 +1746,23 @@ impl Controller {
             // SAFETY: none, on purpose: address 8 is never mapped.
             "fault" => unsafe { (8 as *mut u8).write_volatile(1) },
             "hang" => ONCE.call_once(|| std::thread::sleep(HANG)),
+            "log" => ONCE.call_once(|| self.on_act(Act::ShowLog)),
+            // A mouse report as after reading, with every button offered;
+            // `report-sent` as after sending it.
+            "report" | "report-sent" => ONCE.call_once(|| {
+                let features = "00:0000, 01:0001, 02:0003, 03:0005, 04:1D4B, 05:0020, 06:1000, 07:1B04, 08:2205, 09:2100, 0A:00C2, 0B:1802, 0C:1803";
+                let text = format!("### Mouse report: sample (1234:5678)
+
+- Whisker on a sample system
+  - features (index:id): {features}");
+                let mut r = report_view(ReportStep::Result);
+                (r.lines, r.can_check) = (view::report_lines(&text), true);
+                if what == "report-sent" {
+                    (r.sending, r.sent, r.note) = (Sending::Done, Some("WR-7K3F9Q".into()), tr(T::Copied).into());
+                }
+                self.wizard = Some(Wizard { text, ..Wizard::default() });
+                self.view.report = Some(r);
+            }),
             _ => {}
         }
         if what == "dpi" {
@@ -2035,13 +2073,15 @@ impl Controller {
         };
         let input = report::Input { dev, probes: &w.probes, checks: &w.checks, os: &os };
         let text = i18n::with_lang(Lang::En, || report::text(&input));
-        let lines: Vec<String> = text.lines().map(str::to_string).collect();
+        let lines = view::report_lines(&text);
         let checkable = checkable && w.checks.is_empty();
         w.text = text;
         let Some(r) = self.view.report.as_mut() else {
             return;
         };
         (r.lines, r.top, r.step, r.can_check, r.check) = (lines, 0, ReportStep::Result, checkable, None);
+        // A new text (the checks added their results) can be sent again.
+        r.sending = Sending::Ready;
     }
 
     /// Guided checks: the mouse in use, driven by a driver not yet
@@ -2081,7 +2121,7 @@ impl Controller {
             return;
         };
         let text = w.text.clone();
-        match report::issue(NEW_ISSUE_URL, &report::title(&dev.info), &text) {
+        match report::issue(NEW_ISSUE_URL, &report::title(&report::public(&dev.info)), &text) {
             report::Issue::Prefilled(url) => {
                 platform::open_url(&url);
                 self.report_note(tr(T::OpenedInBrowser));
@@ -2096,7 +2136,81 @@ impl Controller {
 
     fn report_note(&mut self, note: &str) {
         if let Some(r) = self.view.report.as_mut() {
-            r.note = note.to_string();
+            (r.note, r.note_bad) = (note.to_string(), false);
+        }
+    }
+
+    /// The diagnostic log in the report view: read first, then copy or send.
+    fn show_log(&mut self) {
+        self.view.dialog = None;
+        self.close_report();
+        let text = crate::log::text();
+        let mut r = report_view(ReportStep::Result);
+        r.kind = ReportKind::Log;
+        r.lines = view::report_lines(&text);
+        // The newest lines are what the notice is about.
+        r.top = r.lines.len().saturating_sub(view::REPORT_ROWS);
+        self.wizard = Some(Wizard { text, ..Wizard::default() });
+        self.view.report = Some(r);
+    }
+
+    /// "Send": the text as shown goes to the developers, off the UI thread.
+    fn send_report(&mut self) {
+        let (Some(w), Some(r)) = (self.wizard.as_mut(), self.view.report.as_mut()) else {
+            return;
+        };
+        if r.sending != Sending::Ready || self.send_busy {
+            return;
+        }
+        self.send_seq += 1;
+        let seq = self.send_seq;
+        (self.send_busy, w.send) = (true, Some(seq));
+        let kind = match r.kind {
+            ReportKind::Mouse => feedback::Kind::Mouse,
+            ReportKind::Log => feedback::Kind::Log,
+        };
+        (r.sending, r.note, r.note_bad) = (Sending::Busy, tr(T::Sending).to_string(), false);
+
+        let text = w.text.clone();
+        std::thread::spawn(move || {
+            let sent = feedback::send(kind, &text);
+            post(move |c| c.on_sent(seq, sent));
+        });
+    }
+
+    /// The service's answer to send number `seq`: the report id to quote
+    /// (also in the log, should the dialog be gone), or a failure.
+    fn on_sent(&mut self, seq: u64, sent: Result<String, feedback::Fail>) {
+        self.send_busy = false;
+        match &sent {
+            Ok(id) => crate::log!("report sent: {id}"),
+            Err(e) => crate::log!("report not sent: {e:?}"),
+        }
+
+        // The dialog it was sent from was closed (or is another one by
+        // now): the answer still reaches the user.
+        let same = self.wizard.as_ref().is_some_and(|w| w.send == Some(seq));
+        let Some(r) = self.view.report.as_mut().filter(|_| same) else {
+            let note = match &sent {
+                Ok(id) => fill(tr(T::Sent), &[id]),
+                Err(_) => tr(T::SendFailed).to_string(),
+            };
+            self.show_toast(note, None);
+            return;
+        };
+        match sent {
+            Ok(id) => (r.sending, r.sent, r.note, r.note_bad) = (Sending::Done, Some(id), String::new(), false),
+            Err(_) => (r.sending, r.note, r.note_bad) = (Sending::Ready, tr(T::SendFailed).to_string(), true),
+        }
+        window::invalidate();
+    }
+
+    fn copy_report_id(&mut self) {
+        let Some(id) = self.view.report.as_ref().and_then(|r| r.sent.clone()) else {
+            return;
+        };
+        if window::set_clipboard(&id) {
+            self.report_note(tr(T::Copied));
         }
     }
 

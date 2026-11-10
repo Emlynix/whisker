@@ -1,4 +1,4 @@
-//! HTTPS GET over WinHTTP: system proxy settings, system certificate
+//! HTTPS GET and POST over WinHTTP: system proxy settings, system certificate
 //! store, TLS checked by Windows. Redirects, cookies and automatic
 //! credentials are switched off; the caller follows redirects itself.
 
@@ -10,6 +10,9 @@ use std::time::Instant;
 use windows_sys::Win32::Networking::WinHttp::*;
 
 const GET: &str = "GET";
+const POST: &str = "POST";
+/// Header of a POST body, with its line end.
+const TEXT_HEADER: &str = "Content-Type: text/plain; charset=utf-8\r\n";
 const CHUNK: usize = 16 * 1024;
 /// Longest `Location` header read, in UTF-16 units.
 const LOCATION_MAX: usize = 8 * 1024;
@@ -33,6 +36,15 @@ impl Drop for Handle {
 }
 
 pub fn get(req: &Fetch) -> Result<Reply, NetError> {
+    send(req, None)
+}
+
+pub fn post(req: &Fetch, body: &[u8]) -> Result<Reply, NetError> {
+    send(req, Some(body))
+}
+
+/// One request; with a body it is a POST of plain text.
+fn send(req: &Fetch, body: Option<&[u8]>) -> Result<Reply, NetError> {
     let start = Instant::now();
     let agent = wide(req.agent);
     let session = Handle::new(unsafe { WinHttpOpen(agent.as_ptr(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, null(), null(), 0) })?;
@@ -41,7 +53,7 @@ pub fn get(req: &Fetch) -> Result<Reply, NetError> {
 
     let host = wide(req.host);
     let connect = Handle::new(unsafe { WinHttpConnect(session.0, host.as_ptr(), INTERNET_DEFAULT_HTTPS_PORT, 0) })?;
-    let (verb, path) = (wide(GET), wide(req.path));
+    let (verb, path) = (wide(if body.is_some() { POST } else { GET }), wide(req.path));
     let request =
         Handle::new(unsafe { WinHttpOpenRequest(connect.0, verb.as_ptr(), path.as_ptr(), null(), null(), null(), WINHTTP_FLAG_SECURE) })?;
     let off = WINHTTP_DISABLE_COOKIES | WINHTTP_DISABLE_REDIRECTS | WINHTTP_DISABLE_AUTHENTICATION;
@@ -53,10 +65,21 @@ pub fn get(req: &Fetch) -> Result<Reply, NetError> {
         return Err(NetError::Failed);
     }
 
-    if unsafe { WinHttpSendRequest(request.0, null(), 0, null(), 0, 0, 0) } == 0 {
+    let sent = match body {
+        None => unsafe { WinHttpSendRequest(request.0, null(), 0, null(), 0, 0, 0) },
+        Some(b) => {
+            let header = wide(TEXT_HEADER);
+            let len = u32::try_from(b.len()).map_err(|_| NetError::TooLarge)?;
+            // Header length in characters, without the final NUL.
+            let chars = (header.len() - 1) as u32;
+            unsafe { WinHttpSendRequest(request.0, header.as_ptr(), chars, b.as_ptr().cast(), len, len, 0) }
+        }
+    };
+    // The timeouts are per phase: the whole request is bounded here.
+    if sent == 0 || start.elapsed() > req.timeout {
         return Err(NetError::Failed);
     }
-    if unsafe { WinHttpReceiveResponse(request.0, null_mut()) } == 0 {
+    if unsafe { WinHttpReceiveResponse(request.0, null_mut()) } == 0 || start.elapsed() > req.timeout {
         return Err(NetError::Failed);
     }
     let status = status_of(&request)?;

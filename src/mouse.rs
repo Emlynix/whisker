@@ -426,12 +426,14 @@ fn log_event(ev: &Event, state: &LogState) {
     }
 }
 
+/// DPI, report rate and DPI stage as last read from the mouse.
+type Readback = (Option<u32>, Option<u32>, Option<u8>);
+
 /// What the log said last, so only changes are written.
 #[derive(Default)]
 struct LogState {
     link: std::cell::Cell<&'static str>,
-    /// DPI, report rate and DPI stage last read.
-    reading: std::cell::Cell<Option<(Option<u32>, Option<u32>, Option<u8>)>>,
+    reading: std::cell::Cell<Option<Readback>>,
 }
 
 fn run(target: Target, pick: Pick, rx: Receiver<Command>, on_event: impl Fn(Event)) {

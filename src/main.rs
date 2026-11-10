@@ -10,6 +10,7 @@ pub const APP_NAME: &str = "Whisker";
 mod app;
 mod devices;
 mod drivers;
+mod feedback;
 mod gfx;
 mod hid_link;
 mod i18n;
@@ -83,6 +84,8 @@ fn panic_note(info: &std::panic::PanicHookInfo) -> String {
         format!(" at {file}:{}", l.line())
     });
     let message: String = info.payload_as_str().unwrap_or("").chars().take(MESSAGE_MAX).collect();
+    // A path in the message would name the user's home folder.
+    let message = if message.contains(['/', '\\']) { "(message with a path left out)" } else { message.as_str() };
     format!("panic{place}: {message}")
 }
 

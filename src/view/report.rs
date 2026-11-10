@@ -10,11 +10,13 @@
 //!  |    SSCYPL Receiver     248A:5B2F · USB · current             |
 //!  |                                  [Cancel] [Read details]     |
 //!  +--------------------------------------------------------------+
-//!   step 3: report text (scrolls) · [Close] [Check settings] [Copy] [Open GitHub issue]
+//!   step 3: report text (scrolls), "Check settings" link above it
+//!           [Close]                       [Copy] [Open GitHub issue] [Send]
+//!   log:    the diagnostic log in the same view · [Close]  [Copy] [Send]
 //!   check:  question, value · [Cancel checks] [Skip] [No] [Yes]
 //! ```
 
-use super::{Act, Frame, HEIGHT, R_CTRL, RADIUS, WIDTH, text_w, th};
+use super::{Act, Frame, HEIGHT, R_CTRL, RADIUS, WIDTH, text_link, text_w, th};
 use crate::gfx::{Align, Rect, Size, Weight};
 use crate::i18n::{T, fill, tr};
 
@@ -37,6 +39,27 @@ pub enum Step {
     Reading,
     Result,
     Check,
+}
+
+/// What the dialog shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Kind {
+    /// "Help add your mouse": pick, read, report.
+    #[default]
+    Mouse,
+    /// The diagnostic log after a crash or hang: the text only.
+    Log,
+}
+
+/// Where sending the text stands.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Sending {
+    /// "Send" is offered.
+    #[default]
+    Ready,
+    Busy,
+    /// Sent: not offered again for the same text.
+    Done,
 }
 
 /// Buttons a check offers.
@@ -67,6 +90,7 @@ pub struct PickRow {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReportView {
+    pub kind: Kind,
     pub step: Step,
     pub rows: Vec<PickRow>,
     pub sel: usize,
@@ -76,6 +100,11 @@ pub struct ReportView {
     pub top: usize,
     /// Below the report, e.g. "Copied to clipboard".
     pub note: String,
+    /// The note tells of a failure.
+    pub note_bad: bool,
+    pub sending: Sending,
+    /// Id of the report once sent; stays while the dialog is open.
+    pub sent: Option<String>,
     /// "Check settings" is offered (experimental driver, this mouse).
     pub can_check: bool,
     pub check: Option<CheckView>,
@@ -92,6 +121,48 @@ const LINE_H: f32 = 17.0;
 /// Report lines shown at once; the rest scrolls.
 pub const REPORT_ROWS: usize = 17;
 const BTN_GAP: f32 = 10.0;
+/// Space between the text area's border and its lines.
+const TEXT_PAD: f32 = 12.0;
+/// `text_w` is an estimate: lines are wrapped a little early, so the
+/// platform never cuts one off.
+const WRAP_MARGIN: f32 = 0.9;
+
+/// `text` as the dialog shows it: every line whole, long ones wrapped.
+/// What is sent must be readable to its end; nothing scrolls sideways.
+pub fn report_lines(text: &str) -> Vec<String> {
+    let room = (DLG_W - 2.0 * PAD - 2.0 * TEXT_PAD) * WRAP_MARGIN;
+    let fits = |s: &str| text_w(s, Size::Caption) <= room;
+    text.lines().flat_map(|l| wrap(l, &fits)).collect()
+}
+
+/// `line` in pieces that fit, broken after a space where there is one.
+fn wrap(line: &str, fits: &impl Fn(&str) -> bool) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = line;
+    while !fits(rest) {
+        // Longest start that fits; one character at least, to move on.
+        let mut end = rest.chars().next().map_or(0, char::len_utf8);
+        for (at, c) in rest.char_indices() {
+            let next = at + c.len_utf8();
+            if !fits(&rest[..next]) {
+                break;
+            }
+            end = next;
+        }
+        if end >= rest.len() {
+            break;
+        }
+        // A word that ends right here stays whole; else back to the last space.
+        let cut = match rest[end..].starts_with(' ') {
+            true => end + 1,
+            false => rest[..end].rfind(' ').filter(|&space| space > 0).map_or(end, |space| space + 1),
+        };
+        out.push(rest[..cut].trim_end().to_string());
+        rest = &rest[cut..];
+    }
+    out.push(rest.to_string());
+    out
+}
 
 fn dialog_rect() -> Rect {
     Rect::new((WIDTH - DLG_W) / 2.0, (HEIGHT - DLG_H) / 2.0, DLG_W, DLG_H)
@@ -120,14 +191,18 @@ pub(super) fn report_dialog(f: &mut Frame, r: &ReportView) {
     f.g.stroke(d, RADIUS, 1.0, th().border);
 
     let inner = d.inset(PAD);
-    f.g.text(tr(T::HelpAddMouse), Rect::new(inner.x, inner.y, inner.w - 160.0, 28.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
+    let title = if r.kind == Kind::Log { T::CrashTitle } else { T::HelpAddMouse };
+    f.g.text(tr(title), Rect::new(inner.x, inner.y, inner.w - 160.0, 28.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
     let step = match r.step {
         Step::Finding | Step::Pick => 1,
         Step::Reading => 2,
         Step::Result | Step::Check => 3,
     };
-    let of = fill(tr(T::StepOf), &[&step.to_string(), "3"]);
-    f.g.text(&of, Rect::new(inner.x + inner.w - 160.0, inner.y + 4.0, 160.0, 20.0), Size::Caption, Weight::Normal, Align::Right, th().muted);
+    // The log has no steps before it.
+    if r.kind == Kind::Mouse {
+        let of = fill(tr(T::StepOf), &[&step.to_string(), "3"]);
+        f.g.text(&of, Rect::new(inner.x + inner.w - 160.0, inner.y + 4.0, 160.0, 20.0), Size::Caption, Weight::Normal, Align::Right, th().muted);
+    }
 
     let body = Rect::new(inner.x, inner.y + 40.0, inner.w, inner.h - 40.0 - BTN_H - 16.0);
     let by = d.y + d.h - PAD - BTN_H;
@@ -177,27 +252,55 @@ fn pick(f: &mut Frame, r: &ReportView, body: Rect, right: f32, by: f32) {
 
 /// Step 3: the report text, scrollable, and what to do with it.
 fn result(f: &mut Frame, r: &ReportView, body: Rect, right: f32, by: f32) {
-    f.caption_in(tr(T::ReportCaption), body.x, body.y, body.w);
+    let caption = if r.kind == Kind::Log { T::LogCaption } else { T::ReportCaption };
+    f.caption_in(tr(caption), body.x, body.y, body.w);
+    // Beside the caption: the button row is for what happens to the text.
+    // Not while sending: the checks would change the text under way.
+    if r.can_check && r.sending != Sending::Busy {
+        let label = tr(T::ReportCheck);
+        text_link(f, Act::ReportCheck, label, right - text_w(label, Size::Caption) - 4.0, body.y - 2.0);
+    }
     let area = Rect::new(body.x, body.y + 22.0, body.w, REPORT_ROWS as f32 * LINE_H + 16.0);
     f.g.fill(area, R_CTRL, th().card);
     f.g.stroke(area, R_CTRL, 1.0, th().border);
     for (k, line) in r.lines.iter().skip(r.top).take(REPORT_ROWS).enumerate() {
-        let lr = Rect::new(area.x + 12.0, area.y + 8.0 + k as f32 * LINE_H, area.w - 24.0, LINE_H);
+        let lr = Rect::new(area.x + TEXT_PAD, area.y + 8.0 + k as f32 * LINE_H, area.w - 2.0 * TEXT_PAD, LINE_H);
         f.g.text(line, lr, Size::Caption, Weight::Normal, Align::Left, th().text);
     }
     scroll_bar(f, area, r.top, r.lines.len());
-    if !r.note.is_empty() {
-        let nr = Rect::new(body.x, area.y + area.h + 6.0, body.w, 18.0);
-        f.g.text(&r.note, nr, Size::Caption, Weight::Semibold, Align::Left, th().good);
-    }
+    status_line(f, r, Rect::new(body.x, area.y + area.h + 6.0, body.w, 18.0));
 
-    let mut items = vec![(Act::ReportClose, tr(T::Close))];
-    if r.can_check {
-        items.push((Act::ReportCheck, tr(T::ReportCheck)));
+    let close = tr(T::Close);
+    f.push_button(Act::ReportClose, Rect::new(body.x, by, btn_w(close), BTN_H), close, false);
+    let mut items = vec![(Act::ReportCopy, tr(T::Copy))];
+    if r.kind == Kind::Mouse {
+        items.push((Act::ReportIssue, tr(T::ReportIssue)));
     }
-    items.push((Act::ReportCopy, tr(T::Copy)));
-    items.push((Act::ReportIssue, tr(T::ReportIssue)));
+    // Last, so it is the primary button; gone once the text was sent.
+    if r.sending == Sending::Ready {
+        items.push((Act::ReportSend, tr(T::Send)));
+    }
     button_row(f, right, by, &items);
+}
+
+/// Under the text. Once sent: the report id, to stay (it is what the
+/// user quotes later), with a link that copies it; other notes move to
+/// the right. Before that: the last note, else where "Send" takes the text.
+fn status_line(f: &mut Frame, r: &ReportView, nr: Rect) {
+    let color = if r.note_bad { th().bad } else { th().good };
+    let Some(id) = &r.sent else {
+        if r.note.is_empty() {
+            f.g.text(tr(T::SendHint), nr, Size::Caption, Weight::Normal, Align::Left, th().muted);
+        } else {
+            f.g.text(&r.note, nr, Size::Caption, Weight::Semibold, Align::Left, color);
+        }
+        return;
+    };
+
+    let sent = fill(tr(T::Sent), &[id]);
+    f.g.text(&sent, nr, Size::Caption, Weight::Semibold, Align::Left, th().good);
+    text_link(f, Act::ReportCopyId, tr(T::CopyId), nr.x + text_w(&sent, Size::Caption) + 14.0, nr.y);
+    f.g.text(&r.note, nr, Size::Caption, Weight::Semibold, Align::Right, color);
 }
 
 /// Thin bar on the right of a report longer than the area.
@@ -236,4 +339,39 @@ fn check(f: &mut Frame, r: &ReportView, body: Rect, right: f32, by: f32) {
 /// The dialog contains the point (wheel scrolls the report).
 pub fn report_at(x: f32, y: f32) -> bool {
     dialog_rect().contains(x, y)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Ten characters fit.
+    fn ten(s: &str) -> bool {
+        s.chars().count() <= 10
+    }
+
+    #[test]
+    fn long_lines_wrap_so_all_of_the_text_is_seen() {
+        assert_eq!(wrap("short", &ten), ["short"]);
+        assert_eq!(wrap("", &ten), [""]);
+        // After a space where there is one.
+        assert_eq!(wrap("mice in 38 ms: none", &ten), ["mice in 38", "ms: none"]);
+        // No space: cut where it must be.
+        assert_eq!(wrap("0123456789ABCDEF", &ten), ["0123456789", "ABCDEF"]);
+        // Nothing is lost.
+        let line = "features (index:id): 00:0000, 01:0001, 02:0003";
+        assert_eq!(wrap(line, &ten).concat().replace(' ', ""), line.replace(' ', ""));
+    }
+
+    #[test]
+    fn wrapping_ends_even_when_nothing_fits() {
+        assert_eq!(wrap("ab", &|_: &str| false), ["a", "b"]);
+    }
+
+    #[test]
+    fn report_lines_keep_short_lines_and_blank_ones() {
+        assert_eq!(report_lines("### Title\n\n- one"), ["### Title", "", "- one"]);
+        let long = "x".repeat(400);
+        assert!(report_lines(&long).len() > 1);
+    }
 }

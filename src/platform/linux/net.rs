@@ -1,9 +1,9 @@
-//! HTTPS GET via `/usr/bin/curl` with fixed arguments, no shell: HTTPS
+//! HTTPS GET and POST via `/usr/bin/curl` with fixed arguments, no shell: HTTPS
 //! only, no redirects followed, `~/.curlrc` ignored (`-q`), system
 //! certificate store. The status and `Location` come after the body.
 
 use crate::platform::{Fetch, NetError, Reply};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 
 const CURL: &str = "/usr/bin/curl";
@@ -14,7 +14,19 @@ const TRAILER_MAX: usize = 16 * 1024;
 /// curl exit code: `--max-filesize` exceeded.
 const CURL_TOO_LARGE: i32 = 63;
 
+/// POST: the body comes on stdin, as plain text.
+const POST_ARGS: [&str; 4] = ["--data-binary", "@-", "--header", "Content-Type: text/plain; charset=utf-8"];
+
 pub fn get(req: &Fetch) -> Result<Reply, NetError> {
+    send(req, None)
+}
+
+pub fn post(req: &Fetch, body: &[u8]) -> Result<Reply, NetError> {
+    send(req, Some(body))
+}
+
+/// One request; with a body it is a POST of plain text.
+fn send(req: &Fetch, body: Option<&[u8]>) -> Result<Reply, NetError> {
     let url = format!("https://{}{}", req.host, req.path);
     let secs = req.timeout.as_secs().max(1).to_string();
     let limit = req.limit.to_string();
@@ -23,7 +35,16 @@ pub fn get(req: &Fetch) -> Result<Reply, NetError> {
         "-q", "--silent", "--globoff", "--proto", "=https", "--max-redirs", "0", "--max-time", &secs, "--max-filesize", &limit,
         "--user-agent", req.agent, "--write-out", TRAILER, &url,
     ];
-    let mut child = Command::new(CURL).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|_| NetError::Failed)?;
+    let mut cmd = Command::new(CURL);
+    cmd.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    if body.is_some() {
+        cmd.args(POST_ARGS).stdin(Stdio::piped());
+    }
+    let mut child = cmd.spawn().map_err(|_| NetError::Failed)?;
+    // curl reads the whole body before it connects; closing stdin ends it.
+    if let (Some(b), Some(mut stdin)) = (body, child.stdin.take()) {
+        let _ = stdin.write_all(b);
+    }
 
     // Bounded read: a body without a length could otherwise grow forever.
     let mut out = Vec::new();

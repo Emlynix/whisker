@@ -105,6 +105,9 @@
 //! whole request bounded by `timeout`. Windows: WinHTTP. Linux:
 //! `/usr/bin/curl` with fixed arguments.
 //!
+//! `post(&Fetch, body) -> Result<Reply, NetError>`: the same as a POST
+//! with `body` as `text/plain; charset=utf-8`.
+//!
 //! `UPDATE_KIND: UpdateKind` — how a downloaded update is installed:
 //! Windows swaps the exe in place, Linux opens the release page.
 

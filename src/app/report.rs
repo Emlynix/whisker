@@ -1,8 +1,9 @@
 //! "Help add your mouse" report: what the OS and the read-only driver
 //! probe tell about one connected mouse, as Markdown for a public GitHub
-//! issue. Built in English (`i18n::with_lang`). Private by construction:
-//! no serial numbers, no paths, Bluetooth address masked to its last two
-//! bytes.
+//! issue or for sending to the developers. Built in English
+//! (`i18n::with_lang`). Private by construction: no serial numbers, no
+//! paths, and of a Bluetooth mouse neither the address nor the name (the
+//! owner names it in the OS, often after themselves).
 //!
 //! ```text
 //!   ### Mouse report: <product> (VID:PID)     header, system, catalogue
@@ -12,7 +13,6 @@
 //!   #### Catalogue entry                      ```toml [[mouse]] block
 //! ```
 
-use super::mask_address;
 use crate::devices::{self, Match, Support};
 use crate::drivers::{Ability, DpiRange, Ident, Reading};
 use crate::hid_link::{DeviceInfo, HidDevice, ReportLayout, Transport};
@@ -72,25 +72,26 @@ pub fn transport(t: Transport) -> &'static str {
     }
 }
 
-/// "B66B18D71E00" -> "Bluetooth LE · XX:XX:XX:XX:1E:00".
-fn bt_line(addr: &str) -> String {
-    let pairs: Vec<&str> = (0..addr.len()).step_by(2).filter_map(|k| addr.get(k..k + 2)).collect();
-    mask_address(&format!("Bluetooth LE · {}", pairs.join(":")))
+/// The device as the report may show it: a Bluetooth mouse without the
+/// name and address the OS knows it by.
+pub fn public(d: &DeviceInfo) -> DeviceInfo {
+    if d.bt_address.is_none() {
+        return d.clone();
+    }
+    DeviceInfo { product: String::new(), bt_address: None, ..d.clone() }
 }
 
 /// The whole report as Markdown.
 pub fn text(i: &Input) -> String {
-    let d = &i.dev.info;
+    let bluetooth = i.dev.info.bt_address.is_some();
+    let d = &public(&i.dev.info);
     let mut out = vec![format!("### {}", title(d)), String::new()];
     out.push(format!("- {} {} on {}", crate::APP_NAME, env!("CARGO_PKG_VERSION"), i.os));
     out.push(format!("- Manufacturer: {}", or_none(&clean(&d.manufacturer))));
-    out.push(format!("- Product: {}", or_none(&clean(&d.product))));
-    if d.bt_address.is_some() {
-        // Windows may show the name the user gave the mouse.
-        out.push("- Note: Bluetooth name as set in the OS; remove it if it is personal.".into());
-    }
+    let product = if bluetooth { "(Bluetooth name left out)".to_string() } else { or_none(&clean(&d.product)).to_string() };
+    out.push(format!("- Product: {product}"));
     out.push(format!("- USB ID: {}, release {}", usb_id(d), devices::bcd_version(d.version)));
-    let link = d.bt_address.as_deref().map_or_else(|| link_of(i.dev).to_string(), bt_line);
+    let link = if bluetooth { "Bluetooth LE" } else { link_of(i.dev) };
     out.push(format!("- Connection: {link}"));
     out.push(format!("- Catalogue: {}", catalogue(d)));
 
@@ -403,8 +404,11 @@ mod tests {
         let t = report(&dev, &probes);
         assert!(!t.contains("SN-SECRET-42") && !t.contains("IDENT-SERIAL-7"), "{t}");
         assert!(!t.contains("secret") && !t.contains(r"\\?\"), "no paths: {t}");
-        assert!(!t.contains("B6:6B") && !t.contains("B66B"), "{t}");
-        assert!(t.contains("Bluetooth LE · XX:XX:XX:XX:1E:00"), "{t}");
+        // Bluetooth: neither the address, not even masked, nor the name
+        // the owner gave the mouse; the text can be sent as it is.
+        assert!(!t.contains("B6:6B") && !t.contains("B66B") && !t.contains("1E:00"), "{t}");
+        assert!(!t.contains(&dev.info.product), "{t}");
+        assert!(t.contains("- Connection: Bluetooth LE\n"), "{t}");
         let user = std::env::var("USERNAME").unwrap_or_default();
         assert!(user.is_empty() || !t.contains(&user));
     }
