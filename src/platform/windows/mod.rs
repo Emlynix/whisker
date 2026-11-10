@@ -3,6 +3,7 @@
 
 pub mod autostart;
 pub mod bluetooth;
+pub mod crash;
 pub mod gfx;
 pub mod hid;
 pub mod input;

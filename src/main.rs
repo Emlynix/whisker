@@ -14,6 +14,7 @@ mod gfx;
 mod hid_link;
 mod i18n;
 mod keys;
+mod log;
 mod mouse;
 mod platform;
 mod protocol;
@@ -50,6 +51,9 @@ fn main() {
     }
     update::cleanup();
 
+    let last = log::start(store::data_dir(), &log_header());
+    crash_notes();
+
     if has(platform::AUTOSTART_ON_ARG) {
         autostart::set(Autostart::On);
     }
@@ -58,5 +62,36 @@ fn main() {
     }
 
     let mode = if has(platform::TRAY_ARG) { app::StartMode::Hidden } else { app::StartMode::Visible };
-    app::run(mode)
+    app::run(mode, last);
+    log::exit();
+}
+
+/// First line of a run in the log, e.g.
+/// `2026-11-10 Whisker 0.9.0, Windows 11 26200, installed`.
+fn log_header() -> String {
+    let (y, m, d) = platform::today();
+    let copy = if install::is_installed_copy() { "installed" } else { "portable" };
+    format!("{y}-{m:02}-{d:02} {APP_NAME} {}, {}, {copy}", env!("CARGO_PKG_VERSION"), platform::os_version())
+}
+
+/// `panic at app.rs:120: index out of bounds`. The file's name only: a
+/// dependency's full path holds the builder's user name.
+fn panic_note(info: &std::panic::PanicHookInfo) -> String {
+    const MESSAGE_MAX: usize = 200;
+    let place = info.location().map_or(String::new(), |l| {
+        let file = l.file().rsplit(['/', '\\']).next().unwrap_or_default();
+        format!(" at {file}:{}", l.line())
+    });
+    let message: String = info.payload_as_str().unwrap_or("").chars().take(MESSAGE_MAX).collect();
+    format!("panic{place}: {message}")
+}
+
+/// Panics and crashes of the process go into the log.
+fn crash_notes() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        log::crash(&panic_note(info));
+        default(info);
+    }));
+    platform::crash::install();
 }

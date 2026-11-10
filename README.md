@@ -72,6 +72,12 @@ and the app version. Updates are verified against a SHA-256 hash and an
 ECDSA signature before they replace the app. Settings and statistics stay
 on your computer.
 
+Whisker keeps a small diagnostic log (`log.txt` next to its settings, at
+most 256 KB): start-up, connected mice by USB id, what the driver did,
+crashes and hangs. No serial numbers, Bluetooth names, key presses or
+clicks. It never leaves your computer unless you copy it into a bug
+report yourself.
+
 ## Build from source
 
 Rust 1.85 or newer (edition 2024).

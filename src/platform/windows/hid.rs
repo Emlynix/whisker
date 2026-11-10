@@ -25,6 +25,8 @@ const DETAIL_CB_SIZE: u32 = 8;
 #[cfg(target_pointer_width = "32")]
 const DETAIL_CB_SIZE: u32 = 6;
 const STRING_CHARS: usize = 127;
+/// Reading a device's name strings this long is worth a log line.
+const SLOW_STRINGS: std::time::Duration = std::time::Duration::from_millis(200);
 const USAGE_PAGE_DESKTOP: u16 = 0x01;
 const USAGE_MOUSE: u16 = 0x02;
 
@@ -111,8 +113,14 @@ fn describe(path: String, keep: impl Fn(u16, u16) -> bool) -> Option<Interface> 
                 CloseHandle(raw);
                 return None;
             }
+            let started = std::time::Instant::now();
+            let info = read_info(raw, &attr);
+            // The usual suspect when the app is slow to find mice.
+            if started.elapsed() >= SLOW_STRINGS {
+                crate::log!("slow device {:04X}:{:04X}: names took {} ms", attr.VendorID, attr.ProductID, started.elapsed().as_millis());
+            }
             out = Some(Interface {
-                info: read_info(raw, &attr),
+                info,
                 path,
                 usage_page: caps.UsagePage,
                 usage: caps.Usage,

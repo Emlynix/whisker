@@ -225,6 +225,8 @@ pub enum Act {
     About,
     /// Closes the About or "assign macro" dialog.
     CloseDialog,
+    /// Crash notice: the diagnostic log to the clipboard.
+    CopyLog,
     OpenWeb(Web),
     Diagnostics,
     CopyDiagnostics,
@@ -278,6 +280,8 @@ pub enum Web {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Dialog {
     About,
+    /// The last run crashed or was closed while hung.
+    Crashed,
     AssignMacro,
     Update,
 }
@@ -783,6 +787,10 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
         Some(Dialog::About) => {
             f.hits.clear();
             about_dialog(&mut f, v);
+        }
+        Some(Dialog::Crashed) => {
+            f.hits.clear();
+            crash_dialog(&mut f);
         }
         Some(Dialog::AssignMacro) => {
             f.hits.clear();
@@ -1649,6 +1657,29 @@ fn setup_dialog(f: &mut Frame, v: &View) {
     let by = d.y + d.h - 24.0 - 36.0;
     f.push_button(Act::SetupSkip, Rect::new(d.x + d.w - 24.0 - 128.0 - 10.0 - 120.0, by, 120.0, 36.0), tr(T::JustRun), false);
     f.push_button(Act::SetupInstall, Rect::new(d.x + d.w - 24.0 - 128.0, by, 128.0, 36.0), tr(T::Install), true);
+}
+
+/// The last run ended badly: what the log is for, and a button that
+/// copies it. Nothing leaves the computer on its own.
+fn crash_dialog(f: &mut Frame) {
+    const W: f32 = 460.0;
+    const H: f32 = 250.0;
+    const COPY_W: f32 = 180.0;
+    const CLOSE_W: f32 = 110.0;
+    f.g.fill(Rect::new(0.0, 0.0, WIDTH, HEIGHT), 0.0, th().scrim);
+    let d = Rect::new((WIDTH - W) / 2.0, (HEIGHT - H) / 2.0, W, H);
+    f.g.fill(d, RADIUS, th().card_hi);
+    f.g.stroke(d, RADIUS, 1.0, th().border);
+
+    let inner = d.inset(24.0);
+    f.g.text(tr(T::CrashTitle), Rect::new(inner.x, inner.y, inner.w, 28.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
+    let text = Rect::new(inner.x, inner.y + 38.0, inner.w, 104.0);
+    f.g.text(tr(T::CrashText), text, Size::Body, Weight::Normal, Align::Wrap, th().muted);
+
+    let by = d.y + d.h - 24.0 - 36.0;
+    let right = d.x + d.w - 24.0;
+    f.push_button(Act::CloseDialog, Rect::new(right - COPY_W - 10.0 - CLOSE_W, by, CLOSE_W, 36.0), tr(T::Close), false);
+    f.push_button(Act::CopyLog, Rect::new(right - COPY_W, by, COPY_W, 36.0), tr(T::CopyLog), true);
 }
 
 /// About: logo, name and version, copyright, license, project links,

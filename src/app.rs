@@ -12,6 +12,7 @@
 mod report;
 mod updater;
 mod verify;
+mod watch;
 
 use crate::devices::{self, CAPS_NONE, Caps, DpiUi, Entry, Family, Link, Match, Model, Support};
 use crate::drivers::{Ability, Ident, Pick};
@@ -234,7 +235,7 @@ enum Step {
     Prev,
 }
 
-pub fn run(mode: StartMode) {
+pub fn run(mode: StartMode, last: crate::log::Last) {
     let hooks = Hooks {
         draw: hook_draw,
         act: hook_act,
@@ -304,11 +305,17 @@ pub fn run(mode: StartMode) {
     window::set_timer(TIMER_SCAN, SCAN_MS);
     window::set_timer(TIMER_UPDATE, updater::POLL_MS);
     with_ctrl(|c| c.auto_check());
+    watch::start();
+    // Shown with the window: a start into the tray stays quiet.
+    if last == crate::log::Last::Crashed {
+        with_ctrl(|c| c.view.dialog = Some(Dialog::Crashed));
+    }
 
     if mode == StartMode::Visible || first_run {
         with_ctrl(|c| c.show());
     }
     window::run();
+    watch::stop();
 
     // Guided checks may have changed a setting: put it back before exit.
     with_ctrl(|c| {
@@ -1259,6 +1266,7 @@ impl Controller {
 
     fn on_act(&mut self, a: Act) {
         let before = self.overlay();
+        crate::log!("act {a:?}");
         self.act(a);
         // Page or dialog changed: the focused element is gone.
         if matches!(a, Act::Nav(_)) || self.overlay() != before {
@@ -1373,6 +1381,12 @@ impl Controller {
             Act::About => self.view.dialog = Some(Dialog::About),
             Act::AssignMacro => self.view.dialog = Some(Dialog::AssignMacro),
             Act::CloseDialog => self.view.dialog = None,
+            Act::CopyLog => {
+                self.view.dialog = None;
+                if window::set_clipboard(&crate::log::text()) {
+                    self.show_toast(tr(T::Copied).into(), None);
+                }
+            }
             Act::AssignTo(b) => self.assign_macro(b),
             Act::OpenWeb(w) => {
                 let url = match w {
@@ -1695,14 +1709,24 @@ impl Controller {
 
     /// Debug builds: `WHISKER_OPEN=detect | detect-pick | detect-list | detect-none`
     /// opens the "which mouse" dialog at start with sample mice, `dpi` the
-    /// DPI page; for screenshots without clicking.
+    /// DPI page; for screenshots without clicking. `panic | fault | hang`
+    /// fail on purpose, to try the crash notes in the log.
     #[cfg(debug_assertions)]
     fn debug_open(&mut self) {
         const OPEN_VAR: &str = "WHISKER_OPEN";
+        /// Longer than the watch's limit, so the hang is logged.
+        const HANG: Duration = Duration::from_secs(8);
         static ONCE: std::sync::Once = std::sync::Once::new();
         let Ok(what) = std::env::var(OPEN_VAR) else {
             return;
         };
+        match what.as_str() {
+            "panic" => panic!("{OPEN_VAR}=panic"),
+            // SAFETY: none, on purpose: address 8 is never mapped.
+            "fault" => unsafe { (8 as *mut u8).write_volatile(1) },
+            "hang" => ONCE.call_once(|| std::thread::sleep(HANG)),
+            _ => {}
+        }
         if what == "dpi" {
             self.on_act(Act::Nav(Page::Dpi));
             return;

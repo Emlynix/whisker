@@ -132,6 +132,7 @@ fn mice() -> Vec<Interface> {
 /// Connected mice (HID mouse collections), one entry per VID:PID.
 /// Only descriptors are read; nothing is sent to these devices.
 pub fn list_mice() -> Vec<DeviceInfo> {
+    let started = std::time::Instant::now();
     let mut out: Vec<DeviceInfo> = Vec::new();
     for i in mice() {
         if out.iter().any(|d| (d.vid, d.pid) == (i.info.vid, i.info.pid)) {
@@ -139,7 +140,33 @@ pub fn list_mice() -> Vec<DeviceInfo> {
         }
         out.push(identify(&i));
     }
+    log_mice(&out, started.elapsed());
     out
+}
+
+/// A listing slower than this is logged even when nothing changed.
+const SLOW_LISTING: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Logs the mice when they changed since the last listing or the listing
+/// was slow, e.g. `mice in 38 ms: 248A:5B2F "Lionel", 046D:B023 (bluetooth)`.
+/// The app lists every few seconds; the log must not fill with repeats.
+fn log_mice(mice: &[DeviceInfo], took: std::time::Duration) {
+    static LAST: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+    // A Bluetooth name is the owner's to choose ("Marek's mouse"): left out.
+    let name = |d: &DeviceInfo| match d.bt_address {
+        Some(_) => "(bluetooth)".to_string(),
+        None => format!("\"{}\"", crate::log::name(&d.product)),
+    };
+    let names: Vec<String> = mice.iter().map(|d| format!("{:04X}:{:04X} {}", d.vid, d.pid, name(d))).collect();
+    let list = if names.is_empty() { "none".to_string() } else { names.join(", ") };
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if *last == list && took < SLOW_LISTING {
+        return;
+    }
+
+    crate::log!("mice in {} ms: {list}", took.as_millis());
+    *last = list;
 }
 
 /// Connected mice as in `list_mice`, each with every collection of the

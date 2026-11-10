@@ -300,9 +300,13 @@ pub enum T {
     AutostartLater,
     /// Update dialog: the changelog was cut; opens the release page.
     FullNotes,
+    /// Notice after a run that crashed or was closed while hung.
+    CrashTitle,
+    CrashText,
+    CopyLog,
 }
 
-const COUNT: usize = T::FullNotes as usize + 1;
+const COUNT: usize = T::CopyLog as usize + 1;
 type Table = [&'static str; COUNT];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -763,6 +767,9 @@ const EN: Table = [
     "Measured while moving",
     "Available after installing",
     "Full release notes",
+    "Whisker closed unexpectedly",
+    "Last time Whisker crashed or stopped responding. A log of what it was doing is saved on this computer. Copy it and attach it to a bug report so it can be fixed. Nothing is sent on its own.",
+    "Copy log",
 ];
 
 const SK: Table = [
@@ -1049,6 +1056,9 @@ const SK: Table = [
     "Namerané pri pohybe",
     "Dostupné po inštalácii",
     "Celé poznámky k vydaniu",
+    "Whisker sa nečakane ukončil",
+    "Minule Whisker spadol alebo prestal reagovať. Záznam o tom, čo robil, je uložený v tomto počítači. Skopírujte ho a priložte k hláseniu chyby, aby sa dala opraviť. Nič sa neodosiela samo.",
+    "Kopírovať záznam",
 ];
 
 const CS: Table = [
@@ -1335,6 +1345,9 @@ const CS: Table = [
     "Naměřeno při pohybu",
     "Dostupné po instalaci",
     "Úplné poznámky k vydání",
+    "Whisker se neočekávaně ukončil",
+    "Minule Whisker spadl nebo přestal reagovat. Záznam o tom, co dělal, je uložen v tomto počítači. Zkopírujte ho a přiložte k hlášení chyby, aby se dala opravit. Nic se neodesílá samo.",
+    "Kopírovat záznam",
 ];
 
 const PL: Table = [
@@ -1621,6 +1634,9 @@ const PL: Table = [
     "Zmierzono podczas ruchu",
     "Dostępne po instalacji",
     "Pełne informacje o wydaniu",
+    "Whisker nieoczekiwanie się zamknął",
+    "Ostatnim razem Whisker uległ awarii lub przestał odpowiadać. Dziennik jego działań jest zapisany na tym komputerze. Skopiuj go i dołącz do zgłoszenia błędu, aby można było go naprawić. Nic nie jest wysyłane samoczynnie.",
+    "Kopiuj dziennik",
 ];
 
 const DE: Table = [
@@ -1907,6 +1923,9 @@ const DE: Table = [
     "Gemessen bei Bewegung",
     "Nach der Installation verfügbar",
     "Vollständige Versionshinweise",
+    "Whisker wurde unerwartet beendet",
+    "Beim letzten Mal ist Whisker abgestürzt oder hat nicht mehr reagiert. Ein Protokoll der Abläufe ist auf diesem Computer gespeichert. Protokoll kopieren und einem Fehlerbericht beifügen, damit der Fehler behoben werden kann. Nichts wird von selbst gesendet.",
+    "Protokoll kopieren",
 ];
 
 const FR: Table = [
@@ -2193,6 +2212,9 @@ const FR: Table = [
     "Mesuré en mouvement",
     "Disponible après l'installation",
     "Notes de version complètes",
+    "Whisker s'est fermé de façon inattendue",
+    "La dernière fois, Whisker a planté ou a cessé de répondre. Un journal de son activité est enregistré sur cet ordinateur. Copiez-le et joignez-le à un rapport de bogue pour que le problème puisse être corrigé. Rien n'est envoyé automatiquement.",
+    "Copier le journal",
 ];
 
 const ES: Table = [
@@ -2479,6 +2501,9 @@ const ES: Table = [
     "Medido en movimiento",
     "Disponible tras la instalación",
     "Notas de la versión completas",
+    "Whisker se cerró inesperadamente",
+    "La última vez, Whisker falló o dejó de responder. En este equipo hay guardado un registro de lo que estaba haciendo. Cópialo y adjúntalo a un informe de error para que se pueda corregir. Nada se envía por sí solo.",
+    "Copiar registro",
 ];
 
 const PT: Table = [
@@ -2765,6 +2790,9 @@ const PT: Table = [
     "Medido em movimento",
     "Disponível após a instalação",
     "Notas de versão completas",
+    "O Whisker fechou inesperadamente",
+    "Da última vez, o Whisker falhou ou deixou de responder. Um registo do que estava a fazer está guardado neste computador. Copie-o e anexe-o a um relatório de erro para que possa ser corrigido. Nada é enviado automaticamente.",
+    "Copiar registo",
 ];
 
 const IT: Table = [
@@ -3051,6 +3079,9 @@ const IT: Table = [
     "Misurato in movimento",
     "Disponibile dopo l'installazione",
     "Note di rilascio complete",
+    "Whisker si è chiuso in modo imprevisto",
+    "L'ultima volta Whisker si è bloccato o ha smesso di rispondere. Un registro di ciò che stava facendo è salvato su questo computer. Copialo e allegalo a una segnalazione di bug per consentire la correzione. Nulla viene inviato automaticamente.",
+    "Copia registro",
 ];
 
 const JA: Table = [
@@ -3337,6 +3368,9 @@ const JA: Table = [
     "動かしている間に測定",
     "インストール後に利用できます",
     "リリースノート全文",
+    "Whisker が予期せず終了しました",
+    "前回、Whisker がクラッシュしたか応答しなくなりました。動作の記録がこのコンピューターに保存されています。コピーして不具合報告に添付すると、修正に役立ちます。自動的に送信されることはありません。",
+    "ログをコピー",
 ];
 
 const KO: Table = [
@@ -3623,6 +3657,9 @@ const KO: Table = [
     "움직이는 동안 측정",
     "설치 후 사용할 수 있습니다",
     "전체 릴리스 노트",
+    "Whisker가 예기치 않게 종료되었습니다",
+    "지난번에 Whisker가 충돌했거나 응답을 멈췄습니다. 동작 기록이 이 컴퓨터에 저장되어 있습니다. 복사해서 버그 신고에 첨부하면 수정에 도움이 됩니다. 자동으로 전송되는 것은 없습니다.",
+    "로그 복사",
 ];
 
 const ZH_HANS: Table = [
@@ -3909,6 +3946,9 @@ const ZH_HANS: Table = [
     "移动时测得",
     "安装后可用",
     "完整发布说明",
+    "Whisker 意外关闭",
+    "上次 Whisker 崩溃或停止响应。记录其运行情况的日志保存在这台电脑上。复制日志并附在错误报告中，便于修复问题。不会自动发送任何内容。",
+    "复制日志",
 ];
 
 const ZH_HANT: Table = [
@@ -4195,6 +4235,9 @@ const ZH_HANT: Table = [
     "移動時測得",
     "安裝後可用",
     "完整發行說明",
+    "Whisker 意外關閉",
+    "上次 Whisker 當機或停止回應。記錄其執行情況的記錄檔儲存在這部電腦上。複製記錄檔並附在錯誤回報中，方便修正問題。不會自動傳送任何內容。",
+    "複製記錄檔",
 ];
 
 #[cfg(test)]

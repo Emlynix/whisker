@@ -194,7 +194,7 @@ impl Driver {
         }
     }
 
-    fn set_dpi(&mut self, dpi: u32) {
+    fn set_dpi(&mut self, dpi: u32) -> bool {
         match self {
             Driver::Hidpp(d) => d.set_dpi(dpi),
             Driver::Razer(d) => d.set_dpi(dpi),
@@ -206,10 +206,10 @@ impl Driver {
             Driver::Roccat(d) => d.set_dpi(dpi),
             Driver::Corsair(d) => d.set_dpi(dpi),
             Driver::Asus(d) => d.set_dpi(dpi),
-        };
+        }
     }
 
-    fn set_rate(&mut self, hz: u32) {
+    fn set_rate(&mut self, hz: u32) -> bool {
         match self {
             Driver::Hidpp(d) => d.set_rate(hz),
             Driver::Razer(d) => d.set_rate(hz),
@@ -220,7 +220,7 @@ impl Driver {
             Driver::Roccat(d) => d.set_rate(hz),
             Driver::Corsair(d) => d.set_rate(hz),
             Driver::Asus(d) => d.set_rate(hz),
-        };
+        }
     }
 }
 
@@ -355,7 +355,53 @@ fn probe_lionel(pick: &Pick) -> Probed {
     Probed::Status(info, status)
 }
 
+/// Driver name for the log; a Bluetooth address stays out of it.
+fn target_name(t: &Target) -> String {
+    match t {
+        Target::Bluetooth(_) => "Bluetooth".into(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// Where the mouse is, as the log tells it.
+fn link_state(ev: &Event) -> Option<&'static str> {
+    match ev {
+        Event::Status(_) | Event::Basic(_) => Some("online"),
+        Event::Offline => Some("asleep or off"),
+        Event::Absent => Some("not found"),
+        Event::Device(_) | Event::Ident(..) | Event::Probe(..) => None,
+    }
+}
+
+/// Logs what the driver found: the device, its identity, and the link
+/// state when it changes (not every poll). Never the serial number, nor
+/// the OS's product string (over Bluetooth it is a name the owner chose);
+/// the model name comes from the firmware.
+fn log_event(ev: &Event, state: &std::cell::Cell<&'static str>) {
+    use crate::log::name;
+    match ev {
+        Event::Device(d) => crate::log!("mouse: device {:04X}:{:04X}", d.vid, d.pid),
+        Event::Ident(i, a) => {
+            let (model, firmware) = (name(&i.name), name(&i.firmware));
+            crate::log!("mouse: \"{model}\", firmware \"{firmware}\", {}; dpi {:?}, rates {:?}, battery {}", i.protocol, a.dpi, a.rates, a.battery)
+        }
+        _ => {}
+    }
+    let Some(now) = link_state(ev) else {
+        return;
+    };
+    if state.replace(now) != now {
+        crate::log!("mouse: {now}");
+    }
+}
+
 fn run(target: Target, pick: Pick, rx: Receiver<Command>, on_event: impl Fn(Event)) {
+    crate::log!("mouse: driver {}", target_name(&target));
+    let state = std::cell::Cell::new("");
+    let on_event = |ev: Event| {
+        log_event(&ev, &state);
+        on_event(ev);
+    };
     let mut w = Worker { link: Some(HidLink::new()), seq: 0, verified: false, reported: None, target, pick, driver: None, misses: 0 };
     let mut period = POLL_VISIBLE;
 
@@ -418,6 +464,8 @@ fn run(target: Target, pick: Pick, rx: Receiver<Command>, on_event: impl Fn(Even
                 }
             }
             Command::Target(t, pick) => {
+                crate::log!("mouse: driver {}", target_name(&t));
+                state.set("");
                 (w.target, w.pick) = (t, pick);
                 w.driver = None;
                 w.verified = false;
@@ -425,12 +473,14 @@ fn run(target: Target, pick: Pick, rx: Receiver<Command>, on_event: impl Fn(Even
             }
             Command::SetBasicDpi(dpi) => {
                 if let Some(d) = w.driver.as_mut() {
-                    d.set_dpi(dpi);
+                    let ok = d.set_dpi(dpi);
+                    crate::log!("mouse: set dpi {dpi}: {}", if ok { "accepted" } else { "refused" });
                 }
             }
             Command::SetBasicRate(hz) => {
                 if let Some(d) = w.driver.as_mut() {
-                    d.set_rate(hz);
+                    let ok = d.set_rate(hz);
+                    crate::log!("mouse: set rate {hz} Hz: {}", if ok { "accepted" } else { "refused" });
                 }
             }
             Command::Visible(v) => period = if v { POLL_VISIBLE } else { POLL_HIDDEN },

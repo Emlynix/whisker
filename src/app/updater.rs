@@ -79,6 +79,13 @@ impl Controller {
             self.cfg.update_checked = stats::unix_now();
             store::save_config(&self.cfg);
         }
+        let outcome = match &r {
+            Ok(Check::Newer(rel)) => format!("{} available", rel.version),
+            Ok(Check::Current) => "up to date".into(),
+            Ok(Check::NoInfo) => "no information".into(),
+            Err(_) => "failed".into(),
+        };
+        crate::log!("update check: {outcome}");
         let probe = match r {
             Ok(Check::Newer(rel)) => {
                 self.offer_update(rel, t);

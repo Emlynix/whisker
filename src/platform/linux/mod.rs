@@ -14,6 +14,7 @@
 pub mod autostart;
 pub mod bluetooth;
 mod bus;
+pub mod crash;
 mod descriptor;
 pub mod gfx;
 pub mod hid;

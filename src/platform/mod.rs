@@ -83,6 +83,10 @@
 //! on its own thread for every mouse report, also while unfocused;
 //! `has_vendor(dev, vid) -> bool` for the device id of a report.
 //!
+//! `crash` — `install()`: from now on a crash of the process (Windows:
+//! unhandled exception, Linux: fatal signal) leaves a `log::crash_raw`
+//! line before the OS ends it as usual.
+//!
 //! `autostart` — start hidden at login (`TRAY_ARG`), installed copy only:
 //! `is_enabled() -> bool`, `set(Autostart) -> bool`.
 //!
