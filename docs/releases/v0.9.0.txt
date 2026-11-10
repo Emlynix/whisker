@@ -1,0 +1,5 @@
+First public release.
+- Battery, DPI stages, report rate, debounce, lighting, buttons and macros
+- Statistics for any mouse
+- 9 themes, 13 languages
+- Signed automatic updates

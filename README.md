@@ -3,6 +3,8 @@
 A lightweight control app for gaming mice. One small native program for
 Windows, Linux and macOS instead of a heavy vendor suite: set DPI, report
 rate, lighting and buttons, watch the battery, and see how much you click.
+An open-source alternative to Razer Synapse, Logitech G Hub and similar
+mouse software.
 
 ![Overview](docs/screenshots/overview.png)
 
