@@ -39,7 +39,7 @@
 //! - `set_clipboard(text) -> bool`: replaces the clipboard with plain text
 //!   (the window owns it on Windows).
 //! - `set_tray(tray::Level, tip)`: battery glyph (`tray::glyph`) and tooltip.
-//!   Tray clicks arrive as `Hooks::tray` (left = open, menu = open/about/quit).
+//!   Tray clicks arrive as `Hooks::tray` (double click = open, menu = open/about/quit).
 //! - `notify(title, text)`: system notification from the tray icon; a click
 //!   on it arrives as `TrayAction::Open`. Windows: tray balloon (`NIF_INFO`,
 //!   shown as a toast). Linux: `org.freedesktop.Notifications`.

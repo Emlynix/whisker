@@ -85,14 +85,23 @@ fn replace_icon(new: HICON) {
     }
 }
 
-/// Handles `WM_TRAY`: left click or a click on our notification opens,
-/// right click shows the menu.
+/// Handles `WM_TRAY`: a double click or a click on our notification
+/// opens, right click shows the menu.
 pub fn on_message(hwnd: HWND, lparam: isize) -> Option<TrayAction> {
-    match (lparam & 0xFFFF) as u32 {
-        WM_LBUTTONUP | NIN_BALLOONUSERCLICK => Some(TrayAction::Open),
-        WM_RBUTTONUP => menu(hwnd),
-        _ => None,
+    let event = (lparam & 0xFFFF) as u32;
+    if opens(event) {
+        return Some(TrayAction::Open);
     }
+    if event == WM_RBUTTONUP {
+        return menu(hwnd);
+    }
+    None
+}
+
+/// A single click only passes by (the tooltip tells the battery); as
+/// with other tray icons, the window takes a double click.
+fn opens(event: u32) -> bool {
+    matches!(event, WM_LBUTTONDBLCLK | NIN_BALLOONUSERCLICK)
 }
 
 fn menu(hwnd: HWND) -> Option<TrayAction> {
@@ -136,5 +145,19 @@ fn draw(level: Level) -> HICON {
         DeleteObject(color);
         DeleteObject(mask);
         icon
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_window_opens_on_a_double_click_only() {
+        assert!(opens(WM_LBUTTONDBLCLK));
+        assert!(opens(NIN_BALLOONUSERCLICK));
+        // Issue #6: a single click opened it by accident.
+        assert!(!opens(WM_LBUTTONUP));
+        assert!(!opens(WM_LBUTTONDOWN));
     }
 }
