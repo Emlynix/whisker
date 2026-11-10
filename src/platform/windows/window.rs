@@ -68,6 +68,16 @@ pub fn show() {
     }
 }
 
+/// Minimizes to the taskbar.
+pub fn minimize() {
+    unsafe { ShowWindow(hwnd(), SW_MINIMIZE) };
+}
+
+/// The app's close button: the same as the system's.
+pub fn close() {
+    unsafe { PostMessageW(hwnd(), WM_CLOSE, 0, 0) };
+}
+
 pub fn quit() {
     // Drawing objects go first, while the window they draw to still exists.
     free_shell();
@@ -207,18 +217,22 @@ pub fn create(title: &str, w: f32, h: f32, hooks: Hooks) -> bool {
         let scale = dpi as f32 / BASE_DPI;
         SHELL.with(|s| *s.borrow_mut() = Some(Shell { gfx, hooks, pointer: Pointer::default(), scale, tracking: false }));
 
+        // Sharp corners are part of the design; Windows 11 rounds by default.
+        const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+        const DWMWCP_DONOTROUND: u32 = 1;
+        DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, (&DWMWCP_DONOTROUND as *const u32).cast(), size_of::<u32>() as u32);
         place(hwnd, w, h, dpi);
         tray::add(hwnd, crate::APP_NAME);
     }
     true
 }
 
-/// Sizes the window for `w` x `h` DIPs of client area, centered on the work area.
+/// Sizes the window to `w` x `h` DIPs, centered on the work area. There
+/// is no frame to add: the client area is the whole window (`WM_NCCALCSIZE`).
 unsafe fn place(hwnd: HWND, w: f32, h: f32, dpi: u32) {
     let s = dpi as f32 / BASE_DPI;
-    let mut r = RECT { left: 0, top: 0, right: (w * s) as i32, bottom: (h * s) as i32 };
+    let r = RECT { left: 0, top: 0, right: (w * s) as i32, bottom: (h * s) as i32 };
     unsafe {
-        AdjustWindowRectExForDpi(&mut r, STYLE, 0, 0, dpi);
         let mut work: RECT = std::mem::zeroed();
         SystemParametersInfoW(SPI_GETWORKAREA, 0, (&mut work as *mut RECT).cast(), 0);
 
@@ -253,6 +267,15 @@ fn free_shell() {
 
 fn with_shell<R>(f: impl FnOnce(&mut Shell) -> R) -> Option<R> {
     SHELL.with(|s| s.try_borrow_mut().ok()?.as_mut().map(f))
+}
+
+/// `WM_NCHITTEST`: the empty part of the app's title bar is the caption
+/// (Windows then moves the window itself), the rest is client area.
+fn hit_test(hwnd: HWND, lp: LPARAM) -> LRESULT {
+    let mut pt = POINT { x: (lp & 0xFFFF) as i16 as i32, y: ((lp >> 16) & 0xFFFF) as i16 as i32 };
+    unsafe { ScreenToClient(hwnd, &mut pt) };
+    let caption = with_shell(|s| s.pointer.caption_at(pt.x as f32 / s.scale, pt.y as f32 / s.scale)).unwrap_or(false);
+    (if caption { HTCAPTION } else { HTCLIENT }) as LRESULT
 }
 
 fn mouse_pos(s: &Shell, lp: LPARAM) -> (f32, f32) {
@@ -359,6 +382,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WM_ERASEBKGND => return 1,
         WM_MOUSEMOVE => on_move(hwnd, lp),
         WM_MOUSEWHEEL => on_wheel(hwnd, wp, lp),
+        // No system title bar or frame: the app draws the whole window.
+        // The style keeps WS_CAPTION, so the taskbar, Win+arrows and the
+        // minimize animation still treat it as a normal window.
+        WM_NCCALCSIZE if wp != 0 => return 0,
+        WM_NCHITTEST => return hit_test(hwnd, lp),
         WM_LBUTTONDOWN => on_down(hwnd, lp),
         WM_LBUTTONUP => on_up(lp),
         WM_MOUSELEAVE => {

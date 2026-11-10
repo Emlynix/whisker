@@ -317,9 +317,12 @@ pub enum T {
     LogCaption,
     /// Copies the id of the sent report.
     CopyId,
+    /// Sidebar: pages of the PRO version.
+    PageProfiles,
+    PageOverlay,
 }
 
-const COUNT: usize = T::CopyId as usize + 1;
+const COUNT: usize = T::PageOverlay as usize + 1;
 type Table = [&'static str; COUNT];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -791,6 +794,8 @@ const EN: Table = [
     "“Send” delivers exactly this text to the Whisker developers (whisker.emlynix.com).",
     "DIAGNOSTIC LOG · ENGLISH",
     "Copy ID",
+    "Profiles",
+    "Overlay & widget",
 ];
 
 const SK: Table = [
@@ -1088,6 +1093,8 @@ const SK: Table = [
     "Tlačidlo „Odoslať“ pošle vývojárom Whiskeru presne tento text (whisker.emlynix.com).",
     "DIAGNOSTICKÝ ZÁZNAM · ANGLICKY",
     "Kopírovať ID",
+    "Profily",
+    "Overlay a widget",
 ];
 
 const CS: Table = [
@@ -1385,6 +1392,8 @@ const CS: Table = [
     "Tlačítko „Odeslat“ pošle vývojářům Whiskeru přesně tento text (whisker.emlynix.com).",
     "DIAGNOSTICKÝ ZÁZNAM · ANGLICKY",
     "Kopírovat ID",
+    "Profily",
+    "Overlay a widget",
 ];
 
 const PL: Table = [
@@ -1682,6 +1691,8 @@ const PL: Table = [
     "Przycisk „Wyślij” przesyła twórcom Whiskera dokładnie ten tekst (whisker.emlynix.com).",
     "DZIENNIK DIAGNOSTYCZNY · PO ANGIELSKU",
     "Kopiuj ID",
+    "Profile",
+    "Nakładka i widżet",
 ];
 
 const DE: Table = [
@@ -1979,6 +1990,8 @@ const DE: Table = [
     "„Senden“ überträgt genau diesen Text an die Whisker-Entwickler (whisker.emlynix.com).",
     "DIAGNOSEPROTOKOLL · ENGLISCH",
     "ID kopieren",
+    "Profile",
+    "Overlay & Widget",
 ];
 
 const FR: Table = [
@@ -2276,6 +2289,8 @@ const FR: Table = [
     "« Envoyer » transmet exactement ce texte aux développeurs de Whisker (whisker.emlynix.com).",
     "JOURNAL DE DIAGNOSTIC · EN ANGLAIS",
     "Copier l'ID",
+    "Profils",
+    "Overlay et widget",
 ];
 
 const ES: Table = [
@@ -2573,6 +2588,8 @@ const ES: Table = [
     "«Enviar» manda exactamente este texto a los desarrolladores de Whisker (whisker.emlynix.com).",
     "REGISTRO DE DIAGNÓSTICO · EN INGLÉS",
     "Copiar ID",
+    "Perfiles",
+    "Overlay y widget",
 ];
 
 const PT: Table = [
@@ -2870,6 +2887,8 @@ const PT: Table = [
     "«Enviar» manda exatamente este texto aos programadores do Whisker (whisker.emlynix.com).",
     "REGISTO DE DIAGNÓSTICO · EM INGLÊS",
     "Copiar ID",
+    "Perfis",
+    "Overlay e widget",
 ];
 
 const IT: Table = [
@@ -3167,6 +3186,8 @@ const IT: Table = [
     "«Invia» trasmette esattamente questo testo agli sviluppatori di Whisker (whisker.emlynix.com).",
     "REGISTRO DIAGNOSTICO · IN INGLESE",
     "Copia ID",
+    "Profili",
+    "Overlay e widget",
 ];
 
 const JA: Table = [
@@ -3464,6 +3485,8 @@ const JA: Table = [
     "「送信」はこのテキストだけを Whisker の開発者 (whisker.emlynix.com) に送ります。",
     "診断ログ · 英語",
     "ID をコピー",
+    "プロファイル",
+    "オーバーレイとウィジェット",
 ];
 
 const KO: Table = [
@@ -3761,6 +3784,8 @@ const KO: Table = [
     "“보내기”는 이 텍스트만 Whisker 개발자(whisker.emlynix.com)에게 전송합니다.",
     "진단 로그 · 영어",
     "ID 복사",
+    "프로필",
+    "오버레이 및 위젯",
 ];
 
 const ZH_HANS: Table = [
@@ -4058,6 +4083,8 @@ const ZH_HANS: Table = [
     "“发送”只会把这段文本发送给 Whisker 开发者 (whisker.emlynix.com)。",
     "诊断日志 · 英文",
     "复制 ID",
+    "配置文件",
+    "叠加层与小组件",
 ];
 
 const ZH_HANT: Table = [
@@ -4355,6 +4382,8 @@ const ZH_HANT: Table = [
     "「傳送」只會把這段文字傳送給 Whisker 開發者 (whisker.emlynix.com)。",
     "診斷記錄 · 英文",
     "複製 ID",
+    "設定檔",
+    "疊加層與小工具",
 ];
 
 #[cfg(test)]

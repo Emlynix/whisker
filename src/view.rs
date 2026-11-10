@@ -4,16 +4,19 @@
 //! objects, a frame is just a function of state.
 //!
 //! ```text
-//!  +-----------+----------------------------------------+
-//!  | Whisker   |  Title                  [status chip]  |
-//!  |  mouse    |  Tab | Tab   (Buttons, Settings only)  |
-//!  |  nav x6   |  page content (cards)                  |
-//!  |           |                                        |
-//!  | Settings  |                                        |
-//!  | [status]  |            [toast · Undo]              |
-//!  | v0.9.0    |                                        |
-//!  +-----------+----------------------------------------+
-//!    210 px          content x = 234 .. 796
+//!  +--------------------------------------------------------+
+//!  | [logo] WHISKER [mouse name]                    [–] [×] |  title bar 32, drags the window
+//!  +-----------+--------------------------------------------+
+//!  | nav x6    |  PAGE TITLE               [status chip]    |
+//!  | ///////// |  Tab | Tab   (Buttons, Settings only)      |
+//!  | [PRO]     |  page content (panels)                     |
+//!  | Profiles  |                                            |
+//!  | Overlay … |              [toast · Undo]                |
+//!  | Settings  |                                            |
+//!  +-----------+--------------------------------------------+
+//!  | ■ Connected · 78 %                    Update available |  status bar 24
+//!  +--------------------------------------------------------+
+//!    176 px          content x = 194 .. 782
 //! ```
 
 use crate::gfx::{Align, Color, Face, Gfx, Rect, Size, Weight};
@@ -41,17 +44,23 @@ fn th() -> &'static Theme {
     theme::current()
 }
 
-pub const WIDTH: f32 = 820.0;
-pub const HEIGHT: f32 = 560.0;
-/// Status row in the bottom margin of the page area, under the cards.
-const STATUS_H: f32 = 26.0;
-/// Bottom of page content; the status row sits below.
+pub const WIDTH: f32 = 800.0;
+pub const HEIGHT: f32 = 600.0;
+/// Custom title bar: logo, app name, mouse name, window buttons.
+const TITLE_H: f32 = 32.0;
+/// Status bar across the bottom of the window.
+const STATUS_H: f32 = 24.0;
+/// Bottom of page content; the status bar sits below.
 const PAGE_H: f32 = HEIGHT - STATUS_H;
 
-const SIDE_W: f32 = 210.0;
-const X0: f32 = 234.0;
-const CW: f32 = 562.0;
-const TOP: f32 = 70.0;
+const SIDE_W: f32 = 176.0;
+/// Content padding: 18 left and right, 16 above the page title.
+const CONTENT_PAD: f32 = 18.0;
+const X0: f32 = SIDE_W + CONTENT_PAD;
+const CW: f32 = WIDTH - SIDE_W - 2.0 * CONTENT_PAD;
+/// Page title: 16 below the title bar, 24 tall, 14 above the content.
+const TITLE_Y: f32 = TITLE_H + 16.0;
+const TOP: f32 = TITLE_Y + 24.0 + 14.0;
 /// Spacing on a 4 px grid (8 / 12 / 16 / 24).
 const GAP: f32 = 16.0;
 /// Sharp and thin: no corner radius anywhere.
@@ -111,9 +120,9 @@ impl Page {
     }
 }
 
-/// Leaves room under the header for a future profile switcher.
-const NAV_TOP: f32 = 116.0;
-const NAV_STEP: f32 = 40.0;
+/// First nav item 8 below the title bar; items 32 tall, no gaps.
+const NAV_TOP: f32 = TITLE_H + 8.0;
+const NAV_STEP: f32 = 32.0;
 /// Underlined tab row under the title; tabbed pages start below it.
 const TAB_H: f32 = 30.0;
 const BODY: f32 = TOP + TAB_H + GAP;
@@ -224,6 +233,10 @@ pub enum Act {
     About,
     /// Closes the About or "assign macro" dialog.
     CloseDialog,
+    /// Title bar: its empty part (moves the window) and the window buttons.
+    Caption,
+    WinMinimize,
+    WinClose,
     /// Crash notice: opens the diagnostic log.
     ShowLog,
     OpenWeb(Web),
@@ -340,6 +353,8 @@ impl Mark {
 #[derive(Clone, Copy)]
 pub enum Kind {
     Button,
+    /// Empty part of the title bar: dragging it moves the window.
+    Caption,
     /// Horizontal slider over `steps` positions between `x0` and `x1`.
     Slider { x0: f32, x1: f32, steps: usize },
 }
@@ -746,10 +761,11 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
     let mut f = Frame { g, hot, hits: Vec::new() };
     f.g.clear(th().bg);
 
+    title_bar(&mut f, v);
     sidebar(&mut f, v);
     status_bar(&mut f, v);
-    let title = Rect::new(X0, 18.0, CW, 36.0);
-    f.g.text(tr(v.page.title()), title, Size::Title, Weight::Semibold, Align::Left, th().text);
+    let title = Rect::new(X0, TITLE_Y, CW, 24.0);
+    f.g.text(&tr(v.page.title()).to_uppercase(), title, Size::Title, Weight::Semibold, Align::Left, th().text);
     header_status(&mut f, v);
     // Over the title row: never covers controls of the page.
     if let Some(b) = &v.banner {
@@ -854,9 +870,9 @@ fn header_status(f: &mut Frame, v: &View) {
         Sync::Hidden => return,
     };
     let w = (text_w(text, Size::Caption) + 52.0).min(MAX_W);
-    let r = Rect::new(X0 + CW - w, 22.0, w, H);
-    f.g.fill(r, H / 2.0, Color(th().card.0, alpha));
-    f.g.stroke(r, H / 2.0, 1.0, Color(th().border.0, alpha));
+    let r = Rect::new(X0 + CW - w, TITLE_Y - 2.0, w, H);
+    f.g.fill(r, 0.0, Color(th().panel.0, alpha));
+    f.g.stroke(r, 0.0, 1.0, Color(th().line.0, alpha));
     f.g.circle(r.x + 15.0, r.y + H / 2.0, 4.0, Color(dot.0, alpha));
     let label = Rect::new(r.x + 26.0, r.y, r.w - 34.0, H);
     f.g.text(text, label, Size::Caption, Weight::Normal, Align::Left, Color(th().muted.0, alpha));
@@ -960,105 +976,208 @@ fn info_icon(g: &Gfx, x: f32, y: f32, c: Color) {
     g.line(cx, cy - 1.0 * S, cx, cy + 5.0 * S, ICON_STROKE, c);
 }
 
-/// The app's mouse with whiskers, matching the exe icon.
-fn mouse_logo(g: &Gfx, x: f32, y: f32) {
-    g.stroke(Rect::new(x, y, 18.0, 27.0), 9.0, 2.0, th().accent);
-    g.line(x + 9.0, y + 1.0, x + 9.0, y + 10.0, 2.0, th().accent);
+/// The logo: a mouse with whiskers drawn as circuit traces, on a 24 x 24
+/// grid scaled to `size`. Strokes in the text color, the nose in the accent.
+///
+/// ```text
+///   ─╲___   ___╱─      whiskers: three per side, the outer ones bend
+///   ──────■──────      nose
+///   ─╱‾‾‾ ┌─┬─┐ ‾‾‾╲─
+///         ├─┴─┤        body: chamfered corners, split between the buttons
+///         └───┘
+/// ```
+fn logo(g: &Gfx, x: f32, y: f32, size: f32) {
+    const GRID: f32 = 24.0;
+    /// 1.3 on the grid; never thinner than a pixel.
+    const STROKE: f32 = 1.3;
+    const BODY: [(f32, f32); 8] = [(9.0, 7.5), (15.0, 7.5), (16.5, 9.0), (16.5, 21.0), (15.0, 22.5), (9.0, 22.5), (7.5, 21.0), (7.5, 9.0)];
+    const SPLIT: [[(f32, f32); 2]; 2] = [[(12.0, 7.5), (12.0, 12.5)], [(7.5, 12.5), (16.5, 12.5)]];
+    /// Left side; the right one mirrors it around x = 12.
+    const WHISKERS: [&[(f32, f32)]; 3] =
+        [&[(10.0, 3.5), (6.5, 3.5), (5.0, 2.0), (2.5, 2.0)], &[(10.0, 5.0), (2.0, 5.0)], &[(10.0, 6.5), (6.5, 6.5), (5.0, 8.0), (2.5, 8.0)]];
 
-    // Pink nose on top.
-    const NOSE: Color = Color::rgb(0xff8fa8);
-    g.circle(x + 9.0, y + 0.5, 3.0, NOSE);
+    let s = size / GRID;
+    let w = (STROKE * s).max(1.0);
+    let c = th().text;
+    let at = |(px, py): (f32, f32)| (x + px * s, y + py * s);
+    let trace = |pts: &[(f32, f32)]| {
+        for pair in pts.windows(2) {
+            let ((x0, y0), (x1, y1)) = (at(pair[0]), at(pair[1]));
+            g.line(x0, y0, x1, y1, w, c);
+        }
+    };
 
-    // Three short whiskers per side, from beside the nose, slanting up and out.
-    const LEN: f32 = 6.0;
-    let (cx, wy) = (x + 9.0, y + 2.5);
-    for side in [-1.0, 1.0] {
-        for (oy, inset, rise) in [(0.0, 0.0, 2.6), (1.8, 0.6, 1.5), (3.6, 1.4, 0.5)] {
-            let x0 = cx + side * (6.5 + inset);
-            g.line(x0, wy + oy, x0 + side * LEN, wy + oy - rise, 1.1, th().text);
+    let mut body = BODY.to_vec();
+    body.push(BODY[0]);
+    trace(&body);
+    for line in SPLIT {
+        trace(&line);
+    }
+    for whisker in WHISKERS {
+        trace(whisker);
+        let mirrored: Vec<(f32, f32)> = whisker.iter().map(|&(px, py)| (GRID - px, py)).collect();
+        trace(&mirrored);
+    }
+    let (nx, ny) = at((11.0, 4.0));
+    g.fill(Rect::new(nx, ny, 2.0 * s, 2.0 * s), 0.0, th().acc_fill);
+}
+
+/// Title bar: logo, app name, the mouse in use (a click changes it),
+/// window buttons. Its empty part moves the window.
+fn title_bar(f: &mut Frame, v: &View) {
+    const PAD: f32 = 12.0;
+    const LOGO: f32 = 18.0;
+    const GAP: f32 = 8.0;
+    const DEVICE_H: f32 = 22.0;
+    const DEVICE_PAD: f32 = 9.0;
+    const DEVICE_MAX: f32 = 300.0;
+    const WIN_BTN_W: f32 = 40.0;
+    /// Window buttons, right to left.
+    const WIN_BUTTONS: [(Act, WinIcon); 2] = [(Act::WinClose, WinIcon::Close), (Act::WinMinimize, WinIcon::Minimize)];
+
+    let bar = Rect::new(0.0, 0.0, WIDTH, TITLE_H);
+    f.g.fill(bar, 0.0, th().side);
+    f.g.fill(Rect::new(0.0, TITLE_H - 1.0, WIDTH, 1.0), 0.0, th().line);
+    // Under everything else in the bar: what is not a control drags.
+    f.hits.push(Hit { act: Act::Caption, rect: bar, kind: Kind::Caption });
+
+    logo(f.g, PAD, (TITLE_H - LOGO) / 2.0, LOGO);
+    let name = crate::APP_NAME.to_uppercase();
+    let name_x = PAD + LOGO + GAP;
+    let name_w = text_w(&name, Size::AppName);
+    f.g.text(&name, Rect::new(name_x, 0.0, name_w + 8.0, TITLE_H), Size::AppName, Weight::Semibold, Align::Left, th().text);
+
+    // The mouse in use; with no name yet there is nothing to show.
+    if !v.device_name.is_empty() {
+        let w = (text_w(&v.device_name, Size::Caption) + 2.0 * DEVICE_PAD).min(DEVICE_MAX);
+        let r = Rect::new(name_x + name_w + 14.0, (TITLE_H - DEVICE_H) / 2.0, w, DEVICE_H);
+        let hot = f.button(Act::ChangeMouse, r);
+        f.g.fill(r, 0.0, if hot { th().sel } else { th().input });
+        f.g.stroke(r, 0.0, 1.0, th().line2);
+        let label = Rect::new(r.x + DEVICE_PAD, r.y, r.w - 2.0 * DEVICE_PAD, r.h);
+        f.g.text(&v.device_name, label, Size::Caption, Weight::Medium, Align::Left, th().text);
+    }
+
+    for (k, (act, icon)) in WIN_BUTTONS.into_iter().enumerate() {
+        let r = Rect::new(WIDTH - (k + 1) as f32 * WIN_BTN_W, 0.0, WIN_BTN_W, TITLE_H - 1.0);
+        if f.button(act, r) {
+            f.g.fill(r, 0.0, th().sel);
+        }
+        f.g.fill(Rect::new(r.x, 0.0, 1.0, TITLE_H - 1.0), 0.0, th().line);
+        win_icon(f.g, icon, r.x + r.w / 2.0, TITLE_H / 2.0);
+    }
+}
+
+#[derive(Clone, Copy)]
+enum WinIcon {
+    Minimize,
+    Close,
+}
+
+/// A 10 px stroke icon of a window button, centred on (`cx`, `cy`).
+fn win_icon(g: &Gfx, icon: WinIcon, cx: f32, cy: f32) {
+    const HALF: f32 = 5.0;
+    let c = th().text;
+    match icon {
+        WinIcon::Minimize => g.line(cx - HALF, cy, cx + HALF, cy, 1.0, c),
+        WinIcon::Close => {
+            g.line(cx - HALF, cy - HALF, cx + HALF, cy + HALF, 1.0, c);
+            g.line(cx - HALF, cy + HALF, cx + HALF, cy - HALF, 1.0, c);
         }
     }
 }
 
-// ---- sidebar -------------------------------------------------------------
+/// The "PRO" tag: features of the paid version.
+fn pro_tag(f: &mut Frame, x: f32, y: f32) -> f32 {
+    const H: f32 = 16.0;
+    const PAD: f32 = 5.0;
+    const LABEL: &str = "PRO";
+    let w = text_w(LABEL, Size::Tag) + 2.0 * PAD;
+    let r = Rect::new(x, y, w, H);
+    f.g.fill(r, 0.0, th().acc_fill);
+    f.g.text(LABEL, Rect::new(r.x + PAD, r.y, r.w, r.h), Size::Tag, Weight::Semibold, Align::Left, th().acc_on);
+    w
+}
+
+/// Hatched strip between the free pages and the PRO group: diagonal
+/// hairlines every 6 px, a hairline above and below.
+fn hatch(g: &Gfx, r: Rect) {
+    const STEP: f32 = 6.0;
+    g.fill(Rect::new(r.x, r.y, r.w, 1.0), 0.0, th().line);
+    g.fill(Rect::new(r.x, r.y + r.h - 1.0, r.w, 1.0), 0.0, th().line);
+
+    // Each line climbs from the bottom edge to the top one, 45 degrees.
+    let rise = r.h - 2.0;
+    let mut x = r.x - rise;
+    while x < r.x + r.w {
+        // Clipped to the strip at both ends.
+        let (x0, x1) = (x.max(r.x), (x + rise).min(r.x + r.w));
+        let (y0, y1) = (r.y + r.h - 1.0 - (x0 - x), r.y + r.h - 1.0 - (x1 - x));
+        g.line(x0, y0, x1, y1, 1.0, th().line2);
+        x += STEP;
+    }
+}
 
 fn sidebar(f: &mut Frame, v: &View) {
-    // Same background as the title bar and page, split by a 1 px line.
-    f.g.fill(Rect::new(SIDE_W - 1.0, 0.0, 1.0, HEIGHT), 0.0, th().border);
+    const HATCH_H: f32 = 8.0;
+    const PRO_ROW_H: f32 = 30.0;
+    const FOOT_PAD: f32 = 4.0;
+    /// PRO pages: shown, not yet part of this version.
+    const PRO_PAGES: [(T, ProIcon); 2] = [(T::PageProfiles, ProIcon::Profiles), (T::PageOverlay, ProIcon::Overlay)];
 
-    const BOTTOM: f32 = HEIGHT - 14.0;
-    const ITEM_H: f32 = NAV_STEP - 4.0;
+    let side = Rect::new(0.0, TITLE_H, SIDE_W, PAGE_H - TITLE_H);
+    f.g.fill(side, 0.0, th().side);
+    f.g.fill(Rect::new(SIDE_W - 1.0, TITLE_H, 1.0, side.h), 0.0, th().line);
+    let item = |y: f32| Rect::new(0.0, y, SIDE_W - 1.0, NAV_STEP);
 
-    // Logo and name open About; the mouse name opens its details.
-    // Kept above the mouse name, so its focus ring leaves that line free.
-    // Logo and name share one centre line, the name as tall as the logo.
-    const LOGO_X: f32 = 24.0;
-    const LOGO_Y: f32 = 18.0;
-    const LOGO_H: f32 = 27.0;
-    let brand = Rect::new(14.0, LOGO_Y - 6.0, SIDE_W - 28.0, LOGO_H + 12.0);
-    let hot = f.button(Act::About, brand);
-    mouse_logo(f.g, LOGO_X, LOGO_Y);
-    let name_c = if hot { th().accent } else { th().text };
-    let title = Rect::new(LOGO_X + 32.0, LOGO_Y + LOGO_H / 2.0 - 18.0, 140.0, 36.0);
-    f.g.text(crate::APP_NAME, title, Size::Title, Weight::Bold, Align::Left, name_c);
-
-    // Mouse name under the logo, flush with the nav icons; a click opens
-    // the "which mouse" dialog. Long names take two lines.
-    const LINE_H: f32 = 16.0;
-    let name_w = SIDE_W - LOGO_X - 20.0;
-    let (first, second) = name_lines(&v.device_name, name_w, Size::Caption);
-    let lines = if second.is_some() { 2.0 } else { 1.0 };
-    let sub = Rect::new(LOGO_X, LOGO_Y + LOGO_H + 14.0, name_w, LINE_H * lines);
-    let pick = Rect::new(sub.x - 6.0, sub.y - 4.0, sub.w + 12.0, sub.h + 8.0);
-    let hot = f.button(Act::ChangeMouse, pick);
-    if hot {
-        f.g.fill(pick, R_INNER, th().hover);
-    }
-    let name_c = if hot { th().text } else { th().subtle };
-    f.g.text(&first, Rect::new(sub.x, sub.y, name_w, LINE_H), Size::Caption, Weight::Normal, Align::Left, name_c);
-    if let Some(rest) = &second {
-        f.g.text(rest, Rect::new(sub.x, sub.y + LINE_H, name_w, LINE_H), Size::Caption, Weight::Normal, Align::Left, name_c);
+    let mut y = NAV_TOP;
+    for page in nav_pages(&v.caps) {
+        nav_item(f, Nav::Page(page), item(y), Mark::of(v.page.nav() == page));
+        y += NAV_STEP;
     }
 
-    for (k, page) in nav_pages(&v.caps).into_iter().enumerate() {
-        let r = Rect::new(14.0, NAV_TOP + k as f32 * NAV_STEP, SIDE_W - 28.0, NAV_STEP - 4.0);
-        nav_item(f, Nav::Page(page), r, Mark::of(v.page.nav() == page));
+    // The PRO group: one hatched strip, the tag, its pages.
+    y += 8.0;
+    hatch(f.g, Rect::new(0.0, y, SIDE_W - 1.0, HATCH_H));
+    y += HATCH_H;
+    pro_tag(f, NAV_PAD, y + (PRO_ROW_H - 16.0) / 2.0);
+    y += PRO_ROW_H;
+    for (label, icon) in PRO_PAGES {
+        pro_item(f, label, icon, item(y));
+        y += NAV_STEP;
     }
 
-    // Pinned at the bottom: Settings, then About right under it.
-    let about = Rect::new(14.0, BOTTOM - ITEM_H, SIDE_W - 28.0, ITEM_H);
+    // Pinned at the bottom, over a hairline: About, then Settings.
+    let foot = PAGE_H - FOOT_PAD - 2.0 * NAV_STEP;
+    f.g.fill(Rect::new(0.0, foot - FOOT_PAD, SIDE_W - 1.0, 1.0), 0.0, th().line);
     // About opens a dialog, never a page: hover only, no current-page bar.
-    nav_item(f, Nav::About, about, Mark::Other);
-    let r = Rect::new(14.0, about.y - NAV_STEP, SIDE_W - 28.0, ITEM_H);
-    nav_item(f, Nav::Page(Page::General), r, Mark::of(v.page.nav() == Page::General));
-
+    nav_item(f, Nav::About, item(foot), Mark::Other);
+    nav_item(f, Nav::Page(Page::General), item(foot + NAV_STEP), Mark::of(v.page.nav() == Page::General));
 }
 
-/// Status row under the cards: a new version on the left, connection and
-/// battery on the right (a click opens Settings › Mouse).
+/// Status bar: connection and battery on the left (a click opens
+/// Settings › Mouse), a new version on the right.
 fn status_bar(f: &mut Frame, v: &View) {
+    const PAD: f32 = 12.0;
+    const DOT: f32 = 7.0;
+    let bar = Rect::new(0.0, PAGE_H, WIDTH, STATUS_H);
+    f.g.fill(bar, 0.0, th().side);
+    f.g.fill(Rect::new(0.0, PAGE_H, WIDTH, 1.0), 0.0, th().line);
     update::status_notice(f, &v.update);
-    if !(v.caps.battery || v.has_battery) {
-        return;
-    }
-    // Text right-aligned, dot after it at the cards' edge: no width
-    // estimate decides where the text ends (fonts differ per OS).
-    const DOT_R: f32 = 3.5;
+
     let (text, c) = status_text(v);
-    let right = X0 + CW;
-    let y = PAGE_H + STATUS_H / 2.0;
-    let area_w = text_w(&text, Size::Caption) + 28.0;
-    let area = Rect::new(right - area_w + 6.0, PAGE_H + 3.0, area_w, STATUS_H - 6.0);
+    let w = text_w(&text, Size::Caption) + DOT + 8.0 + 2.0 * PAD;
+    let area = Rect::new(0.0, PAGE_H + 1.0, w, STATUS_H - 1.0);
     if f.button(Act::Nav(Page::Mouse), area) {
-        f.g.fill(area, R_INNER, th().hover);
+        f.g.fill(area, 0.0, th().sel);
     }
-    f.g.circle(right - DOT_R, y, DOT_R, c);
-    let label = Rect::new(X0 + CW / 2.0, y - 8.0, CW / 2.0 - 2.0 * DOT_R - 6.0, 16.0);
-    f.g.text(&text, label, Size::Caption, Weight::Normal, Align::Right, c);
+    f.g.fill(Rect::new(PAD, PAGE_H + (STATUS_H - DOT) / 2.0 + 0.5, DOT, DOT), 0.0, c);
+    let label = Rect::new(PAD + DOT + 8.0, PAGE_H + 1.0, w, STATUS_H - 1.0);
+    f.g.text(&text, label, Size::Caption, Weight::Normal, Align::Left, th().muted);
 }
 
-/// "Connected · 55 % ●" (⚡ while charging): green, warn colour when the
-/// battery runs low, muted "Disconnected ●" offline.
+/// "Connected · 55 %" (⚡ while charging) and the color of its square:
+/// green, the warning color when the battery runs low, muted offline.
 fn status_text(v: &View) -> (String, Color) {
     const LOW_PCT: u8 = 20;
     if !v.connected {
@@ -1079,28 +1198,64 @@ enum Nav {
     About,
 }
 
-/// Sidebar entry: icon, name; the current one gets a tint and a left bar.
+/// Left padding of nav items and the PRO tag.
+const NAV_PAD: f32 = 14.0;
+/// Nav icons are drawn for 24 px rows; their box is 20 px.
+const NAV_ICON: f32 = 20.0;
+
+/// Sidebar entry: icon, name. The current one gets the selection fill
+/// and a 2 px accent bar on the left, its only mark.
 fn nav_item(f: &mut Frame, item: Nav, r: Rect, mark: Mark) {
+    const BAR_W: f32 = 2.0;
     let (act, label) = match item {
         Nav::Page(p) => (Act::Nav(p), tr(p.title())),
         Nav::About => (Act::About, tr(T::About)),
     };
     let sel = mark == Mark::Current;
     let hot = f.button(act, r);
-    if sel || hot {
-        f.g.fill(r, R_CTRL, if sel { th().accent_soft } else { th().hover });
-    }
     if sel {
-        f.g.fill(Rect::new(r.x, r.y + 7.0, 3.0, r.h - 14.0), 1.5, th().accent);
+        f.g.fill(r, 0.0, th().sel);
+        f.g.fill(Rect::new(r.x, r.y, BAR_W, r.h), 0.0, th().acc_fill);
+    } else if hot {
+        f.g.fill(r, 0.0, Color(th().sel.0, 0x80));
     }
-    let c = if sel { th().accent } else { th().muted };
+    let c = if sel { th().text } else { th().muted };
+    let icon_y = r.y + (r.h - NAV_ICON) / 2.0;
     match item {
-        Nav::Page(p) => icon(f.g, p, r.x + 10.0, r.y + 8.0, c),
-        Nav::About => info_icon(f.g, r.x + 10.0, r.y + 8.0, c),
+        Nav::Page(p) => icon(f.g, p, r.x + NAV_PAD - 3.0, icon_y, c),
+        Nav::About => info_icon(f.g, r.x + NAV_PAD - 3.0, icon_y, c),
     }
-    let text_r = Rect::new(r.x + 42.0, r.y, r.w - 42.0, r.h);
-    let weight = if sel { Weight::Semibold } else { Weight::Normal };
-    f.g.text(label, text_r, Size::Body, weight, Align::Left, if sel { th().text } else { th().muted });
+    let text_x = r.x + NAV_PAD + NAV_ICON + 4.0;
+    let weight = if sel { Weight::Semibold } else { Weight::Medium };
+    f.g.text(label, Rect::new(text_x, r.y, r.w - text_x - 4.0, r.h), Size::Body, weight, Align::Left, c);
+}
+
+#[derive(Clone, Copy)]
+enum ProIcon {
+    Profiles,
+    Overlay,
+}
+
+/// A page of the PRO version: listed so people know it exists, but
+/// nothing to open in this one.
+fn pro_item(f: &mut Frame, label: T, icon: ProIcon, r: Rect) {
+    let c = Color(th().muted.0, 0x99);
+    let (x, y) = (r.x + NAV_PAD, r.y + (r.h - 14.0) / 2.0);
+    match icon {
+        // Two stacked squares.
+        ProIcon::Profiles => {
+            f.g.stroke(Rect::new(x + 3.0, y, 11.0, 11.0), 0.0, 1.0, c);
+            f.g.line(x + 0.5, y + 3.0, x + 0.5, y + 13.5, 1.0, c);
+            f.g.line(x + 0.5, y + 13.5, x + 11.0, y + 13.5, 1.0, c);
+        }
+        // A screen with a box in its corner.
+        ProIcon::Overlay => {
+            f.g.stroke(Rect::new(x, y + 1.0, 14.0, 12.0), 0.0, 1.0, c);
+            f.g.stroke(Rect::new(x + 2.5, y + 3.5, 5.0, 4.0), 0.0, 1.0, c);
+        }
+    }
+    let text_x = r.x + NAV_PAD + NAV_ICON + 4.0;
+    f.g.text(tr(label), Rect::new(text_x, r.y, r.w - text_x - 4.0, r.h), Size::Body, Weight::Medium, Align::Left, c);
 }
 
 // ---- pages ---------------------------------------------------------------
@@ -1701,7 +1856,7 @@ fn about_dialog(f: &mut Frame, v: &View) {
 
     let inner = d.inset(24.0);
     f.caption(&tr(T::About).to_uppercase(), inner.x, inner.y);
-    mouse_logo(f.g, inner.x + 4.0, inner.y + 34.0);
+    logo(f.g, inner.x, inner.y + 28.0, 32.0);
     let name = Rect::new(inner.x + 40.0, inner.y + 28.0, inner.w - 40.0, 30.0);
     f.g.text(crate::APP_NAME, name, Size::Subtitle, Weight::Bold, Align::Left, th().text);
     let ver = Rect::new(name.x + text_w(crate::APP_NAME, Size::Subtitle) + 10.0, name.y + 2.0, 120.0, 26.0);

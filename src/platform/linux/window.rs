@@ -101,6 +101,16 @@ pub fn show() {
     });
 }
 
+/// Minimizes to the taskbar or dock.
+pub fn minimize() {
+    with_ui(|u| u.window.iconify());
+}
+
+/// The app's close button: hides the window.
+pub fn close() {
+    hide();
+}
+
 /// Hides the window; the app stays in the tray.
 fn hide() {
     with_ui(|u| u.window.hide());
@@ -217,10 +227,8 @@ pub fn create(title: &str, w: f32, h: f32, hooks: Hooks) -> bool {
     }
 
     let window = gtk::Window::new(gtk::WindowType::Toplevel);
-    let header = gtk::HeaderBar::new();
-    header.set_title(Some(title));
-    header.set_show_close_button(true);
-    window.set_titlebar(Some(&header));
+    // The app draws its own title bar.
+    window.set_decorated(false);
     window.set_title(title);
     window.set_resizable(false);
     window.set_position(gtk::WindowPosition::Center);
@@ -274,7 +282,14 @@ fn connect(window: &gtk::Window, area: &gtk::DrawingArea) {
     area.connect_button_press_event(|_, e| {
         // Double-click events repeat a press already delivered.
         if e.button() == BUTTON_PRIMARY && e.event_type() == EventType::ButtonPress {
-            on_down(pos(e.position()));
+            let p = pos(e.position());
+            // The empty part of the title bar moves the window.
+            if with_shell(|s| s.pointer.caption_at(p.0, p.1)).unwrap_or(false) {
+                let (x, y) = e.root();
+                with_ui(|u| u.window.begin_move_drag(e.button() as i32, x as i32, y as i32, e.time()));
+            } else {
+                on_down(p);
+            }
         }
         Propagation::Stop
     });

@@ -27,14 +27,18 @@
 //!
 //! `window` — one app window on the UI thread, plus the tray icon:
 //! - `create(title, w, h, Hooks) -> bool`: hidden window of `w` x `h` DIPs
-//!   and tray icon; input goes through `shell::Pointer` into `Hooks`.
+//!   and tray icon; input goes through `shell::Pointer` into `Hooks`. The
+//!   window has no system title bar: the app draws its own, and a press
+//!   where `Pointer::caption_at` says so moves the window.
 //! - `run()`: event loop until `quit`.
 //! - `post(f)`: run `f` on the UI thread; callable from any thread (wake).
 //! - `invalidate()`, `show()`, `quit()`: repaint, raise, close for good.
+//! - `minimize()`, `close()`: the app's own window buttons; `close` hides
+//!   the window (`Hooks::hidden`), the app stays in the tray.
 //! - `set_timer(id, ms)`, `kill_timer(id)`: repeating timer to `Hooks::timer`.
-//! - `set_title_colors(TitleColors)`: title bar in the theme's colours.
-//!   Windows 11 sets caption, text and border colours; Windows 10 only
-//!   switches dark/light (`shade`). Linux: the GTK header bar styled in the colours, plus the dark/light variant.
+//! - `set_title_colors(TitleColors)`: what the OS still draws around the
+//!   window, in the theme's colours. Windows 11: the border; Windows 10:
+//!   dark/light (`shade`). Linux: the dark/light variant of GTK.
 //! - `modifiers() -> shell::Mods`: modifier keys held now.
 //! - `set_clipboard(text) -> bool`: replaces the clipboard with plain text
 //!   (the window owns it on Windows).

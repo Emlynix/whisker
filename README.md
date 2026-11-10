@@ -17,7 +17,7 @@ mouse software.
 - **Lighting** effects, brightness, speed and direction.
 - **Buttons and macros:** remap any button.
 - **Statistics** for any mouse: clicks, wheel, distance, battery history.
-- 9 colour themes or the system one, 13 languages, no account, no
+- 4 colour themes or the system one, 13 languages, no account, no
   telemetry.
 
 What a mouse offers depends on its driver; screens it does not support

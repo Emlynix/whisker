@@ -16,7 +16,7 @@
 //!  +--------------------------------------------------+
 //! ```
 
-use super::{Act, Frame, HEIGHT, PAGE_H, R_CTRL, RADIUS, STATUS_H, VERSION, WIDTH, mouse_logo, text_w, th};
+use super::{Act, Frame, HEIGHT, PAGE_H, R_CTRL, RADIUS, STATUS_H, VERSION, WIDTH, logo, text_w, th};
 use crate::gfx::{Align, Rect, Size, Weight};
 use crate::i18n::{T, fill, tr};
 
@@ -144,21 +144,19 @@ fn wrap_notes(notes: &str) -> Vec<String> {
 
 /// Left side of the status bar: "● Version 0.9.1 is available", opens the dialog.
 pub(super) fn status_notice(f: &mut Frame, u: &UpdateView) {
-    // Left edge flush with the cards.
-    const X: f32 = super::X0;
+    // Right end of the status bar; the connection is on the left.
+    const PAD: f32 = 12.0;
     let Some(o) = u.offer.as_ref().filter(|_| u.notice) else {
         return;
     };
     let text = fill(tr(T::UpdateAvailable), &[&o.version]);
-    let w = text_w(&text, Size::Caption) + 14.0;
-    let r = Rect::new(X, PAGE_H + (STATUS_H - 16.0) / 2.0, w, 16.0);
-    let area = Rect::new(r.x - 8.0, PAGE_H + 3.0, r.w + 16.0, STATUS_H - 6.0);
+    let w = text_w(&text, Size::Caption) + 2.0 * PAD;
+    let area = Rect::new(super::WIDTH - w, PAGE_H + 1.0, w, STATUS_H - 1.0);
     if f.button(Act::UpdateShow, area) {
-        f.g.fill(area, R_CTRL / 2.0, th().hover);
+        f.g.fill(area, 0.0, th().sel);
     }
-    f.g.circle(r.x + 3.5, r.y + r.h / 2.0, 3.5, th().accent);
-    let label = Rect::new(r.x + 12.0, r.y, r.w - 12.0, r.h);
-    f.g.text(&text, label, Size::Caption, Weight::Semibold, Align::Left, th().accent);
+    let label = Rect::new(area.x, area.y, area.w - PAD, area.h);
+    f.g.text(&text, label, Size::Caption, Weight::Semibold, Align::Right, th().acc);
 }
 
 /// About: "Check for updates" and, on its own line below, what the last
@@ -240,7 +238,7 @@ pub(super) fn update_dialog(f: &mut Frame, u: &UpdateView) {
 
     let inner = d.inset(PAD);
     f.caption_in(tr(T::UpdateTitle), inner.x, inner.y, inner.w);
-    mouse_logo(f.g, inner.x + 4.0, inner.y + 34.0);
+    logo(f.g, inner.x, inner.y + 28.0, 32.0);
     let name = format!("{} {}", crate::APP_NAME, o.version);
     let name_r = Rect::new(inner.x + 40.0, inner.y + 26.0, inner.w - 160.0, 30.0);
     f.g.text(&name, name_r, Size::Subtitle, Weight::Bold, Align::Left, th().text);

@@ -98,7 +98,7 @@ impl Pointer {
         if let Some(h) = self.drag {
             return Moved::Drag(h.act, slider_value(&h, x));
         }
-        let hot = self.hit_at(x, y).map(|h| h.act);
+        let hot = self.control_at(x, y).map(|h| h.act);
         if hot == self.hot {
             return Moved::Nothing;
         }
@@ -109,7 +109,7 @@ impl Pointer {
     /// Button down; `Some` starts a slider drag (capture the pointer, call
     /// `Hooks::drag` with `Phase::Move`).
     pub fn down(&mut self, x: f32, y: f32) -> Option<(Act, usize)> {
-        let h = self.hit_at(x, y)?;
+        let h = self.control_at(x, y)?;
         if let Kind::Slider { .. } = h.kind {
             self.drag = Some(h);
             return Some((h.act, slider_value(&h, x)));
@@ -123,7 +123,7 @@ impl Pointer {
             return Released::Drag(h.act, slider_value(&h, x));
         }
         let pressed = self.pressed.take();
-        let under = self.hit_at(x, y).map(|h| h.act);
+        let under = self.control_at(x, y).map(|h| h.act);
         match pressed {
             Some(a) if pressed == under => Released::Click(a),
             _ => Released::Nothing,
@@ -133,6 +133,17 @@ impl Pointer {
     /// The pointer left the window.
     pub fn leave(&mut self) {
         self.hot = None;
+    }
+
+    /// The point is on the empty part of the title bar: a press there
+    /// moves the window (the platform window does that, not the app).
+    pub fn caption_at(&self, x: f32, y: f32) -> bool {
+        self.hit_at(x, y).is_some_and(|h| matches!(h.kind, Kind::Caption))
+    }
+
+    /// Something to press at the point; the caption is not.
+    fn control_at(&self, x: f32, y: f32) -> Option<Hit> {
+        self.hit_at(x, y).filter(|h| !matches!(h.kind, Kind::Caption))
     }
 
     fn hit_at(&self, x: f32, y: f32) -> Option<Hit> {
@@ -147,4 +158,37 @@ fn slider_value(h: &Hit, x: f32) -> usize {
     };
     let t = ((x - x0) / (x1 - x0)).clamp(0.0, 1.0);
     (t * (steps - 1) as f32).round() as usize
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gfx::Rect;
+
+    /// A title bar with one button on its right end.
+    fn title_bar() -> Pointer {
+        let mut p = Pointer::default();
+        p.set_hits(vec![
+            Hit { act: Act::Caption, rect: Rect::new(0.0, 0.0, 800.0, 32.0), kind: Kind::Caption },
+            Hit { act: Act::WinClose, rect: Rect::new(760.0, 0.0, 40.0, 32.0), kind: Kind::Button },
+        ]);
+        p
+    }
+
+    #[test]
+    fn the_empty_title_bar_drags_and_its_buttons_click() {
+        let mut p = title_bar();
+        assert!(p.caption_at(300.0, 10.0));
+        assert!(!p.caption_at(780.0, 10.0), "a button on the bar is no caption");
+        assert!(!p.caption_at(300.0, 100.0), "below the bar");
+
+        // The caption itself is never hovered, pressed or clicked.
+        assert!(matches!(p.moved(300.0, 10.0), Moved::Nothing));
+        assert!(!p.busy());
+        assert!(p.down(300.0, 10.0).is_none());
+        assert!(matches!(p.up(300.0, 10.0), Released::Nothing));
+
+        assert!(p.down(780.0, 10.0).is_none());
+        assert!(matches!(p.up(780.0, 10.0), Released::Click(Act::WinClose)));
+    }
 }

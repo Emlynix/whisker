@@ -1465,6 +1465,11 @@ impl Controller {
             Act::About => self.view.dialog = Some(Dialog::About),
             Act::AssignMacro => self.view.dialog = Some(Dialog::AssignMacro),
             Act::CloseDialog => self.view.dialog = None,
+            // Moving the window is the platform's business.
+            Act::Caption => {}
+            Act::WinMinimize => window::minimize(),
+            // Closing hides: the app stays in the tray.
+            Act::WinClose => window::close(),
             Act::ShowLog => self.show_log(),
             Act::AssignTo(b) => self.assign_macro(b),
             Act::OpenWeb(w) => {
