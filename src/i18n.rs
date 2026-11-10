@@ -300,9 +300,11 @@ pub enum T {
     AutostartLater,
     /// Update dialog: the changelog was cut; opens the release page.
     FullNotes,
+    /// Detect dialog: the mice shown are the last list, a new one is being read.
+    DetectRefetching,
 }
 
-const COUNT: usize = T::FullNotes as usize + 1;
+const COUNT: usize = T::DetectRefetching as usize + 1;
 type Table = [&'static str; COUNT];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -763,6 +765,7 @@ const EN: Table = [
     "Measured while moving",
     "Available after installing",
     "Full release notes",
+    "Refetching HID devices…",
 ];
 
 const SK: Table = [
@@ -1049,6 +1052,7 @@ const SK: Table = [
     "Namerané pri pohybe",
     "Dostupné po inštalácii",
     "Celé poznámky k vydaniu",
+    "HID zariadenia sa znovu načítavajú…",
 ];
 
 const CS: Table = [
@@ -1335,6 +1339,7 @@ const CS: Table = [
     "Naměřeno při pohybu",
     "Dostupné po instalaci",
     "Úplné poznámky k vydání",
+    "HID zařízení se znovu načítají…",
 ];
 
 const PL: Table = [
@@ -1621,6 +1626,7 @@ const PL: Table = [
     "Zmierzono podczas ruchu",
     "Dostępne po instalacji",
     "Pełne informacje o wydaniu",
+    "Ponowne odczytywanie urządzeń HID…",
 ];
 
 const DE: Table = [
@@ -1907,6 +1913,7 @@ const DE: Table = [
     "Gemessen bei Bewegung",
     "Nach der Installation verfügbar",
     "Vollständige Versionshinweise",
+    "HID-Geräte werden erneut gelesen…",
 ];
 
 const FR: Table = [
@@ -2193,6 +2200,7 @@ const FR: Table = [
     "Mesuré en mouvement",
     "Disponible après l'installation",
     "Notes de version complètes",
+    "Relecture des périphériques HID…",
 ];
 
 const ES: Table = [
@@ -2479,6 +2487,7 @@ const ES: Table = [
     "Medido en movimiento",
     "Disponible tras la instalación",
     "Notas de la versión completas",
+    "Releyendo dispositivos HID…",
 ];
 
 const PT: Table = [
@@ -2765,6 +2774,7 @@ const PT: Table = [
     "Medido em movimento",
     "Disponível após a instalação",
     "Notas de versão completas",
+    "A ler de novo os dispositivos HID…",
 ];
 
 const IT: Table = [
@@ -3051,6 +3061,7 @@ const IT: Table = [
     "Misurato in movimento",
     "Disponibile dopo l'installazione",
     "Note di rilascio complete",
+    "Ricarica dei dispositivi HID…",
 ];
 
 const JA: Table = [
@@ -3337,6 +3348,7 @@ const JA: Table = [
     "動かしている間に測定",
     "インストール後に利用できます",
     "リリースノート全文",
+    "HIDデバイスを再取得中…",
 ];
 
 const KO: Table = [
@@ -3623,6 +3635,7 @@ const KO: Table = [
     "움직이는 동안 측정",
     "설치 후 사용할 수 있습니다",
     "전체 릴리스 노트",
+    "HID 기기를 다시 읽는 중…",
 ];
 
 const ZH_HANS: Table = [
@@ -3909,6 +3922,7 @@ const ZH_HANS: Table = [
     "移动时测得",
     "安装后可用",
     "完整发布说明",
+    "正在重新读取 HID 设备…",
 ];
 
 const ZH_HANT: Table = [
@@ -4195,6 +4209,7 @@ const ZH_HANT: Table = [
     "移動時測得",
     "安裝後可用",
     "完整發行說明",
+    "正在重新讀取 HID 裝置…",
 ];
 
 #[cfg(test)]

@@ -122,7 +122,8 @@ struct Controller {
     last_step: Option<Instant>,
     /// Identity of the opened configuration interface.
     device_info: Option<DeviceInfo>,
-    /// Mice found by the last detection.
+    /// Mice found by the last scan or detection. The detect dialog opens
+    /// with these and a scan puts the fresh list in.
     mice: Vec<DeviceInfo>,
     /// Identity reported by a driver-based mouse.
     ident: Option<Ident>,
@@ -576,7 +577,7 @@ fn detect_state(mice: &[DeviceInfo], device: Option<&str>, usb: Option<(u16, u16
     // Step 1 lists the detected mice; with none, the catalogue right away.
     let step = if found.is_empty() { DetectStep::List } else { DetectStep::Found };
     let models = model_rows(brand, live.as_ref());
-    let mut d = Detect { step, found, brands, models, brand, model, live, chip, kept: None, pane: Pane::Models, brand_top: 0, model_top: 0, keys: false };
+    let mut d = Detect { step, found, brands, models, brand, model, live, chip, kept: None, pane: Pane::Models, brand_top: 0, model_top: 0, keys: false, refetching: false };
     reveal(&mut d);
     d
 }
@@ -604,6 +605,14 @@ fn reveal(d: &mut Detect) {
     };
     keep(&mut d.brand_top, d.brand);
     keep(&mut d.model_top, d.model);
+}
+
+/// The dialog while the first list of mice is still being read on its
+/// thread: no detected rows and nothing to pick.
+fn searching_state(device: Option<&str>) -> Detect {
+    let mut d = detect_state(&[], device, None, "");
+    d.step = DetectStep::Searching;
+    d
 }
 
 fn pick_brand(d: &mut Detect, b: usize) {
@@ -654,9 +663,59 @@ fn step_back(d: &mut Detect) -> bool {
     true
 }
 
-/// Arrow keys in the dialog. Step 1: Up/Down move among the detected
-/// mice. Step 2: Up/Down move in the list, Left/Right (and Tab) switch lists.
+/// Row of the detected mouse `usb` in a rebuilt dialog; none if unplugged.
+fn found_at(d: &Detect, usb: (u16, u16)) -> Option<usize> {
+    d.found.iter().position(|f| f.usb == usb)
+}
+
+/// A scan found other mice while the dialog is open: its rows and
+/// preselection replace the old ones (`..` arguments as in `detect_state`),
+/// but the step, the pane, the scroll and the mouse picked stay as they
+/// were. A dialog that had shown no mouse yet – still looking for mice, or
+/// opened with none found – becomes the fresh one.
+///
+/// ```text
+/// old rows  ->  new rows      step 1: pick (by VID:PID) -> same row
+///                               step 2: brand, model, tops, pane -> kept
+/// ```
+fn merge_detect(d: &mut Detect, mice: &[DeviceInfo], device: Option<&str>, usb: Option<(u16, u16)>, reported: &str) {
+    let usb_of = |row: Option<usize>| row.and_then(|i| d.found.get(i)).map(|f| f.usb);
+    let (pick, keep) = (usb_of(d.chip), usb_of(d.kept));
+    let (old_step, pane, brand, model, brand_top, model_top) = (d.step, d.pane, d.brand, d.model, d.brand_top, d.model_top);
+    let shown = !d.found.is_empty();
+    *d = detect_state(mice, device, usb, reported);
+    // Nothing shown yet: the dialog was still looking for mice or opened
+    // with none found, so it has nothing of its own to keep.
+    if !shown {
+        return;
+    }
+    let fresh = d.chip;
+    let (chip, kept) = (pick.and_then(|u| found_at(d, u)), keep.and_then(|u| found_at(d, u)));
+    (d.chip, d.kept, d.pane) = (chip, kept, pane);
+    if old_step == DetectStep::Found {
+        // Step 1: the model list follows the mouse picked; a pick whose
+        // mouse is gone falls back to what a dialog opened now preselects.
+        if let Some(i) = d.chip.or(fresh) {
+            pick_found(d, i);
+        }
+        return;
+    }
+    // Step 2: their browsing of the catalogue, its lists still scrolled to
+    // the same rows, over the new detected mice.
+    (d.step, d.brand) = (DetectStep::List, brand.min(d.brands.len().saturating_sub(1)));
+    d.models = model_rows(d.brand, d.live.as_ref());
+    d.model = model.min(d.models.len().saturating_sub(1));
+    (d.brand_top, d.model_top) = (brand_top.min(d.brands.len().saturating_sub(1)), model_top.min(d.models.len().saturating_sub(1)));
+    reveal(d);
+}
+
+/// Arrow keys in the dialog; nothing to move while the mice are still being
+/// listed. Step 1: Up/Down move among the detected mice. Step 2: Up/Down move
+/// in the list, Left/Right (and Tab) switch lists.
 fn detect_key(d: &mut Detect, vk: u16) -> bool {
+    if d.step == DetectStep::Searching {
+        return false;
+    }
     let step = |i: usize, n: usize, down: bool| if down { (i + 1).min(n.saturating_sub(1)) } else { i.saturating_sub(1) };
     if d.step == DetectStep::Found {
         if !matches!(vk, VK_UP | VK_DOWN) {
@@ -690,8 +749,12 @@ fn detect_wheel(d: &mut Detect, pane: Pane, notches: i32) {
     *top = (*top as i32 - notches).clamp(0, max) as usize;
 }
 
-/// Model id and detected USB ids "Use" stores; none until step 1 has a pick.
+/// Model id and detected USB ids "Use" stores; none while the mice are still
+/// being listed, nor on step 1 before a pick.
 fn detect_choice(d: &Detect) -> Option<(String, Option<(u16, u16)>)> {
+    if d.step == DetectStep::Searching {
+        return None;
+    }
     if d.step == DetectStep::Found && d.chip.is_none() {
         return None;
     }
@@ -752,8 +815,12 @@ fn rate_index(r: PollingRate) -> usize {
 
 /// Device to store when the dialog is cancelled. The first-run question
 /// settles on "other mouse" so it isn't asked again until "Change mouse";
-/// later the current choice stays (`None`).
-fn cancel_choice(device: Option<&str>) -> Option<&'static str> {
+/// later the current choice stays (`None`). A dialog that was still looking
+/// for mice has asked nothing, so it leaves the question to its answer.
+fn cancel_choice(step: DetectStep, device: Option<&str>) -> Option<&'static str> {
+    if step == DetectStep::Searching {
+        return None;
+    }
     device.is_none().then_some(store::GENERIC_DEVICE)
 }
 
@@ -1342,7 +1409,7 @@ impl Controller {
                     self.macros_changed();
                 }
             }
-            Act::ChangeMouse => self.open_detect(hid_link::list_mice()),
+            Act::ChangeMouse => self.open_detect_scan(),
             Act::BannerSwitch => self.switch_to_offer(),
             Act::BannerDismiss => self.ignore_offer(),
             Act::BasicDpi => {}
@@ -1685,9 +1752,10 @@ impl Controller {
         self.debug_open();
     }
 
-    /// Debug builds: `WHISKER_OPEN=detect | detect-pick | detect-list | detect-none`
-    /// opens the "which mouse" dialog at start with sample mice, `dpi` the
-    /// DPI page; for screenshots without clicking.
+    /// Debug builds: `WHISKER_OPEN=detect | detect-pick | detect-list | detect-none
+    /// | detect-search | detect-refetch` opens the "which mouse" dialog at
+    /// start with sample mice, `dpi` the DPI page; for screenshots without
+    /// clicking.
     #[cfg(debug_assertions)]
     fn debug_open(&mut self) {
         const OPEN_VAR: &str = "WHISKER_OPEN";
@@ -1709,6 +1777,10 @@ impl Controller {
             mice.clear();
         }
         ONCE.call_once(|| {
+            if what == "detect-search" {
+                self.open_searching();
+                return;
+            }
             self.open_detect(mice);
             let Some(d) = self.view.detect.as_mut() else {
                 return;
@@ -1716,6 +1788,7 @@ impl Controller {
             match what.as_str() {
                 "detect-list" => show_list(d),
                 "detect-pick" => pick_found(d, 0),
+                "detect-refetch" => d.refetching = true,
                 _ => {}
             }
         });
@@ -1724,6 +1797,8 @@ impl Controller {
     // ---- new mouse ----
 
     /// Lists the connected mice off the UI thread; `on_scan` gets them.
+    /// Enumeration opens every HID collection, which takes seconds: it is
+    /// never done on the UI thread, where the window would stop answering.
     fn scan(&mut self) {
         if self.scanning || self.removed {
             return;
@@ -1735,13 +1810,22 @@ impl Controller {
         });
     }
 
-    /// Offers a catalogue mouse connected since the last scan; drops the
-    /// banner when its mouse is unplugged again.
+    /// Keeps the mouse list the controller works from: offers a catalogue
+    /// mouse connected since the last scan, drops the banner when its mouse
+    /// is unplugged again, and re-fills an open detect dialog.
     fn on_scan(&mut self, mice: Vec<DeviceInfo>) {
         self.scanning = false;
         let keys: Vec<String> = mice.iter().map(mouse_key).collect();
         if self.offer.as_ref().is_some_and(|o| !keys.contains(&mouse_key(o))) {
             self.close_offer();
+        }
+        // A dialog waiting for an answer – still looking for mice, or showing
+        // the last list while a scan runs – takes it even when the list is
+        // the same as the one it opened with.
+        let waiting = self.view.detect.as_ref().is_some_and(|d| d.refetching || d.step == DetectStep::Searching);
+        if waiting || mice != self.mice {
+            self.mice = mice.clone();
+            self.refresh_detect(&mice);
         }
         let Some(seen) = self.seen.replace(keys) else {
             return;
@@ -1798,6 +1882,51 @@ impl Controller {
         store::save_config(&self.cfg);
     }
 
+    /// "Change mouse" answers the click at once and starts a fresh scan:
+    /// listing the mice takes longer than the window may wait for an answer,
+    /// so it never runs inside the click handler. A session that has already
+    /// read a list (`seen`) shows it right away and says the newer one is on
+    /// its way; before that the dialog says it is looking for mice.
+    fn open_detect_scan(&mut self) {
+        if self.seen.is_some() {
+            self.open_refetching();
+        } else {
+            self.open_searching();
+        }
+        self.scan();
+    }
+
+    /// The dialog with the mice of the last scan, marked as the last list
+    /// while `scan` brings the new one.
+    fn open_refetching(&mut self) {
+        self.open_detect(self.mice.clone());
+        if let Some(d) = self.view.detect.as_mut() {
+            d.refetching = true;
+        }
+    }
+
+    /// The dialog for the mice that are still being listed on their thread.
+    fn open_searching(&mut self) {
+        self.view.detect = Some(searching_state(self.cfg.device.as_deref()));
+        self.view.focus = None;
+        window::invalidate();
+    }
+
+    /// A scan found other mice while the dialog is open; a closed dialog
+    /// needs nothing.
+    fn refresh_detect(&mut self, mice: &[DeviceInfo]) {
+        if self.view.detect.is_none() {
+            return;
+        }
+        let (device, usb) = (self.cfg.device.clone(), self.cfg.device_usb);
+        let reported = self.ident.as_ref().map_or(String::new(), |i| i.name.clone());
+        let Some(d) = self.view.detect.as_mut() else {
+            return;
+        };
+        merge_detect(d, mice, device.as_deref(), usb, &reported);
+        window::invalidate();
+    }
+
     fn open_detect(&mut self, mice: Vec<DeviceInfo>) {
         self.mice = mice.clone();
         let reported = self.ident.as_ref().map_or("", |i| i.name.as_str());
@@ -1838,12 +1967,13 @@ impl Controller {
     }
 
     /// Cancel or Esc: nothing changes, except that the first-run question
-    /// counts as answered with "other mouse".
+    /// counts as answered with "other mouse". A dialog that was still looking
+    /// for mice leaves the question to the list that is on its way.
     fn cancel_detect(&mut self) {
-        if self.view.detect.take().is_none() {
+        let Some(step) = self.view.detect.take().map(|d| d.step) else {
             return;
-        }
-        if let Some(id) = cancel_choice(self.cfg.device.as_deref()) {
+        };
+        if let Some(id) = cancel_choice(step, self.cfg.device.as_deref()) {
             self.apply_device(id.to_string(), None);
         }
     }
@@ -2866,9 +2996,11 @@ mod tests {
     #[test]
     fn detect_cancel_keeps_mouse_or_settles_first_run() {
         // Later: Cancel leaves the chosen mouse alone.
-        assert_eq!(cancel_choice(Some("whiteshark/lionel")), None);
+        assert_eq!(cancel_choice(DetectStep::Found, Some("whiteshark/lionel")), None);
         // First run: Cancel means "other mouse", so the question isn't repeated.
-        assert_eq!(cancel_choice(None), Some(store::GENERIC_DEVICE));
+        assert_eq!(cancel_choice(DetectStep::Found, None), Some(store::GENERIC_DEVICE));
+        // Still looking for mice: nothing was asked, the list still has to.
+        assert_eq!(cancel_choice(DetectStep::Searching, None), None);
     }
 
     /// A catalogue model's device as the OS would list it.
@@ -2998,6 +3130,98 @@ mod tests {
         assert_eq!(d.chip, Some(1));
         assert!(!detect_key(&mut d, VK_TAB));
         assert!(!d.keys, "no list outline on step 1");
+    }
+
+    #[test]
+    fn scan_keeps_the_detected_mouse_picked() {
+        let mice = [lionel(), device_of("corsair/katar-pro")];
+        let mut d = detect_state(&mice, Some("whiteshark/lionel"), None, "");
+        pick_found(&mut d, 1);
+        let (brand, model) = (d.brand, d.model);
+        let katar = (mice[1].vid, mice[1].pid);
+
+        // A scan reports the same mice, in another order.
+        merge_detect(&mut d, &[mice[1].clone(), mice[0].clone()], Some("whiteshark/lionel"), None, "");
+        assert_eq!((d.step, d.chip, d.brand, d.model), (DetectStep::Found, Some(0), brand, model));
+        assert_eq!(detect_choice(&d), Some(("corsair/katar-pro".into(), Some(katar))));
+    }
+
+    #[test]
+    fn scan_preselects_again_when_the_picked_mouse_is_gone() {
+        let mice = [lionel(), device_of("corsair/katar-pro")];
+        let mut d = detect_state(&mice, None, None, "");
+        pick_found(&mut d, 1);
+
+        merge_detect(&mut d, std::slice::from_ref(&mice[0]), None, None, "");
+        assert_eq!((d.step, d.chip), (DetectStep::Found, Some(0)), "the mouse left is picked, as on opening");
+        assert_eq!(detect_choice(&d), Some((devices::default_model().id.clone(), Some((mice[0].vid, mice[0].pid)))));
+    }
+
+    #[test]
+    fn scan_keeps_the_browsing_of_the_lists() {
+        let mut d = detect_state(&[lionel()], None, None, "");
+        show_list(&mut d);
+        pick_brand(&mut d, locate("steelseries/auto").unwrap().0);
+        let last = d.models.len() - 1;
+        pick_model(&mut d, last);
+        assert!(detect_key(&mut d, VK_LEFT));
+        let browsed = (d.step, d.pane, d.brand, d.model, d.model_top);
+        assert_eq!(d.model_top, last + 1 - view::LIST_ROWS);
+
+        merge_detect(&mut d, &[lionel(), device_of("corsair/katar-pro")], None, None, "");
+        assert_eq!((d.step, d.pane, d.brand, d.model, d.model_top), browsed, "one mouse more changes nothing of the browsing");
+        assert_eq!((d.chip, d.kept), (None, Some(0)), "the detected pick is remembered for Back");
+        assert_eq!(d.found.len(), 2);
+    }
+
+    #[test]
+    fn a_dialog_that_opened_with_nothing_takes_the_new_mice() {
+        // A scan found no mouse: the dialog opened with the lists empty.
+        let mut d = detect_state(&[], None, None, "");
+        assert_eq!((d.step, d.chip), (DetectStep::List, None));
+
+        merge_detect(&mut d, &[lionel()], None, None, "");
+        assert_eq!((d.step, d.chip), (DetectStep::Found, Some(0)));
+    }
+
+    #[test]
+    fn searching_dialog_waits_for_the_first_list() {
+        let mut d = searching_state(Some("whiteshark/lionel"));
+        assert_eq!((d.step, d.chip, d.found.is_empty(), d.refetching), (DetectStep::Searching, None, true, false));
+        // Nothing to use, nothing to move, no step to go back to.
+        assert_eq!(detect_choice(&d), None);
+        assert!(!detect_key(&mut d, VK_DOWN) && !d.keys);
+        assert!(!step_back(&mut d));
+    }
+
+    #[test]
+    fn the_first_list_replaces_the_searching_dialog() {
+        let mouse = lionel();
+        let mut d = searching_state(None);
+        merge_detect(&mut d, std::slice::from_ref(&mouse), None, None, "");
+        assert_eq!((d.step, d.chip), (DetectStep::Found, Some(0)));
+        assert_eq!(detect_choice(&d), Some((devices::default_model().id.clone(), Some((mouse.vid, mouse.pid)))));
+    }
+
+    #[test]
+    fn the_answer_clears_the_refetching_note() {
+        let mice = [lionel(), device_of("corsair/katar-pro")];
+        let mut d = detect_state(&mice, None, None, "");
+        show_list(&mut d);
+        pick_brand(&mut d, locate("steelseries/auto").unwrap().0);
+        let browsed = d.brand;
+        d.refetching = true;
+
+        // The very same list lands: the note goes, the browsing stays.
+        merge_detect(&mut d, &mice, None, None, "");
+        assert_eq!((d.step, d.brand, d.refetching), (DetectStep::List, browsed, false));
+    }
+
+    #[test]
+    fn a_search_that_found_nothing_leaves_the_catalog_open() {
+        let mut d = searching_state(None);
+        merge_detect(&mut d, &[], None, None, "");
+        assert_eq!((d.step, d.chip), (DetectStep::List, None), "search over: nothing detected, the lists are open");
     }
 
     #[test]
