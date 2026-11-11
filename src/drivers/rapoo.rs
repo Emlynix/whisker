@@ -4,9 +4,10 @@
 //! (github.com/Nuitfanee/ClickSync, `src/protocols/protocol_api_rapoo.js`,
 //! GPL-2.0: used as information only, no code copied), which took them from
 //! Rapoo's own configurator, and from a Whisker mouse report of the VT1 Gen 2
-//! (issue #3). Experimental: probed against a connected VT1 Gen 2 receiver,
-//! which takes every frame we send but has not answered a register read yet —
-//! the mouse was asleep for every probe. What is open is in `docs/rapoo.md`.
+//! (issue #3). Measured now against a connected and awake VT1 Gen 2 (24AE:
+//! 1415): every register of bank 08 that was asked answered, and the frame
+//! layout the driver uses is the one the Rapoo configurator uses. What is
+//! still open is in `docs/rapoo.md`.
 //!
 //! ```text
 //!  FF00:000E  output report 06 (33 B)    the frames go out
@@ -16,15 +17,25 @@
 //!  write   06 | A5 A5 | len | addr | bank | 00 00 | data[0..len]
 //!  read    06 | A5 A4 | len | addr | bank | 00 00 00   then GetFeature 08
 //!  wake    06 | A5 A3 | 00 ...           what A Hub sends when it takes a mouse
-//!  answer  00 | A5 A4 | len | data[0..len]              four bytes of header
-//!  status  07 | 20 00 | dpi (2 B LE) | .. | stage | percent
+//!  answer  01 | 00 00 00 | data[0..len]  four header bytes, then the values
+//!  status  07 | head (2 B) | dpi (2 B LE) | .. | stage | percent | .. | time
 //!
-//!  bank 08 settings  0x80 report rate   0x88 DPI stages X   0xC8 DPI stages Y
-//!                    0x96 stage count   0x98 active stage   0xDC..0xE2 speed
-//!                    profile, one register per report rate
+//!  bank 08 settings  0x80 report rate   0x81 key scan rate  0x84 lift-off
+//!                    0x85 motion sync   0x88..0x93 DPI stages, six of 2 B
+//!                    0x96 stages in use - 1   0x98 stage selected
+//!                    0xC0 debounce  0xC1 lift-off delay  0xC2 sleep, minutes
+//!                    0xC3 ripple and linear  0xC4 angle  0xC5 glass mode
+//!                    0xC8..0xD3 DPI stages Y  0xDC..0xE2 performance mode,
+//!                    one register per report rate
 //!  bank 06 buttons   0x04.. one entry per button
 //!  bank 00 radio     pairing, MAC and encryption keys
 //! ```
+//!
+//! A read of one byte answers with four, a table read with the table that was
+//! asked for, and a read that asks for more than the register holds is not
+//! answered at all. DPI stages are 16 bits little endian, and a mouse with two
+//! stages in use answers six of them, the ones it does not use filled with the
+//! 800 that A Hub pads to.
 //!
 //! A report goes out with the length its collection declares, so the driver
 //! reads the sizes off the collections instead of assuming 33 bytes. The `len`
@@ -46,8 +57,8 @@ const USAGE_STATUS: u16 = 0x0002;
 
 const REPORT_OUT: u8 = 0x06;
 const REPORT_ANSWER: u8 = 0x08;
-/// First payload byte of a status broadcast.
-const MARK_STATUS: u8 = 0x20;
+/// Report id of the collection the status broadcasts arrive on.
+const REPORT_BROADCAST: u8 = 0x07;
 
 /// Frames and answers are 33 bytes with the report id, and so are the
 /// broadcasts of the VT1 Gen 2; a driver never assumes a size, it takes the
@@ -55,9 +66,9 @@ const MARK_STATUS: u8 = 0x20;
 const FRAME_LEN: usize = 33;
 /// Report id, `A5 op`, len, addr, bank and two zero bytes.
 const HEAD_LEN: usize = 8;
-/// The four bytes an answer starts with, before the register values. The mouse
-/// does not put a report id in front of them, so they are the first four bytes
-/// of what a feature read returns.
+/// The four bytes an answer starts with, before the register values: `01 00
+/// 00 00`. The mouse does not put a report id in front of them, so they are
+/// the first four bytes of what a feature read returns.
 const ANSWER_HEAD: usize = 4;
 /// Data a frame carries behind its header.
 const MAX_DATA: usize = FRAME_LEN - HEAD_LEN;
@@ -76,6 +87,8 @@ const AT_DPI_X: u8 = 0x88;
 const AT_DPI_Y: u8 = 0xC8;
 const AT_COUNT: u8 = 0x96;
 const AT_STAGE: u8 = 0x98;
+/// A new report rate needs a moment before the mouse answers anything else.
+const RATE_SETTLE: Duration = Duration::from_millis(120);
 
 /// DPI stages of one axis; the firmware takes X and Y written the same.
 const SLOTS: usize = 6;
@@ -96,6 +109,9 @@ const STATUS_MIN: usize = 9;
 /// How often one register read asks the mouse for its answer. The receiver
 /// needs a moment for the mouse, so it is worth asking a few times.
 const ANSWER_TRIES: usize = 6;
+/// How often the read request itself goes out again when nothing answered it.
+/// Kept low because a sleeping mouse answers none of them.
+const ASK_TRIES: usize = 2;
 /// The battery comes with a broadcast only: how many of them to read at a poll.
 const STATUS_TRIES: usize = 3;
 const STATUS_WAIT: Duration = Duration::from_millis(150);
@@ -117,9 +133,27 @@ pub struct Rapoo {
     /// What the polls answered last, so a mouse that answers slowly does not
     /// blink out of its cards.
     rate: Option<u32>,
-    /// Percent of the last status broadcast: they come when the mouse sends
-    /// them, so the driver keeps what it has heard.
-    battery: Option<u8>,
+    /// What the last status broadcast named: the percent, the DPI, the stage
+    /// and the rate it is using. A mouse sends these on its own, so they are
+    /// what a poll can fall back on when a register read went unanswered.
+    pushed: Option<Broadcast>,
+}
+
+/// What a status broadcast of report 07 carries. The percent sits at the same
+/// place in the payload on every mouse of this generation; the DPI, the stage
+/// and the two rate codes are as they were read off a VT1 Gen 2: `10 01 | dpi
+/// (2 B LE) | dpi (2 B LE) | stage | percent | 00 | scan | rate | .. | timer`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Broadcast {
+    pub battery: u8,
+    pub dpi: u16,
+    pub stage: u8,
+    /// Report rate as its code in the broadcast, when one is recognised there.
+    pub rate: Option<u32>,
+    /// Last byte of the payload. It fell by eleven between two broadcasts
+    /// eleven seconds apart and was 197 in a later run, so it counts something
+    /// that restarts: what exactly is open.
+    pub timer: u8,
 }
 
 impl Rapoo {
@@ -133,7 +167,7 @@ impl Rapoo {
         let out = Channel::open(&w.path)?;
         let answer = Channel::open(&a.path)?;
         let status = usage(USAGE_STATUS).filter(|i| i.input_len >= STATUS_MIN).and_then(|i| Channel::open(&i.path).map(|c| (c, i.input_len)));
-        Some((Rapoo { out, out_len: w.output_len, answer, answer_len: a.feature_len, status, stages: None, count: SLOTS, active: 0, rate: None, battery: None }, info))
+        Some((Rapoo { out, out_len: w.output_len, answer, answer_len: a.feature_len, status, stages: None, count: SLOTS, active: 0, rate: None, pushed: None }, info))
     }
 
     /// No query names a Rapoo model: the catalogue entry names the mouse.
@@ -166,11 +200,12 @@ impl Rapoo {
             self.active = stage.unwrap_or(0).min(c - 1);
         }
         self.listen();
-        let dpi = self.stages.map(|t| t[self.active]);
-        // Only a mouse whose table we have got a stage worth showing.
-        let stage = self.stages.map(|_| self.active as u8 + 1);
+        // What the registers answered, or, when they did not, what the mouse
+        // broadcast on its own.
+        let dpi = self.stages.map(|t| t[self.active]).or_else(|| self.pushed.map(|b| b.dpi as u32));
+        let stage = self.stages.map(|_| self.active as u8 + 1).or_else(|| self.pushed.map(|b| b.stage + 1));
         let rate = self.rate();
-        (rate.is_some() || dpi.is_some() || self.battery.is_some()).then_some(Reading { battery: self.battery, dpi, rate_hz: rate, stage, ..Reading::default() })
+        (dpi.is_some() || rate.is_some() || self.pushed.is_some()).then_some(Reading { battery: self.pushed.map(|b| b.battery), dpi, rate_hz: rate, stage, ..Reading::default() })
     }
 
     /// DPI of the active stage: the X and the Y table written one after the
@@ -204,12 +239,17 @@ impl Rapoo {
             return false;
         };
         self.wake();
-        self.poke(AT_RATE, BANK_SETTINGS, &[code])
+        let ok = self.poke(AT_RATE, BANK_SETTINGS, &[code]);
+        // The mouse needs a moment to switch over to what it reports at.
+        std::thread::sleep(RATE_SETTLE);
+        self.rate = if ok { Some(hz) } else { self.rate };
+        ok
     }
 
-    /// The rate register, keeping the last value that was read.
+    /// The rate register, keeping the last value that was read and falling
+    /// back to the rate code the mouse named in a broadcast.
     fn rate(&mut self) -> Option<u32> {
-        self.rate = self.register(AT_RATE, BANK_SETTINGS, 1).and_then(|d| rate_hz(d[0])).or(self.rate);
+        self.rate = self.register(AT_RATE, BANK_SETTINGS, 1).and_then(|d| rate_hz(d[0])).or_else(|| self.pushed.and_then(|b| b.rate)).or(self.rate);
         self.rate
     }
 
@@ -222,21 +262,24 @@ impl Rapoo {
 
     /// One register: the `A5 A4` frame out, then the answer on feature report
     /// 08. The mouse writes its answer into that report; it is no input report.
+    /// A request that goes unanswered is asked again, which is what a mouse
+    /// that is switching its report rate or waking up needs.
     fn register(&mut self, addr: u8, bank: u8, len: usize) -> Option<Vec<u8>> {
-        if !self.out.write(&fit(&ask(addr, bank, len), self.out_len), WRITE_WAIT) {
-            return None;
-        }
-        for _ in 0..ANSWER_TRIES {
-            std::thread::sleep(GAP);
-            let mut buf = vec![0u8; self.answer_len];
-            buf[0] = REPORT_ANSWER;
-            if !self.answer.get_feature(&mut buf) {
-                continue;
+        for _ in 0..ASK_TRIES {
+            if !self.out.write(&fit(&ask(addr, bank, len), self.out_len), WRITE_WAIT) {
+                return None;
             }
-            // A read that was never answered is all zeros. A receiver that
-            // needs a moment for the mouse asks for it again on the next try.
-            if buf[ANSWER_HEAD..].iter().any(|&b| b != 0) {
-                return answer(&buf, len);
+            for _ in 0..ANSWER_TRIES {
+                std::thread::sleep(GAP);
+                let mut buf = vec![0u8; self.answer_len];
+                buf[0] = REPORT_ANSWER;
+                if !self.answer.get_feature(&mut buf) {
+                    continue;
+                }
+                // A read that was never answered is all zeros.
+                if buf[ANSWER_HEAD..].iter().any(|&b| b != 0) {
+                    return answer(&buf, len);
+                }
             }
         }
         None
@@ -250,14 +293,14 @@ impl Rapoo {
     }
 
     /// Status broadcasts come on their own, so every poll reads the collection
-    /// until it runs out of them, and keeps the battery of the last one.
+    /// until it runs out of them, and keeps what the last one named.
     fn listen(&mut self) {
         let Some((ch, len)) = self.status.as_mut() else {
             return;
         };
         for _ in 0..STATUS_TRIES {
             match ch.read(*len, STATUS_WAIT).as_deref().and_then(broadcast) {
-                Some(p) => self.battery = Some(p),
+                Some(b) => self.pushed = Some(b),
                 None => break,
             }
         }
@@ -301,16 +344,27 @@ fn answer(r: &[u8], len: usize) -> Option<Vec<u8>> {
     (r.len() >= ANSWER_HEAD + len).then(|| r[ANSWER_HEAD..ANSWER_HEAD + len].to_vec())
 }
 
-/// Battery percent of a status broadcast: `20 00 dpi (2 B) .. stage percent`,
-/// the percent at the eighth byte of the payload, whether or not a report id
-/// stands in front of it.
-fn broadcast(r: &[u8]) -> Option<u8> {
-    let head = match (r.first(), r.get(1)) {
-        (Some(&MARK_STATUS), _) => 0,
-        (_, Some(&MARK_STATUS)) => 1,
-        _ => return None,
-    };
-    (r.len() >= head + 8).then(|| r[head + 7].min(100))
+/// The status broadcast of report 07: `[id] | head | dpi (2 B LE) | dpi (2 B)
+/// | stage | percent | .. | timer`. A Hub and ClickSync look for a `20 00`
+/// head; a VT1 Gen 2 sends `10 01`, so the head is not what says a report is a
+/// status - a DPI in range, a stage that exists and a percent that is a percent
+/// are. A report id may or may not stand in front of the payload.
+fn broadcast(r: &[u8]) -> Option<Broadcast> {
+    // The id of the collection first when it stands in front of the payload,
+    // the payload alone otherwise.
+    let order = if r.first() == Some(&REPORT_BROADCAST) { [1usize, 0] } else { [0, 1] };
+    order.into_iter().find_map(|at| {
+        let p = r.get(at..)?;
+        if p.len() < 8 {
+            return None;
+        }
+        let (dpi, stage, percent) = (u16::from_le_bytes([p[2], p[3]]), p[6], p[7]);
+        let x = u32::from(dpi);
+        if x < DPI_MIN || x > DPI_MAX || stage >= SLOTS as u8 || percent > 100 {
+            return None;
+        }
+        Some(Broadcast { battery: percent, dpi, stage, rate: p.get(10).copied().and_then(rate_hz), timer: *p.last()? })
+    })
 }
 
 fn rate_hz(code: u8) -> Option<u32> {
@@ -417,16 +471,34 @@ mod tests {
     }
 
     #[test]
-    fn battery_of_a_status_broadcast() {
-        // 20 00 05 DC .. 01 64: 1500 DPI, stage 1, 100 percent, id 7 in front.
+    fn status_broadcasts_are_read_with_and_without_a_report_id() {
+        // The broadcast a VT1 Gen 2 really sends: 91 percent, 450 DPI on each
+        // axis, stage index 1, the 4000 Hz it reports at, and a last byte that
+        // counted down between two broadcasts eleven seconds apart.
+        let r = [0x07, 0x10, 0x01, 0xc2, 0x01, 0xc2, 0x01, 0x01, 0x5b, 0x00, 0x03, 0x82, 0x00, 0x15, 0x46, 0x01, 0x00, 0x03, 0xc2];
+        assert_eq!(broadcast(&r), Some(Broadcast { battery: 91, dpi: 450, stage: 1, rate: Some(4000), timer: 0xc2 }));
+        // The `20 00` head A Hub and ClickSync describe: 1500 DPI, stage 1, 100 percent.
         let s = [0x07, 0x20, 0x00, 0xDC, 0x05, 0x00, 0x00, 0x01, 0x64];
-        assert_eq!(broadcast(&s), Some(100));
-        // The same broadcast with no id in front of it.
-        assert_eq!(broadcast(&s[1..]), Some(100));
-        // A report that is not a status broadcast is not a battery.
-        assert_eq!(broadcast(&[0x03, 0x21, 0, 0, 0, 0, 0, 0, 50]), None);
-        assert_eq!(broadcast(&[0x07, 0x20, 0, 0, 0, 0, 0, 0, 130]), Some(100), "never more than full");
-        assert_eq!(broadcast(&[0x07, 0x20, 0, 0, 0]), None, "too short for a percent");
+        assert_eq!(broadcast(&s).map(|b| (b.battery, b.dpi, b.stage, b.rate)), Some((100, 1500, 1, None)));
+        // The same with no report id standing in front of it.
+        assert_eq!(broadcast(&s[1..]).map(|b| (b.battery, b.dpi, b.stage)), Some((100, 1500, 1)));
+        // Reports that are not a status broadcast stay unread.
+        assert_eq!(broadcast(&[0x07, 0x10, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 50]), None, "a DPI of zero is no status");
+        assert_eq!(broadcast(&[0x07, 0x20, 0x00, 0xDC, 0x05, 0x00, 0x00, 0x01, 130]), None, "no percent above 100");
+        assert_eq!(broadcast(&[0x07, 0x20, 0x00, 0xDC, 0x05, 0x00, 0x00, 0x09, 64]), None, "no stage that cannot exist");
+        assert_eq!(broadcast(&[0x07, 0x20, 0, 0]), None, "too short for a percent");
+    }
+
+    /// The answers of the connected VT1 Gen 2, run through the parsing of the
+    /// driver: 4000 Hz, two DPI stages, the second one selected, and a table
+    /// the mouse fills with the 800 that A Hub pads unused stages with.
+    #[test]
+    fn answers_of_a_vt1_gen_2() {
+        assert_eq!(rate_hz(answer(&[1, 0, 0, 0, 0x82, 0x03, 0xff, 0xff], 4).unwrap()[0]), Some(4000), "the rate register answers 4000 Hz");
+        assert_eq!((answer(&[1, 0, 0, 0, 0x01, 0x00, 0x01, 0x00], 1), answer(&[1, 0, 0, 0, 0x01, 0x00, 0x02, 0x01], 1)), (Some(vec![1]), Some(vec![1])), "two stages, the second selected");
+        let table = answer(&[1, 0, 0, 0, 0xb0, 0x04, 0xc2, 0x01, 0x20, 0x03, 0x20, 0x03, 0x20, 0x03, 0x20, 0x03], SLOTS * 2).unwrap();
+        assert_eq!(parse_table(&table, SLOTS), Some([1200, 450, 800, 800, 800, 800]));
+        assert_eq!(parse_table(&table[..4], 2), Some([1200, 450, 450, 450, 450, 450]), "read at the two stages in use");
     }
 
     #[test]
@@ -541,10 +613,172 @@ mod tests {
                         continue;
                     }
                     heard.push(r.clone());
-                    let percent = broadcast(&r).map(|p| p.to_string()).unwrap_or_else(|| "?".into());
-                    println!("  status: {}  battery {percent}", hex(&r));
+                    let percent = match broadcast(&r) {
+                        Some(b) => format!("battery {} dpi {} stage {} at {:?} Hz, timer {:#04x}", b.battery, b.dpi, b.stage + 1, b.rate, b.timer),
+                        None => "not a status broadcast".into(),
+                    };
+                    println!("  status: {}  {percent}", hex(&r));
                 }
             }
         }
     }
+    /// Bank 08 register by register with the lengths that answer, then a long
+    /// listen on the broadcast collection: `cargo test -- --ignored --nocapture
+    /// print_rapoo_blocks`. Reads only. Keep the mouse moving while it runs.
+    #[test]
+    #[ignore]
+    fn print_rapoo_blocks() {
+        fn hex(b: &[u8]) -> String {
+            b.iter().map(|x| format!("{x:02x}")).collect::<Vec<_>>().join(" ")
+        }
+        let Some((mut d, _)) = Rapoo::open(&Pick::default()) else {
+            println!("no Rapoo mouse");
+            return;
+        };
+        for _ in 0..3 {
+            d.wake();
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        println!("keep the mouse moving while it reads");
+        let mut raw = vec![0u8; d.answer_len];
+        // A read of one byte answers with four, a table read with the table:
+        // every register here is asked at the size it answers at.
+        for (addr, bank, len) in [(0x80u8, 0x08u8, 4), (0x84, 8, 4), (AT_DPI_X, 8, SLOTS * 2), (0x90, 8, 4), (0x94, 8, 4), (AT_STAGE, 8, 4), (0x9C, 8, 4), (0xA0, 8, 4), (0xC0, 8, 4), (0xC2, 8, 4), (0xC4, 8, 4), (AT_DPI_Y, 8, SLOTS * 2), (0xDC, 8, 4), (0xE0, 8, 4), (0x04, 0x06, 4)] {
+            let mut got: Option<Vec<u8>> = None;
+            for _ in 0..3 {
+                let _ = d.out.write(&fit(&ask(addr, bank, len), d.out_len), WRITE_WAIT);
+                for _ in 0..8 {
+                    std::thread::sleep(GAP);
+                    raw = vec![0u8; d.answer_len];
+                    raw[0] = REPORT_ANSWER;
+                    if d.answer.get_feature(&mut raw) && raw[ANSWER_HEAD..].iter().any(|b| *b != 0) {
+                        got = Some(raw.clone());
+                        break;
+                    }
+                }
+                if got.is_some() {
+                    break;
+                }
+            }
+            match got {
+                Some(r) => println!("bank {bank:02X} reg 0x{addr:02X} ask {len:>2} B: {}", hex(&r[1..])),
+                None => println!("bank {bank:02X} reg 0x{addr:02X} ask {len:>2} B: no answer"),
+            }
+        }
+        let Some((ch, slen)) = d.status.take() else {
+            println!("no status collection");
+            return;
+        };
+        println!("ten seconds of broadcasts on {slen} B - keep the mouse moving");
+        let end = std::time::Instant::now() + Duration::from_secs(10);
+        let mut heard: Vec<Vec<u8>> = Vec::new();
+        while std::time::Instant::now() < end {
+            if let Some(r) = ch.read(slen, Duration::from_millis(250)) {
+                let named = match broadcast(&r) {
+                    Some(b) => format!("battery {} dpi {} stage {} at {:?} Hz, timer {:#04x}", b.battery, b.dpi, b.stage + 1, b.rate, b.timer),
+                    None => "not a status broadcast".into(),
+                };
+                println!("  {slen} B: {}   {named}", hex(&r));
+                heard.push(r);
+            }
+        }
+        if heard.len() > 1 {
+            let changing: Vec<usize> = (0..heard[0].len()).filter(|i| heard.iter().any(|r| r.get(*i) != heard[0].get(*i))).collect();
+            println!("{} broadcasts, bytes that differ: {changing:?}", heard.len());
+        }
+    }
+
+    /// The writes of the driver, on a mouse that is put back as it was found,
+    /// with two register reads printed after every step so that it can be seen
+    /// when the mouse stops answering. It does write to the mouse while it runs.
+    /// `cargo test -- --ignored --nocapture print_rapoo_writes`.
+    #[test]
+    #[ignore]
+    fn print_rapoo_writes() {
+        fn shows(d: &mut Rapoo, what: &str) {
+            println!("{what}: rate {:?}  count {:?}  stage {:?}", d.register(AT_RATE, BANK_SETTINGS, 1), d.register(AT_COUNT, BANK_SETTINGS, 1), d.register(AT_STAGE, BANK_SETTINGS, 1));
+        }
+        let Some((mut d, info)) = Rapoo::open(&Pick::default()) else {
+            println!("no Rapoo mouse");
+            return;
+        };
+        println!("{:04X}:{:04X} {} - keep it moving; it writes and puts back", info.vid, info.pid, info.product);
+        for _ in 0..3 {
+            d.wake();
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        // 1) The DPI of the stage in use, first, because that is the write
+        //    Whisker is for: the table as it was read with one stage 500 up,
+        //    then the value it had.
+        let read = d.read();
+        let (dpi, stage) = (read.as_ref().and_then(|r| r.dpi), read.as_ref().and_then(|r| r.stage));
+        println!("read: dpi {dpi:?} stage {stage:?}  table 12 B {:?}  broadcast {:?}", d.register(AT_DPI_X, BANK_SETTINGS, SLOTS * 2), d.pushed);
+        match dpi {
+            Some(dpi) => {
+                let other = (dpi + 500).min(DPI_MAX);
+                let wrote = d.set_dpi(other);
+                let back = d.read();
+                println!("stage {stage:?} at {dpi} dpi -> wrote {other}: {wrote} -> read back dpi {:?} stage {:?}", back.as_ref().and_then(|r| r.dpi), back.as_ref().and_then(|r| r.stage));
+                shows(&mut d, "after the DPI write");
+                let wrote = d.set_dpi(dpi);
+                let back = d.read();
+                println!("  back to {dpi}: {wrote} -> read back dpi {:?} stage {:?}", back.as_ref().and_then(|r| r.dpi), back.as_ref().and_then(|r| r.stage));
+                shows(&mut d, "after the DPI write back");
+            }
+            None => println!("no DPI answered, so no DPI write was tried"),
+        }
+        // 2) The report rate, and only when the rate it runs at is known: the
+        //    one above it (or the one below when it is at the top), then the
+        //    one it had. Nothing is written on a rate that was not read.
+        let rate = d.register(AT_RATE, BANK_SETTINGS, 1).and_then(|v| rate_hz(v[0]));
+        match rate {
+            Some(rate) => {
+                let other = RATES.iter().map(|(hz, _)| *hz).filter(|hz| *hz != rate).next_back().unwrap_or(1000);
+                let wrote = d.set_rate(other);
+                println!("0x80 rate {rate} -> wrote {other}: {wrote} -> read {:?}", d.register(AT_RATE, BANK_SETTINGS, 1).and_then(|v| rate_hz(v[0])));
+                shows(&mut d, "after the rate write");
+                let wrote = d.set_rate(rate);
+                println!("  back to {rate}: {wrote} -> read {:?}", d.register(AT_RATE, BANK_SETTINGS, 1).and_then(|v| rate_hz(v[0])));
+                shows(&mut d, "after the rate write back");
+            }
+            None => println!("0x80 rate: no answer, so no rate was written"),
+        }
+        // 3) The minutes of idle that put the mouse to sleep, register `0xC2`.
+        //    Nobody notices them, so they are the safest way to see whether a
+        //    write reached the mouse at all.
+        const SLEEP: u8 = 0xC2;
+        match d.register(SLEEP, BANK_SETTINGS, 1).map(|v| v[0]) {
+            Some(minutes) => {
+                let other = if minutes > 60 { minutes - 30 } else { minutes + 30 };
+                let wrote = d.poke(SLEEP, BANK_SETTINGS, &[other]);
+                println!("0xC2 sleep {minutes} min -> wrote {other}: {wrote} -> read {:?}", d.register(SLEEP, BANK_SETTINGS, 1).map(|v| v[0]));
+                let wrote = d.poke(SLEEP, BANK_SETTINGS, &[minutes]);
+                println!("  back to {minutes}: {wrote} -> read {:?}", d.register(SLEEP, BANK_SETTINGS, 1).map(|v| v[0]));
+            }
+            None => println!("0xC2 sleep: no answer"),
+        }
+        println!("last broadcast: {:?}", d.pushed);
+    }
+
+
+    /// Put the connected mouse to the report rate named in the
+    /// `WHISKER_RAPOO_RATE` environment variable, printing what it reads before
+    /// and after. `WHISKER_RAPOO_RATE=4000; cargo test -- --ignored --nocapture
+    /// print_rapoo_rate`
+    #[test]
+    #[ignore]
+    fn print_rapoo_rate() {
+        let wanted: u32 = std::env::var("WHISKER_RAPOO_RATE").ok().and_then(|v| v.trim().parse::<u32>().ok()).unwrap_or(1000);
+        let Some((mut d, info)) = Rapoo::open(&Pick::default()) else {
+            println!("no Rapoo mouse");
+            return;
+        };
+        println!("{:04X}:{:04X} {}", info.vid, info.pid, info.product);
+        let before = d.register(AT_RATE, BANK_SETTINGS, 1).and_then(|v| rate_hz(v[0]));
+        let wrote = d.set_rate(wanted);
+        println!("0x80 rate {before:?} -> wrote {wanted}: {wrote} -> read {:?}", d.register(AT_RATE, BANK_SETTINGS, 1).and_then(|v| rate_hz(v[0])));
+        println!("reading: {:?}", d.read());
+    }
+
+
 }
