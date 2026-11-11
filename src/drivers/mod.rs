@@ -11,6 +11,7 @@ pub mod corsair;
 pub mod eternico;
 pub mod hidpp;
 pub mod oemhid;
+pub mod rapoo;
 pub mod razer;
 pub mod roccat;
 pub mod sinowealth;

@@ -13,6 +13,7 @@ use crate::drivers::oemhid::OemHid;
 use crate::drivers::roccat::Roccat;
 use crate::drivers::corsair::Corsair;
 use crate::drivers::asus::Asus;
+use crate::drivers::rapoo::Rapoo;
 use crate::drivers::razer::Razer;
 use crate::drivers::sinowealth::Sinowealth;
 use crate::drivers::steelseries::SteelSeries;
@@ -46,6 +47,8 @@ pub enum Target {
     Asus,
     Corsair,
     Roccat,
+    /// Rapoo Gen 2 mice: the "A5A5" register protocol of A Hub.
+    Rapoo,
     /// Bluetooth LE mouse without a driver: battery from Windows only.
     Bluetooth(String),
     /// Mouse without a driver: statistics only.
@@ -150,6 +153,7 @@ enum Driver {
     Asus(Asus),
     Corsair(Corsair),
     Roccat(Roccat),
+    Rapoo(Rapoo),
 }
 
 impl Driver {
@@ -165,6 +169,7 @@ impl Driver {
             Target::Roccat => Roccat::open(pick).map(|(d, i)| (Driver::Roccat(d), i)),
             Target::Corsair => Corsair::open(pick).map(|(d, i)| (Driver::Corsair(d), i)),
             Target::Asus => Asus::open(pick).map(|(d, i)| (Driver::Asus(d), i)),
+            Target::Rapoo => Rapoo::open(pick).map(|(d, i)| (Driver::Rapoo(d), i)),
             _ => None,
         }
     }
@@ -180,6 +185,7 @@ impl Driver {
             Driver::Roccat(d) => (d.ident(), d.ability()),
             Driver::Corsair(d) => (d.ident(), d.ability()),
             Driver::Asus(d) => (d.ident(), d.ability()),
+            Driver::Rapoo(d) => (d.ident(), d.ability()),
         }
     }
 
@@ -210,6 +216,7 @@ impl Driver {
             Driver::Roccat(d) => d.read(),
             Driver::Corsair(d) => d.read(),
             Driver::Asus(d) => d.read(),
+            Driver::Rapoo(d) => d.read(),
         }
     }
 
@@ -225,6 +232,7 @@ impl Driver {
             Driver::Roccat(d) => d.set_dpi(dpi),
             Driver::Corsair(d) => d.set_dpi(dpi),
             Driver::Asus(d) => d.set_dpi(dpi),
+            Driver::Rapoo(d) => d.set_dpi(dpi),
         }
     }
 
@@ -239,6 +247,7 @@ impl Driver {
             Driver::Roccat(d) => d.set_rate(hz),
             Driver::Corsair(d) => d.set_rate(hz),
             Driver::Asus(d) => d.set_rate(hz),
+            Driver::Rapoo(d) => d.set_rate(hz),
         }
     }
 }
@@ -449,7 +458,7 @@ fn run(target: Target, pick: Pick, rx: Receiver<Command>, on_event: impl Fn(Even
     loop {
         match &w.target {
             Target::Lionel => w.poll_lionel(&on_event),
-            Target::Hidpp | Target::Razer | Target::Eternico | Target::Sinowealth | Target::SteelSeries | Target::OemHid | Target::Asus | Target::Corsair | Target::Roccat => {
+            Target::Hidpp | Target::Razer | Target::Eternico | Target::Sinowealth | Target::SteelSeries | Target::OemHid | Target::Asus | Target::Corsair | Target::Roccat | Target::Rapoo => {
                 w.poll_driver(&on_event)
             }
             Target::Bluetooth(addr) => match crate::platform::bluetooth::battery(addr) {
@@ -548,6 +557,20 @@ mod tests {
     #[ignore]
     fn print_hidpp_probe() {
         for p in probe(&[Target::Hidpp], &Pick::default()) {
+            println!("{:?}", p.got);
+            for n in &p.notes {
+                println!("  {n}");
+            }
+        }
+    }
+
+    /// Hardware probe of a connected Rapoo mouse (read requests only), to see
+    /// the answers of the `A5A5` registers:
+    /// `cargo test -- --ignored --nocapture print_rapoo_probe`.
+    #[test]
+    #[ignore]
+    fn print_rapoo_probe() {
+        for p in probe(&[Target::Rapoo], &Pick::default()) {
             println!("{:?}", p.got);
             for n in &p.notes {
                 println!("  {n}");

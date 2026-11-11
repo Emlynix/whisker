@@ -75,6 +75,8 @@ pub enum Family {
     Corsair,
     /// ASUS ROG mice, 64-byte vendor reports.
     Asus,
+    /// Rapoo Gen 2 mice: the "A5A5" register protocol of A Hub.
+    Rapoo,
     /// Recognized, but no configuration protocol is known.
     NoDriver,
 }
@@ -97,6 +99,7 @@ impl Family {
             Family::Roccat => Target::Roccat,
             Family::Corsair => Target::Corsair,
             Family::Asus => Target::Asus,
+            Family::Rapoo => Target::Rapoo,
             Family::NoDriver => Target::Nothing,
         }
     }
@@ -624,7 +627,7 @@ mod tests {
     #[test]
     fn catalogue_is_brand_then_model() {
         let names: Vec<String> = brands().iter().map(|b| b.title()).collect();
-        assert_eq!(names.len(), 13);
+        assert_eq!(names.len(), 14);
         assert_eq!(names[0], "White Shark");
         assert_eq!(brands().last().unwrap().models[0].entry, Entry::Other);
 
@@ -682,7 +685,7 @@ mod tests {
     /// Vendor ids each driver opens; `None` = the family is not tied to
     /// one vendor table here.
     fn driver_vids(f: Family) -> Option<Vec<u16>> {
-        use crate::drivers::{asus, corsair, eternico, hidpp, oemhid, razer, roccat, sinowealth, steelseries};
+        use crate::drivers::{asus, corsair, eternico, hidpp, oemhid, rapoo, razer, roccat, sinowealth, steelseries};
         let vids = match f {
             Family::TelinkM022 => vec![crate::protocol::VENDOR_ID],
             Family::Hidpp => vec![hidpp::VID],
@@ -694,6 +697,7 @@ mod tests {
             Family::Roccat => vec![roccat::VID],
             Family::Corsair => vec![corsair::VID],
             Family::Asus => vec![asus::VID],
+            Family::Rapoo => vec![rapoo::VID],
             Family::NoDriver => return None,
         };
         Some(vids)

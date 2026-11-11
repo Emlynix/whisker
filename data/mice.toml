@@ -1523,3 +1523,20 @@ model = "Marvo Scorpion G961"
 vid = 0x258A
 pids = 0x1007
 support = experimental
+
+# Rapoo VT x Gen 2 (nRF54 firmware): the "A5A5" register protocol of A Hub
+# and hub.rapoo.cn. The receiver answers for the mouse, so it names the model.
+[[brand]]
+id = rapoo
+name = "Rapoo"
+family = rapoo
+auto = 0x24AE
+
+[[mouse]]
+brand = rapoo
+model = "VT1 Gen 2"
+vid = 0x24AE
+pids = 0x1415 receiver
+support = experimental
+dpi = 50..26000 step 10
+rates = 125, 250, 500, 1000, 2000, 4000

@@ -43,6 +43,8 @@ KERNELS=="000[35]:1D57:*", TAG+="uaccess"
 KERNELS=="000[35]:373B:*", TAG+="uaccess"
 # VXE / VGN / Lamzu
 KERNELS=="000[35]:3554:*", TAG+="uaccess"
+# Rapoo
+KERNELS=="000[35]:24AE:*", TAG+="uaccess"
 GOTO="whisker_end"
 
 # ---- evdev: mouse input for statistics, never keyboards ----

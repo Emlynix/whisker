@@ -203,6 +203,7 @@ pub fn driver_name(t: &Target) -> &'static str {
         Target::Asus => "ASUS ROG",
         Target::Corsair => "Corsair Bragi",
         Target::Roccat => "Roccat Kone",
+        Target::Rapoo => "Rapoo A5A5",
         Target::Bluetooth(_) | Target::Nothing => "none",
     }
 }
@@ -324,6 +325,7 @@ fn family_word(t: &Target) -> &'static str {
         Target::Asus => "asus",
         Target::Corsair => "corsair",
         Target::Roccat => "roccat",
+        Target::Rapoo => "rapoo",
         Target::Bluetooth(_) | Target::Nothing => "none",
     }
 }
