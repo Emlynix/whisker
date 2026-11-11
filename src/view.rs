@@ -19,7 +19,7 @@
 //!    176 px          content x = 194 .. 782
 //! ```
 
-use crate::gfx::{Align, Color, Face, Gfx, Rect, Size, Weight};
+use crate::gfx::{Align, Color, Face, Gfx, Rect, Seg, Size, Weight};
 use crate::i18n::{Lang, T, fill, tr};
 use crate::protocol::{
     Action, BRIGHTNESS_MAX, BUTTON_COUNT, DPI_COLOR_SLOTS, Direction, Effect, Lighting, Lod, MacroEvent, MacroMode, Power,
@@ -58,9 +58,10 @@ const SIDE_W: f32 = 176.0;
 const CONTENT_PAD: f32 = 18.0;
 const X0: f32 = SIDE_W + CONTENT_PAD;
 const CW: f32 = WIDTH - SIDE_W - 2.0 * CONTENT_PAD;
-/// Page title: 16 below the title bar, 24 tall, 14 above the content.
+/// Page title: 16 below the title bar, 24 tall, then its accent rule,
+/// 18 above the content.
 const TITLE_Y: f32 = TITLE_H + 16.0;
-const TOP: f32 = TITLE_Y + 24.0 + 14.0;
+const TOP: f32 = TITLE_Y + 24.0 + 18.0;
 /// Spacing on a 4 px grid (8 / 12 / 16 / 24).
 const GAP: f32 = 16.0;
 /// Panels: a 36 px header row, 12 px padding, 12 px between panels.
@@ -159,6 +160,85 @@ impl SettingRow<'_> {
     }
 }
 
+/// The "mecha" look: flat cuts and short accent bars on top of the sharp
+/// base. These are all of them; nothing else is decorated.
+///
+/// ```text
+///   ▔▔                    ╲     panel: accent tab on the top edge, the
+///  ┌────────────────────────╲   top-right and bottom-left corners cut
+///  │                        │
+///  ╲                        │   selected segment: top-right corner cut
+///   ╲───────────────────────┘   primary button: bottom-right corner cut
+/// ```
+const PANEL_CUT: f32 = 10.0;
+const ACCENT_TAB: Rect = Rect::new(14.0, 0.0, 28.0, 2.0);
+const SEGMENT_CUT: f32 = 7.0;
+const BUTTON_CUT: f32 = 7.0;
+/// Selected nav item: its right edge leans in by this much at the bottom.
+const NAV_SLANT: f32 = 12.0;
+/// Accent bar under the page title.
+const TITLE_RULE: Rect = Rect::new(0.0, 4.0, 24.0, 2.0);
+/// Battery meter: blocks of 6 px with 2 px between them.
+const METER_H: f32 = 6.0;
+const METER_BLOCK: f32 = 6.0;
+const METER_GAP: f32 = 2.0;
+
+/// Which corners of a box are cut off.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Cut {
+    /// Top-right and bottom-left: panels.
+    Panel,
+    TopRight,
+    BottomRight,
+}
+
+/// Outline of `r` with corners cut by `size`, clockwise from the top-left.
+fn cut_box(r: Rect, cut: Cut, size: f32) -> Vec<(f32, f32)> {
+    let (x0, y0, x1, y1) = (r.x, r.y, r.x + r.w, r.y + r.h);
+    let mut pts = vec![(x0, y0)];
+    match cut {
+        Cut::Panel | Cut::TopRight => pts.extend([(x1 - size, y0), (x1, y0 + size)]),
+        Cut::BottomRight => pts.push((x1, y0)),
+    }
+    match cut {
+        Cut::BottomRight => pts.extend([(x1, y1 - size), (x1 - size, y1)]),
+        _ => pts.push((x1, y1)),
+    }
+    match cut {
+        Cut::Panel => pts.extend([(x0 + size, y1), (x0, y1 - size)]),
+        _ => pts.push((x0, y1)),
+    }
+    pts
+}
+
+/// Closed path through `pts`.
+fn polygon(pts: &[(f32, f32)]) -> Vec<Seg> {
+    let mut segs: Vec<Seg> = pts.iter().enumerate().map(|(k, &(x, y))| if k == 0 { Seg::Move(x, y) } else { Seg::Line(x, y) }).collect();
+    segs.push(Seg::Close);
+    segs
+}
+
+/// Fills a cut box.
+fn fill_cut(g: &Gfx, r: Rect, cut: Cut, size: f32, c: Color) {
+    g.fill_path(&polygon(&cut_box(r, cut, size)), c);
+}
+
+/// 1 px outline of a cut box, inside `r`.
+fn stroke_cut(g: &Gfx, r: Rect, cut: Cut, size: f32, c: Color) {
+    // Half a pixel in: a 1 px line centred on the path lands on whole pixels.
+    g.stroke_path(&polygon(&cut_box(r.inset(0.5), cut, size)), 1.0, c);
+}
+
+/// Segmented battery meter: filled blocks in `c`, the rest in the track color.
+fn meter(g: &Gfx, r: Rect, pct: u8, c: Color) {
+    let blocks = ((r.w + METER_GAP) / (METER_BLOCK + METER_GAP)).floor().max(1.0) as usize;
+    let filled = (blocks as f32 * pct.min(100) as f32 / 100.0).round() as usize;
+    for k in 0..blocks {
+        let x = r.x + k as f32 * (METER_BLOCK + METER_GAP);
+        g.fill(Rect::new(x, r.y, METER_BLOCK, METER_H), 0.0, if k < filled { c } else { th().track });
+    }
+}
+
 /// Sharp and thin: no corner radius anywhere.
 const R_INNER: f32 = 0.0;
 const R_CTRL: f32 = 0.0;
@@ -222,7 +302,7 @@ impl Page {
 const NAV_TOP: f32 = TITLE_H + 8.0;
 const NAV_STEP: f32 = 32.0;
 /// Underlined tab row under the title; tabbed pages start below it.
-const TAB_H: f32 = 30.0;
+const TAB_H: f32 = 34.0;
 const BODY: f32 = TOP + TAB_H + GAP;
 
 const COPYRIGHT: &str = "© 2026 Emlynix s.r.o.";
@@ -587,10 +667,12 @@ impl Frame<'_> {
         self.surface(r, th().panel);
     }
 
-    /// Panel: a flat fill with a 1 px hairline border, no radius, no shadow.
+    /// Panel: a flat fill with a 1 px hairline border, two corners cut,
+    /// and the accent tab on its top edge.
     fn surface(&self, r: Rect, c: Color) {
-        self.g.fill(r, 0.0, c);
-        self.g.stroke(r, 0.0, 1.0, th().line);
+        fill_cut(self.g, r, Cut::Panel, PANEL_CUT, c);
+        stroke_cut(self.g, r, Cut::Panel, PANEL_CUT, th().line);
+        self.g.fill(Rect::new(r.x + ACCENT_TAB.x, r.y, ACCENT_TAB.w, ACCENT_TAB.h), 0.0, th().acc_fill);
     }
 
     /// Panel with a header row: the title on the left, a hairline under
@@ -629,7 +711,7 @@ impl Frame<'_> {
             let cell = Rect::new(r.x + k as f32 * w, r.y, w, r.h);
             let hot = self.button(item.act, cell);
             if item.selected {
-                self.g.fill(cell, 0.0, th().acc_soft);
+                fill_cut(self.g, cell, Cut::TopRight, SEGMENT_CUT, th().acc_soft);
             } else if hot {
                 self.g.fill(cell, 0.0, th().sel);
             }
@@ -651,7 +733,7 @@ impl Frame<'_> {
         // Drawn last, over the dividers and the frame.
         for (k, item) in items.iter().enumerate() {
             if item.selected {
-                self.g.stroke(Rect::new(r.x + k as f32 * w, r.y, w + 1.0, r.h), 0.0, 1.0, th().acc);
+                stroke_cut(self.g, Rect::new(r.x + k as f32 * w, r.y, w + 1.0, r.h), Cut::TopRight, SEGMENT_CUT, th().acc);
             }
         }
     }
@@ -722,9 +804,9 @@ impl Frame<'_> {
         let hot = self.button(act, r);
         let label_r = Rect::new(r.x + 8.0, r.y, r.w - 16.0, r.h);
         if primary {
-            self.g.fill(r, 0.0, th().acc_fill);
+            fill_cut(self.g, r, Cut::BottomRight, BUTTON_CUT, th().acc_fill);
             if hot {
-                self.g.stroke(r, 0.0, 1.0, th().text);
+                stroke_cut(self.g, r, Cut::BottomRight, BUTTON_CUT, th().text);
             }
             self.g.text(label, label_r, Size::Body, Weight::Semibold, Align::Center, th().acc_on);
             return;
@@ -765,23 +847,23 @@ impl Frame<'_> {
 
     /// Underlined text tabs, e.g. "Buttons | Macros"; a tab is a page.
     fn tabs(&mut self, items: &[(Page, T)], current: Page) {
-        const PAD: f32 = 12.0;
+        const GAP: f32 = 20.0;
         let y = TOP;
-        self.g.fill(Rect::new(X0, y + TAB_H - 1.0, CW, 1.0), 0.0, th().border);
+        self.g.fill(Rect::new(X0, y + TAB_H - 1.0, CW, 1.0), 0.0, th().line);
 
         let mut x = X0;
         for &(page, key) in items {
             let label = tr(key);
-            let r = Rect::new(x, y, text_w(label, Size::Body) + 2.0 * PAD, TAB_H);
+            let r = Rect::new(x, y, text_w(label, Size::Body) + 8.0, TAB_H);
             let hot = self.button(Act::Nav(page), r);
             let sel = page == current;
             let color = if sel || hot { th().text } else { th().muted };
             let weight = if sel { Weight::Semibold } else { Weight::Normal };
-            self.g.text(label, Rect::new(r.x, r.y, r.w, r.h - 4.0), Size::Body, weight, Align::Center, color);
+            self.g.text(label, Rect::new(r.x, r.y, r.w + 20.0, r.h - 2.0), Size::Body, weight, Align::Left, color);
             if sel {
-                self.g.fill(Rect::new(r.x, r.y + r.h - 2.0, r.w, 2.0), 0.0, th().acc_fill);
+                self.g.fill(Rect::new(r.x, r.y + r.h - 2.0, r.w - 4.0, 2.0), 0.0, th().acc_fill);
             }
-            x += r.w + 4.0;
+            x += r.w + GAP - 4.0;
         }
     }
 
@@ -789,9 +871,14 @@ impl Frame<'_> {
     /// accent ground, a 1 px accent outline, accent text; nothing else.
     fn choice(&mut self, act: Act, r: Rect, title: &str, sub: &str, selected: bool) {
         let hot = self.button(act, r);
-        let bg = if selected { th().acc_soft } else if hot { th().sel } else { th().input };
-        self.g.fill(r, 0.0, bg);
-        self.g.stroke(r, 0.0, 1.0, if selected { th().acc } else { th().line2 });
+        if selected {
+            self.g.fill(r, 0.0, th().input);
+            fill_cut(self.g, r, Cut::TopRight, SEGMENT_CUT, th().acc_soft);
+            stroke_cut(self.g, r, Cut::TopRight, SEGMENT_CUT, th().acc);
+        } else {
+            self.g.fill(r, 0.0, if hot { th().sel } else { th().input });
+            self.g.stroke(r, 0.0, 1.0, th().line2);
+        }
 
         let color = if selected { th().acc } else { th().text };
         let weight = if selected { Weight::Semibold } else { Weight::Medium };
@@ -944,6 +1031,7 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
     status_bar(&mut f, v);
     let title = Rect::new(X0, TITLE_Y, CW, 24.0);
     f.g.text(&tr(v.page.title()).to_uppercase(), title, Size::Title, Weight::Semibold, Align::Left, th().text);
+    f.g.fill(Rect::new(X0, TITLE_Y + 24.0 + TITLE_RULE.y, TITLE_RULE.w, TITLE_RULE.h), 0.0, th().acc_fill);
     header_status(&mut f, v);
     // Over the title row: never covers controls of the page.
     if let Some(b) = &v.banner {
@@ -1323,7 +1411,9 @@ fn sidebar(f: &mut Frame, v: &View) {
 /// Settings › Mouse), a new version on the right.
 fn status_bar(f: &mut Frame, v: &View) {
     const PAD: f32 = 12.0;
-    const DOT: f32 = 7.0;
+    const DOT: f32 = 11.0;
+    const MARK_H: f32 = 8.0;
+    const MARK_SKEW: f32 = 3.0;
     let bar = Rect::new(0.0, PAGE_H, WIDTH, STATUS_H);
     f.g.fill(bar, 0.0, th().side);
     f.g.fill(Rect::new(0.0, PAGE_H, WIDTH, 1.0), 0.0, th().line);
@@ -1335,7 +1425,9 @@ fn status_bar(f: &mut Frame, v: &View) {
     if f.button(Act::Nav(Page::Mouse), area) {
         f.g.fill(area, 0.0, th().sel);
     }
-    f.g.fill(Rect::new(PAD, PAGE_H + (STATUS_H - DOT) / 2.0 + 0.5, DOT, DOT), 0.0, c);
+    // An 11 x 8 parallelogram, leaning right.
+    let (mx, my) = (PAD, PAGE_H + (STATUS_H - MARK_H) / 2.0 + 0.5);
+    f.g.fill_path(&polygon(&[(mx + MARK_SKEW, my), (mx + DOT, my), (mx + DOT - MARK_SKEW, my + MARK_H), (mx, my + MARK_H)]), c);
     let label = Rect::new(PAD + DOT + 8.0, PAGE_H + 1.0, w, STATUS_H - 1.0);
     f.g.text(&text, label, Size::Caption, Weight::Normal, Align::Left, th().muted);
 }
@@ -1385,7 +1477,9 @@ fn nav_item(f: &mut Frame, item: Nav, r: Rect, mark: Mark) {
     let sel = mark == Mark::Current;
     let hot = f.button(act, r);
     if sel {
-        f.g.fill(r, 0.0, th().sel);
+        // The right edge leans in toward the bottom.
+        let (x1, y1) = (r.x + r.w, r.y + r.h);
+        f.g.fill_path(&polygon(&[(r.x, r.y), (x1, r.y), (x1 - NAV_SLANT, y1), (r.x, y1)]), th().sel);
         f.g.fill(Rect::new(r.x, r.y, BAR_W, r.h), 0.0, th().acc_fill);
     } else if hot {
         f.g.fill(r, 0.0, Color(th().sel.0, 0x80));
@@ -1468,7 +1562,7 @@ fn stat_strip(f: &mut Frame, r: Rect, cells: &[Stat], corners: Corners) {
     const PAD_Y: f32 = 12.0;
     const VALUE_Y: f32 = 30.0;
     const VALUE_H: f32 = 34.0;
-    const BAR_H: f32 = 4.0;
+    const BAR_H: f32 = METER_H;
     f.card(r);
     if corners == Corners::Marked {
         corner_marks(f.g, r);
@@ -1496,7 +1590,7 @@ fn stat_strip(f: &mut Frame, r: Rect, cells: &[Stat], corners: Corners) {
             f.g.text(c.unit, Rect::new(unit_x, value.y + 13.0, cw, 16.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
         }
         if let Some((pct, color)) = c.bar {
-            f.bar(Rect::new(cx, below, cw, BAR_H), pct, color);
+            meter(f.g, Rect::new(cx, below, cw, BAR_H), pct, color);
             below += BAR_H + 6.0;
         }
         f.g.text(&c.note, Rect::new(cx, below, cw, 32.0), Size::Caption, Weight::Normal, Align::Wrap, th().muted);
