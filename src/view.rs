@@ -29,6 +29,7 @@ use crate::protocol::{
 mod art;
 mod buttons;
 mod device;
+mod mesh;
 mod pro;
 mod report;
 mod update;

@@ -11,7 +11,7 @@
 //!  Hovering or focusing a row lights its marker, and the other way round.
 //! ```
 
-use super::{Act, BODY, CW, Frame, Glyph, HEIGHT, Mark, PAGE_H, PANEL_GAP, PANEL_PAD, R_CTRL, RADIUS, SEGMENT_H, Segment, Squares, View, WIDTH, X0, art, glyph, text_w, th};
+use super::{Act, BODY, CW, Frame, Glyph, HEIGHT, Mark, PAGE_H, PANEL_GAP, PANEL_PAD, R_CTRL, RADIUS, SEGMENT_H, Segment, Squares, View, WIDTH, X0, art, glyph, mesh, text_w, th};
 use crate::gfx::{Align, Color, Rect, Size, Weight};
 use crate::i18n::{T, fill, tr};
 use crate::keys;
@@ -226,14 +226,14 @@ fn mouse_chip_label(t: T, a: Action) -> String {
 ///
 /// ```text
 ///  +-----------+----------------------------------------+
-///  |    ___    | [1] Left button        [Left click  v] |
-///  |  1/ | \2  | [2] Right button       [Right click v] |
-///  |   |3|     | …                                      |
+///  | 3D mouse  | [1] Left button        [Left click  v] |
+///  | 1 ─╱▔▔╲─ 2| [2] Right button       [Right click v] |
+///  |   ╲__╱    | …                                      |
 ///  +-----------+----------------------------------------+
 /// ```
 pub(super) fn buttons_page(f: &mut Frame, v: &View) {
-    const ART_W: f32 = 190.0;
-    const ART_PAD: f32 = 20.0;
+    /// The box of the 3D mouse.
+    const ART_W: f32 = 244.0;
     const BTN_ROW: f32 = 41.0;
     let h = BTN_ROW * v.buttons.len() as f32;
 
@@ -251,9 +251,11 @@ pub(super) fn buttons_page(f: &mut Frame, v: &View) {
         let r = Rect::new(rows_x, panel.y + i as f32 * BTN_ROW, panel.w - ART_W - 1.0, BTN_ROW);
         button_row(f, r, i, *a, lit == Some(i));
     }
-    // Drawn after the rows: Tab visits the list first.
-    let art_r = Rect::new(panel.x + ART_PAD, panel.y + ART_PAD, ART_W - 2.0 * ART_PAD, h - 2.0 * ART_PAD);
-    art::mouse(f, art_r, art::Marks::Buttons { lit });
+    // Drawn after the rows: Tab visits the list first. The mesh is built
+    // once; a frame only picks its colors.
+    static MESH: std::sync::OnceLock<mesh::Mesh> = std::sync::OnceLock::new();
+    let (mx, my) = (panel.x + (ART_W - mesh::WIDTH) / 2.0, panel.y + (h - mesh::HEIGHT) / 2.0);
+    mesh::draw(f, MESH.get_or_init(mesh::build), mx, my, lit);
 
     let y = panel.y + panel.h + PANEL_GAP;
     // Nothing to reset while the layout is the default one.
@@ -275,7 +277,7 @@ pub(super) fn buttons_page(f: &mut Frame, v: &View) {
 /// the action in a select box; an accent square marks an action changed
 /// from the default.
 fn button_row(f: &mut Frame, r: Rect, i: usize, a: Action, lit: bool) {
-    const SELECT_W: f32 = 190.0;
+    const SELECT_W: f32 = 150.0;
     const SELECT_H: f32 = 28.0;
     const CHANGED: f32 = 3.5;
     let hot = f.button(Act::EditButton(i), r);
