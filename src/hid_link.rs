@@ -67,6 +67,9 @@ pub struct Interface {
     pub info: DeviceInfo,
     pub usage_page: u16,
     pub usage: u16,
+    /// Longest input, output and feature report of the collection, each with
+    /// the report id byte when the reports are numbered.
+    pub input_len: usize,
     pub output_len: usize,
     pub feature_len: usize,
 }

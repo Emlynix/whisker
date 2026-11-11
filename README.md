@@ -33,7 +33,7 @@ are hidden.
 |---|---|---|
 | Supported | Tested on the mouse | White Shark Lionel, Logitech M705, Logitech M510 |
 | Partial | Some functions, tested | Eternico AET-MS480B (battery, DPI stage) |
-| Experimental | Written from protocol documentation, not yet tested on the mouse | 180+ models: Logitech (HID++ 2.0), Razer, SteelSeries, Corsair, ASUS ROG, Roccat, Glorious, ATK, VXE / VGN / Lamzu |
+| Experimental | Written from protocol documentation, not yet tested on the mouse | 180+ models: Logitech (HID++ 2.0), Razer, SteelSeries, Corsair, ASUS ROG, Roccat, Glorious, ATK, VXE / VGN / Lamzu, Rapoo |
 | Statistics only | Any other mouse | clicks, wheel and distance; battery over Bluetooth where available |
 
 The full list is in [data/mice.toml](data/mice.toml). If you own an
@@ -112,8 +112,9 @@ Protocol facts come from the documentation and sources of
 [rivalcfg](https://github.com/flozz/rivalcfg),
 [ckb-next](https://github.com/ckb-next/ckb-next),
 [OpenRGB](https://gitlab.com/CalcProgrammer1/OpenRGB) and
-[G-Helper](https://github.com/seerge/g-helper). Whisker's code is written
-from scratch. Brand names belong to their owners; Whisker is not affiliated
+[G-Helper](https://github.com/seerge/g-helper) and
+[ClickSync](https://github.com/Nuitfanee/ClickSync) (Rapoo A Hub). Whisker's
+code is written from scratch. Brand names belong to their owners; Whisker is not affiliated
 with any mouse maker.
 
 ## License

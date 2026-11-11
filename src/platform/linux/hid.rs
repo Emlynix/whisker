@@ -178,7 +178,7 @@ impl Node {
         let desc = self.descriptor().unwrap_or_default();
         collections(&desc)
             .into_iter()
-            .map(|c| Interface { path: path.clone(), info: info.clone(), usage_page: c.usage_page, usage: c.usage, output_len: c.output_len, feature_len: c.feature_len })
+            .map(|c| Interface { path: path.clone(), info: info.clone(), usage_page: c.usage_page, usage: c.usage, input_len: c.input_len, output_len: c.output_len, feature_len: c.feature_len })
             .collect()
     }
 }

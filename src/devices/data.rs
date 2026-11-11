@@ -70,7 +70,7 @@ const RANGE_SEP: &str = "..";
 const STEP_WORD: &str = "step";
 
 /// Family words, e.g. `family = telink-m022`.
-const FAMILIES: [(&str, Family); 11] = [
+const FAMILIES: [(&str, Family); 12] = [
     ("telink-m022", Family::TelinkM022),
     ("hidpp", Family::Hidpp),
     ("razer", Family::Razer),
@@ -81,6 +81,7 @@ const FAMILIES: [(&str, Family); 11] = [
     ("roccat", Family::Roccat),
     ("corsair", Family::Corsair),
     ("asus", Family::Asus),
+    ("rapoo", Family::Rapoo),
     ("none", Family::NoDriver),
 ];
 

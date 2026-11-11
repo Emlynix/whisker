@@ -124,6 +124,7 @@ fn describe(path: String, keep: impl Fn(u16, u16) -> bool) -> Option<Interface> 
                 path,
                 usage_page: caps.UsagePage,
                 usage: caps.Usage,
+                input_len: caps.InputReportByteLength as usize,
                 output_len: caps.OutputReportByteLength as usize,
                 feature_len: caps.FeatureReportByteLength as usize,
             });
