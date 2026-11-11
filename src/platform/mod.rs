@@ -33,6 +33,8 @@
 //! - `run()`: event loop until `quit`.
 //! - `post(f)`: run `f` on the UI thread; callable from any thread (wake).
 //! - `invalidate()`, `show()`, `quit()`: repaint, raise, close for good.
+//! - `is_active() -> bool`: the window is the one the user works in
+//!   (animations stop otherwise).
 //! - `minimize()`, `close()`: the app's own window buttons; `close` hides
 //!   the window (`Hooks::hidden`), the app stays in the tray.
 //! - `set_timer(id, ms)`, `kill_timer(id)`: repeating timer to `Hooks::timer`.

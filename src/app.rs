@@ -50,6 +50,11 @@ const TIMER_FADE: usize = 4;
 const TIMER_PULSE: usize = 5;
 const TIMER_SCAN: usize = 6;
 const TIMER_UPDATE: usize = 7;
+/// Subtle animations: only while the window is shown.
+const TIMER_FX: usize = 8;
+/// Five frames a second are plenty for a mark that breathes in 2.4 s.
+const FX_TICK_MS: u32 = 200;
+const STATUS_PULSE: Duration = Duration::from_millis(2400);
 /// How often connected mice are listed to notice a new one.
 const SCAN_MS: u32 = 4000;
 /// Longest wait at exit for the mouse to take back changed settings.
@@ -156,6 +161,8 @@ struct Controller {
     /// Values the guided checks must see back on the mouse.
     restore: Option<Restore>,
     updates: Updates,
+    /// When the app started: the clock of the animations.
+    started: Instant,
     /// Number of the last report sent; a send in flight carries it.
     send_seq: u64,
     /// One report is on its way: no second one until it is answered.
@@ -293,6 +300,7 @@ pub fn run(mode: StartMode, last: crate::log::Last) {
         wizard: None,
         restore: None,
         updates: Updates::default(),
+        started: Instant::now(),
         send_seq: 0,
         send_busy: false,
     };
@@ -369,6 +377,9 @@ fn initial_view(cfg: &AppConfig, ask_setup: bool) -> View {
         data_dir: store::data_dir().map(|d| d.display().to_string()).unwrap_or_default(),
         ask_setup,
         setup_autostart: true,
+        fx_texture: cfg.fx_texture,
+        fx_motion: cfg.fx_motion,
+        status_pulse: u8::MAX,
         theme_pick: match cfg.theme {
             theme::Choice::System => 0,
             theme::Choice::Fixed(i) => i + 1,
@@ -1265,6 +1276,7 @@ fn hook_timer(id: usize) {
         TIMER_PULSE => c.pulse(),
         TIMER_SCAN => c.scan(),
         TIMER_UPDATE => c.auto_check(),
+        TIMER_FX => c.animate(),
         _ => {}
     });
 }
@@ -1324,6 +1336,41 @@ impl Controller {
         self.mouse.send(Command::RefreshNow);
         self.refresh_stats();
         window::set_timer(TIMER_REFRESH, REFRESH_MS);
+        self.sync_fx_timer();
+    }
+
+    /// The animation timer runs only while there is something to animate
+    /// and someone to see it.
+    fn sync_fx_timer(&mut self) {
+        if self.visible && self.cfg.fx_motion {
+            window::set_timer(TIMER_FX, FX_TICK_MS);
+            return;
+        }
+        window::kill_timer(TIMER_FX);
+        self.view.status_pulse = u8::MAX;
+    }
+
+    /// One animation frame: the connection mark breathes. Nothing moves
+    /// while the window is not the one the user works in.
+    fn animate(&mut self) {
+        const LOW: f32 = 0.35;
+        if !window::is_active() || !self.view.connected {
+            return;
+        }
+        let phase = (self.started.elapsed().as_secs_f32() / STATUS_PULSE.as_secs_f32()).fract();
+        let wave = 0.5 + 0.5 * (phase * std::f32::consts::TAU).cos();
+        self.view.status_pulse = ((LOW + (1.0 - LOW) * wave) * u8::MAX as f32) as u8;
+        window::invalidate();
+    }
+
+    fn toggle_fx(&mut self, a: Act) {
+        match a {
+            Act::FxTexture => self.cfg.fx_texture = !self.cfg.fx_texture,
+            _ => self.cfg.fx_motion = !self.cfg.fx_motion,
+        }
+        (self.view.fx_texture, self.view.fx_motion) = (self.cfg.fx_texture, self.cfg.fx_motion);
+        store::save_config(&self.cfg);
+        self.sync_fx_timer();
     }
 
     /// Hidden window: slow polling, no UI refresh timer.
@@ -1333,6 +1380,7 @@ impl Controller {
         self.cancel_checks();
         self.on_focus_lost();
         window::kill_timer(TIMER_REFRESH);
+        window::kill_timer(TIMER_FX);
         self.mouse.send(Command::Visible(false));
         if !self.removed {
             self.stats.save();
@@ -1478,6 +1526,7 @@ impl Controller {
             Act::CloseDialog => self.view.dialog = None,
             // Moving the window is the platform's business; a mock-up has none.
             Act::Caption | Act::Mock(_) => {}
+            Act::FxTexture | Act::FxMotion => self.toggle_fx(a),
             Act::WinMinimize => window::minimize(),
             // Closing hides: the app stays in the tray.
             Act::WinClose => window::close(),

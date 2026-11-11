@@ -101,6 +101,11 @@ pub fn show() {
     });
 }
 
+/// The window has the keyboard focus.
+pub fn is_active() -> bool {
+    with_ui(|u| u.window.is_active()).unwrap_or(false)
+}
+
 /// Minimizes to the taskbar or dock.
 pub fn minimize() {
     with_ui(|u| u.window.iconify());

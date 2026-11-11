@@ -327,9 +327,14 @@ pub enum T {
     /// DPI page: title of the list, and `{}` = number of one stage.
     Stages,
     StageN,
+    /// Settings › Appearance: the effects panel.
+    Effects,
+    FxMotion,
+    FxTexture,
+    FxNote,
 }
 
-const COUNT: usize = T::StageN as usize + 1;
+const COUNT: usize = T::FxNote as usize + 1;
 type Table = [&'static str; COUNT];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -807,6 +812,10 @@ const EN: Table = [
     "Part of Whisker Pro.",
     "Stages",
     "Stage {}",
+    "Effects",
+    "Subtle animations",
+    "Background grid and texture",
+    "Everything stops while minimized.",
 ];
 
 const SK: Table = [
@@ -1110,6 +1119,10 @@ const SK: Table = [
     "Súčasť Whisker Pro.",
     "Stupne",
     "Stupeň {}",
+    "Efekty",
+    "Jemné animácie",
+    "Mriežka a textúra pozadia",
+    "Pri minimalizácii sa všetko zastaví.",
 ];
 
 const CS: Table = [
@@ -1413,6 +1426,10 @@ const CS: Table = [
     "Součást Whisker Pro.",
     "Stupně",
     "Stupeň {}",
+    "Efekty",
+    "Jemné animace",
+    "Mřížka a textura pozadí",
+    "Při minimalizaci se vše zastaví.",
 ];
 
 const PL: Table = [
@@ -1716,6 +1733,10 @@ const PL: Table = [
     "Część Whisker Pro.",
     "Poziomy",
     "Poziom {}",
+    "Efekty",
+    "Subtelne animacje",
+    "Siatka i tekstura tła",
+    "Po zminimalizowaniu wszystko się zatrzymuje.",
 ];
 
 const DE: Table = [
@@ -2019,6 +2040,10 @@ const DE: Table = [
     "Teil von Whisker Pro.",
     "Stufen",
     "Stufe {}",
+    "Effekte",
+    "Dezente Animationen",
+    "Hintergrundraster und Textur",
+    "Minimiert steht alles still.",
 ];
 
 const FR: Table = [
@@ -2322,6 +2347,10 @@ const FR: Table = [
     "Fait partie de Whisker Pro.",
     "Niveaux",
     "Niveau {}",
+    "Effets",
+    "Animations discrètes",
+    "Grille et texture d'arrière-plan",
+    "Tout s'arrête quand la fenêtre est réduite.",
 ];
 
 const ES: Table = [
@@ -2625,6 +2654,10 @@ const ES: Table = [
     "Parte de Whisker Pro.",
     "Niveles",
     "Nivel {}",
+    "Efectos",
+    "Animaciones sutiles",
+    "Cuadrícula y textura de fondo",
+    "Todo se detiene al minimizar.",
 ];
 
 const PT: Table = [
@@ -2928,6 +2961,10 @@ const PT: Table = [
     "Parte do Whisker Pro.",
     "Níveis",
     "Nível {}",
+    "Efeitos",
+    "Animações subtis",
+    "Grelha e textura de fundo",
+    "Tudo para quando minimizado.",
 ];
 
 const IT: Table = [
@@ -3231,6 +3268,10 @@ const IT: Table = [
     "Parte di Whisker Pro.",
     "Livelli",
     "Livello {}",
+    "Effetti",
+    "Animazioni leggere",
+    "Griglia e texture di sfondo",
+    "Tutto si ferma quando è ridotto a icona.",
 ];
 
 const JA: Table = [
@@ -3534,6 +3575,10 @@ const JA: Table = [
     "Whisker Pro の機能です。",
     "ステージ",
     "ステージ {}",
+    "エフェクト",
+    "控えめなアニメーション",
+    "背景のグリッドとテクスチャ",
+    "最小化中はすべて停止します。",
 ];
 
 const KO: Table = [
@@ -3837,6 +3882,10 @@ const KO: Table = [
     "Whisker Pro의 기능입니다.",
     "단계",
     "{}단계",
+    "효과",
+    "은은한 애니메이션",
+    "배경 격자와 질감",
+    "최소화하면 모두 멈춥니다.",
 ];
 
 const ZH_HANS: Table = [
@@ -4140,6 +4189,10 @@ const ZH_HANS: Table = [
     "Whisker Pro 的功能。",
     "档位",
     "第 {} 档",
+    "效果",
+    "细微动画",
+    "背景网格和纹理",
+    "最小化时全部停止。",
 ];
 
 const ZH_HANT: Table = [
@@ -4443,6 +4496,10 @@ const ZH_HANT: Table = [
     "Whisker Pro 的功能。",
     "段位",
     "第 {} 段",
+    "效果",
+    "細微動畫",
+    "背景格線和紋理",
+    "最小化時全部停止。",
 ];
 
 #[cfg(test)]

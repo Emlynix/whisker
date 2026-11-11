@@ -421,6 +421,9 @@ pub enum Act {
     About,
     /// Closes the About or "assign macro" dialog.
     CloseDialog,
+    /// Settings › Appearance › Effects.
+    FxTexture,
+    FxMotion,
     /// A control of a PRO mock-up: answers the pointer, does nothing.
     Mock(u8),
     /// Title bar: its empty part (moves the window) and the window buttons.
@@ -605,6 +608,11 @@ pub struct View {
     pub setup_autostart: bool,
     /// Selected entries of the appearance pickers (0 = system).
     pub theme_pick: usize,
+    /// Effects: background grid and texture, subtle animations.
+    pub fx_texture: bool,
+    pub fx_motion: bool,
+    /// Opacity of the connection mark; it breathes while animations run.
+    pub status_pulse: u8,
     pub lang_pick: usize,
     pub lighting: Lighting,
     pub dpi_colors: [u32; DPI_COLOR_SLOTS],
@@ -703,7 +711,9 @@ impl Frame<'_> {
 
     /// Text link on the right of a panel header.
     fn panel_link(&mut self, r: Rect, act: Act, label: &str) {
-        let w = text_w(label, Size::Caption) + 4.0;
+        // Semibold runs wider than the estimate for regular text.
+        const LINK_ROOM: f32 = 1.12;
+        let w = text_w(label, Size::Caption) * LINK_ROOM;
         text_link(self, act, label, r.x + r.w - PANEL_PAD - w, r.y + (PANEL_HEAD - 18.0) / 2.0);
     }
 
@@ -1034,6 +1044,9 @@ pub fn battery_color(v: &View) -> Color {
 pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
     let mut f = Frame { g, hot, hits: Vec::new() };
     f.g.clear(th().bg);
+    if v.fx_texture {
+        backdrop(f.g);
+    }
 
     title_bar(&mut f, v);
     sidebar(&mut f, v);
@@ -1292,6 +1305,85 @@ fn logo(g: &Gfx, x: f32, y: f32, size: f32) {
     g.fill(Rect::new(nx, ny, 2.0 * s, 2.0 * s), 0.0, th().acc_fill);
 }
 
+/// The "Alive" backdrop of the content area: a grid that fades in toward
+/// the bottom-right, where pages are empty, and a field of dots in that
+/// corner. Static; drawn under everything.
+///
+/// ```text
+///  dense content here: nothing     ·
+///                              ┼───┼───┼
+///                          ┼───┼ · ┼ · ┼   grid and dots grow stronger
+///                      ┼───┼ · ┼ · ┼ · ┼   toward this corner
+/// ```
+fn backdrop(g: &Gfx) {
+    const CELL: f32 = 24.0;
+    /// The grid starts 30 % of the way along the diagonal.
+    const GRID_FROM: f32 = 0.3;
+    const DOT_STEP: f32 = 6.0;
+    const DOT: f32 = 1.4;
+    const DOT_AREA: f32 = 0.65;
+    const DOT_ALPHA: f32 = 0.28;
+    /// The dots are gone 70 % of the way from the corner.
+    const DOT_REACH: f32 = 0.7;
+    /// Fainter than this is not worth a draw call.
+    const VISIBLE: f32 = 0.03;
+    let area = Rect::new(SIDE_W, TITLE_H, WIDTH - SIDE_W, PAGE_H - TITLE_H);
+    let strength = if th().dark { 0.6 } else { 0.9 };
+    let ink = |c: Color, a: f32| Color(c.0, (a * 255.0) as u8);
+
+    // 0 in the top-left corner of the area, 1 in the bottom-right one.
+    let along = |x: f32, y: f32| ((x - area.x) / area.w + (y - area.y) / area.h) / 2.0;
+    let grid_alpha = |x: f32, y: f32| ((along(x, y) - GRID_FROM) / (1.0 - GRID_FROM)).clamp(0.0, 1.0) * strength * 0.7;
+    let (cols, rows) = ((area.w / CELL).ceil() as usize, (area.h / CELL).ceil() as usize);
+    for row in 0..rows {
+        for col in 0..cols {
+            let (x, y) = (area.x + col as f32 * CELL, area.y + row as f32 * CELL);
+            let a = grid_alpha(x + CELL / 2.0, y + CELL / 2.0);
+            if a < VISIBLE {
+                continue;
+            }
+            // Each cell draws its top and left edge.
+            g.fill(Rect::new(x, y, CELL, 1.0), 0.0, ink(th().line2, a));
+            g.fill(Rect::new(x, y, 1.0, CELL), 0.0, ink(th().line2, a));
+        }
+    }
+
+    // Dots: strongest in the corner, fading with the distance from it.
+    let (corner_x, corner_y) = (area.x + area.w, area.y + area.h);
+    let (reach_w, reach_h) = (area.w * DOT_AREA, area.h * DOT_AREA);
+    let mut y = corner_y - DOT_STEP / 2.0;
+    while y > corner_y - reach_h {
+        let mut x = corner_x - DOT_STEP / 2.0;
+        while x > corner_x - reach_w {
+            let far = (((corner_x - x) / reach_w).powi(2) + ((corner_y - y) / reach_h).powi(2)).sqrt() / DOT_REACH;
+            let a = DOT_ALPHA * (1.0 - far);
+            if a >= VISIBLE {
+                g.fill(Rect::new(x, y, DOT, DOT), 0.0, ink(th().text, a));
+            }
+            x -= DOT_STEP;
+        }
+        y -= DOT_STEP;
+    }
+}
+
+/// Fine grain on the sidebar: sparse 1 px specks, the same every frame.
+fn speckle(g: &Gfx, r: Rect) {
+    const SPECKS: usize = 2200;
+    const SEED: u32 = 0x5eed_1e55;
+    let alpha = if th().dark { 0x1c } else { 0x16 };
+    let mut state = SEED;
+    // A small linear congruential generator: the pattern must not change
+    // between frames, so no clock and no global randomness.
+    let mut next = || {
+        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        (state >> 8) as f32 / (1u32 << 24) as f32
+    };
+    for _ in 0..SPECKS {
+        let (x, y) = (r.x + (next() * (r.w - 1.0)).floor(), r.y + (next() * r.h).floor());
+        g.fill(Rect::new(x, y, 1.0, 1.0), 0.0, Color(th().text.0, alpha));
+    }
+}
+
 /// Title bar: logo, app name, the mouse in use (a click changes it),
 /// window buttons. Its empty part moves the window.
 fn title_bar(f: &mut Frame, v: &View) {
@@ -1397,6 +1489,9 @@ fn sidebar(f: &mut Frame, v: &View) {
 
     let side = Rect::new(0.0, TITLE_H, SIDE_W, PAGE_H - TITLE_H);
     f.g.fill(side, 0.0, th().side);
+    if v.fx_texture {
+        speckle(f.g, side);
+    }
     f.g.fill(Rect::new(SIDE_W - 1.0, TITLE_H, 1.0, side.h), 0.0, th().line);
     let item = |y: f32| Rect::new(0.0, y, SIDE_W - 1.0, NAV_STEP);
 
@@ -1443,7 +1538,8 @@ fn status_bar(f: &mut Frame, v: &View) {
     }
     // An 11 x 8 parallelogram, leaning right.
     let (mx, my) = (PAD, PAGE_H + (STATUS_H - MARK_H) / 2.0 + 0.5);
-    f.g.fill_path(&polygon(&[(mx + MARK_SKEW, my), (mx + DOT, my), (mx + DOT - MARK_SKEW, my + MARK_H), (mx, my + MARK_H)]), c);
+    let mark_c = if v.connected { Color(c.0, v.status_pulse) } else { c };
+    f.g.fill_path(&polygon(&[(mx + MARK_SKEW, my), (mx + DOT, my), (mx + DOT - MARK_SKEW, my + MARK_H), (mx, my + MARK_H)]), mark_c);
     let label = Rect::new(PAD + DOT + 8.0, PAGE_H + 1.0, w, STATUS_H - 1.0);
     f.g.text(&text, label, Size::Caption, Weight::Normal, Align::Left, th().muted);
 }
@@ -2258,6 +2354,18 @@ fn appearance(f: &mut Frame, v: &View) {
     theme_tile(f, Act::Theme(0), tile(0), th(), tr(T::FollowSystem), v.theme_pick == 0);
     for (i, t) in THEMES.iter().enumerate() {
         theme_tile(f, Act::Theme(i + 1), tile(i + 1), t, t.name, v.theme_pick == i + 1);
+    }
+
+    // Effects: both on by default; everything stops while minimized.
+    const CHECK_ROW: f32 = 26.0;
+    let panel = Rect::new(X0, panel.y + panel.h + PANEL_GAP, CW, PANEL_HEAD + 2.0 * PANEL_PAD + 2.0 * CHECK_ROW - 4.0);
+    let body = f.panel(panel, tr(T::Effects));
+    f.panel_note(panel, tr(T::FxNote));
+    for (k, (act, label, on)) in [(Act::FxMotion, T::FxMotion, v.fx_motion), (Act::FxTexture, T::FxTexture, v.fx_texture)].into_iter().enumerate() {
+        let y = body.y + PANEL_PAD + k as f32 * CHECK_ROW;
+        f.toggle(Some(act), body.x + PANEL_PAD, y, on);
+        let label_r = Rect::new(body.x + PANEL_PAD + 24.0, y, body.w - 2.0 * PANEL_PAD - 24.0, 22.0);
+        f.g.text(tr(label), label_r, Size::Body, Weight::Normal, Align::Left, th().text);
     }
 
     // Languages: native names, "system" first; a grid of segments.

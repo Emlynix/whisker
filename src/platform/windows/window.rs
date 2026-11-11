@@ -68,6 +68,11 @@ pub fn show() {
     }
 }
 
+/// The window is the foreground one.
+pub fn is_active() -> bool {
+    unsafe { GetForegroundWindow() == hwnd() }
+}
+
 /// Minimizes to the taskbar.
 pub fn minimize() {
     unsafe { ShowWindow(hwnd(), SW_MINIMIZE) };

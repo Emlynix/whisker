@@ -61,6 +61,9 @@ pub struct AppConfig {
     pub lang: Option<Lang>,
     /// Mice answered "Not now" in the new-mouse banner, as `mouse_key`.
     pub ignored_mice: Vec<String>,
+    /// Effects: background grid and texture; subtle animations.
+    pub fx_texture: bool,
+    pub fx_motion: bool,
     /// Look for a new version once a day.
     pub update_check: bool,
     /// Unix time of the last completed update check.
@@ -91,6 +94,8 @@ impl Default for AppConfig {
             theme: theme::Choice::System,
             lang: None,
             ignored_mice: Vec::new(),
+            fx_texture: true,
+            fx_motion: true,
             update_check: true,
             update_checked: 0,
             update_skip: None,
@@ -263,6 +268,8 @@ fn parse_config(text: &str, mut c: AppConfig) -> AppConfig {
             ("setup_asked", _) => c.setup_asked = v == "1",
             ("theme", _) => c.theme = theme::Choice::from_id(v),
             ("lang", _) => c.lang = Lang::from_code(v),
+            ("fx_texture", _) => c.fx_texture = v != "0",
+            ("fx_motion", _) => c.fx_motion = v != "0",
             ("update_check", _) => c.update_check = v != "0",
             ("update_checked", Some(_)) => c.update_checked = v.parse().unwrap_or(0),
             ("update_skip", _) => c.update_skip = Some(v.to_string()).filter(|v| !v.is_empty()),
@@ -299,6 +306,8 @@ fn format_config(c: &AppConfig) -> String {
         format!("theme={}", c.theme.id()),
         format!("lang={}", c.lang.map(|l| l.code()).unwrap_or("system")),
         format!("ignored_mice={}", c.ignored_mice.join(",")),
+        format!("fx_texture={}", c.fx_texture as u8),
+        format!("fx_motion={}", c.fx_motion as u8),
         format!("update_check={}", c.update_check as u8),
         format!("update_checked={}", c.update_checked),
         format!("update_skip={}", c.update_skip.as_deref().unwrap_or("")),
