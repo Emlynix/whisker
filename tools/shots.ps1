@@ -36,7 +36,7 @@ public class Shots {
 "@
 
 # Scene = name, WHISKER_OPEN value, config overrides, clicks (client x,y).
-$NAV = @{ overview = 56; dpi = 88; performance = 120; lighting = 152; buttons = 184; statistics = 216; settings = 556; about = 524 }
+$NAV = @{ overview = 56; dpi = 88; performance = 120; lighting = 152; buttons = 184; statistics = 216; settings = 556 }
 $scenes = @(
     @{ name = "01-overview" }
     @{ name = "02-dpi"; clicks = @(, @(80, $NAV.dpi)) }
@@ -50,7 +50,7 @@ $scenes = @(
     @{ name = "10-settings-general"; clicks = @(, @(80, $NAV.settings)) }
     @{ name = "11-settings-appearance"; clicks = @(@(80, $NAV.settings), @(320, 99)) }
     @{ name = "12-settings-mouse"; clicks = @(@(80, $NAV.settings), @(405, 99)) }
-    @{ name = "13-about"; clicks = @(, @(80, $NAV.about)) }
+    @{ name = "13-about"; clicks = @(@(80, $NAV.settings), @(470, 99)) }
     @{ name = "14-picker"; open = "detect" }
     @{ name = "15-picker-list"; open = "detect-list" }
     @{ name = "16-picker-none"; open = "detect-none" }

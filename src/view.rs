@@ -167,8 +167,8 @@ const RADIUS: f32 = 0.0;
 const LOW: u8 = 20;
 const MID: u8 = 50;
 
-/// Screens. Macros is a tab of Buttons; Appearance and Mouse are tabs of
-/// Settings (`General`).
+/// Screens. Macros is a tab of Buttons; Appearance, Mouse and About are
+/// tabs of Settings (`General`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Page {
     Overview,
@@ -181,19 +181,21 @@ pub enum Page {
     General,
     Appearance,
     Mouse,
+    About,
 }
 
 /// Sidebar order; Settings (`General`) is pinned at the bottom.
 const NAV: [Page; 6] = [Page::Overview, Page::Dpi, Page::Polling, Page::Lighting, Page::Buttons, Page::Stats];
 const BUTTON_TABS: [(Page, T); 2] = [(Page::Buttons, T::PageButtons), (Page::Macros, T::PageMacros)];
-const SETTING_TABS: [(Page, T); 3] = [(Page::General, T::TabGeneral), (Page::Appearance, T::PageAppearance), (Page::Mouse, T::TabMouse)];
+const SETTING_TABS: [(Page, T); 4] =
+    [(Page::General, T::TabGeneral), (Page::Appearance, T::PageAppearance), (Page::Mouse, T::TabMouse), (Page::About, T::About)];
 
 impl Page {
     /// Sidebar entry the page belongs to, e.g. Macros -> Buttons.
     pub fn nav(self) -> Page {
         match self {
             Page::Macros => Page::Buttons,
-            Page::Appearance | Page::Mouse => Page::General,
+            Page::Appearance | Page::Mouse | Page::About => Page::General,
             p => p,
         }
     }
@@ -393,7 +395,6 @@ pub enum Web {
 /// Small modal dialogs (the bigger ones have their own state).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Dialog {
-    About,
     /// The last run crashed or was closed while hung.
     Crashed,
     AssignMacro,
@@ -964,11 +965,12 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
             if v.page == Page::Buttons { buttons::buttons_page(&mut f, v) } else { buttons::macros_page(&mut f, v) }
         }
         Page::Stats => stats(&mut f, v),
-        Page::General | Page::Appearance | Page::Mouse => {
+        Page::General | Page::Appearance | Page::Mouse | Page::About => {
             f.tabs(&SETTING_TABS, v.page);
             match v.page {
                 Page::General => settings(&mut f, v),
                 Page::Appearance => appearance(&mut f, v),
+                Page::About => about_page(&mut f, v),
                 _ => device::device_page(&mut f, v),
             }
         }
@@ -984,10 +986,6 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
         buttons::picker(&mut f, v, p);
     }
     match v.dialog {
-        Some(Dialog::About) => {
-            f.hits.clear();
-            about_dialog(&mut f, v);
-        }
         Some(Dialog::Crashed) => {
             f.hits.clear();
             crash_dialog(&mut f);
@@ -1142,15 +1140,6 @@ fn icon(g: &Gfx, page: Page, x: f32, y: f32, c: Color) {
             }
         }
     }
-}
-
-/// Boxed "i" (About), on the same 20 px grid as `icon`.
-fn info_icon(g: &Gfx, x: f32, y: f32, c: Color) {
-    const S: f32 = ICON_SCALE;
-    let (cx, cy) = (x + 12.0 * S, y + 12.0 * S);
-    g.frame(cx, cy, 9.0 * S, ICON_STROKE, c);
-    g.dot(cx, cy - 4.0 * S, 1.3, c);
-    g.line(cx, cy - 1.0 * S, cx, cy + 5.0 * S, ICON_STROKE, c);
 }
 
 /// The logo: a mouse with whiskers drawn as circuit traces, on a 24 x 24
@@ -1324,12 +1313,10 @@ fn sidebar(f: &mut Frame, v: &View) {
         y += NAV_STEP;
     }
 
-    // Pinned at the bottom, over a hairline: About, then Settings.
-    let foot = PAGE_H - FOOT_PAD - 2.0 * NAV_STEP;
+    // Pinned at the bottom, over a hairline: Settings (About is a tab of it).
+    let foot = PAGE_H - FOOT_PAD - NAV_STEP;
     f.g.fill(Rect::new(0.0, foot - FOOT_PAD, SIDE_W - 1.0, 1.0), 0.0, th().line);
-    // About opens a dialog, never a page: hover only, no current-page bar.
-    nav_item(f, Nav::About, item(foot), Mark::Other);
-    nav_item(f, Nav::Page(Page::General), item(foot + NAV_STEP), Mark::of(v.page.nav() == Page::General));
+    nav_item(f, Nav::Page(Page::General), item(foot), Mark::of(v.page.nav() == Page::General));
 }
 
 /// Status bar: connection and battery on the left (a click opens
@@ -1377,11 +1364,10 @@ fn status_line(v: &View) -> (String, Color) {
     (format!("{text} · FW {}", v.device.firmware), c)
 }
 
-/// Sidebar entry: a page, or About (opens its dialog).
+/// Sidebar entry: a page.
 #[derive(Clone, Copy)]
 enum Nav {
     Page(Page),
-    About,
 }
 
 /// Left padding of nav items and the PRO tag.
@@ -1395,7 +1381,6 @@ fn nav_item(f: &mut Frame, item: Nav, r: Rect, mark: Mark) {
     const BAR_W: f32 = 2.0;
     let (act, label) = match item {
         Nav::Page(p) => (Act::Nav(p), tr(p.title())),
-        Nav::About => (Act::About, tr(T::About)),
     };
     let sel = mark == Mark::Current;
     let hot = f.button(act, r);
@@ -1409,7 +1394,6 @@ fn nav_item(f: &mut Frame, item: Nav, r: Rect, mark: Mark) {
     let icon_y = r.y + (r.h - NAV_ICON) / 2.0;
     match item {
         Nav::Page(p) => icon(f.g, p, r.x + NAV_PAD - 3.0, icon_y, c),
-        Nav::About => info_icon(f.g, r.x + NAV_PAD - 3.0, icon_y, c),
     }
     let text_x = r.x + NAV_PAD + NAV_ICON + 4.0;
     let weight = if sel { Weight::Semibold } else { Weight::Medium };
@@ -1449,6 +1433,13 @@ fn pro_item(f: &mut Frame, label: T, icon: ProIcon, r: Rect) {
 /// Value not known yet (no answer from the mouse, no measurement).
 const UNKNOWN: &str = "—";
 
+/// Whether a stat strip carries the "+" corner marks (Overview only).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Corners {
+    Marked,
+    Plain,
+}
+
 /// One cell of a stat strip: caption, big number with its unit, then a
 /// progress bar and a note.
 struct Stat<'a> {
@@ -1472,14 +1463,16 @@ struct Stat<'a> {
 ///   ≈ 21 days
 ///  +                                              +
 /// ```
-fn stat_strip(f: &mut Frame, r: Rect, cells: &[Stat]) {
+fn stat_strip(f: &mut Frame, r: Rect, cells: &[Stat], corners: Corners) {
     const PAD_X: f32 = 14.0;
     const PAD_Y: f32 = 12.0;
     const VALUE_Y: f32 = 30.0;
     const VALUE_H: f32 = 34.0;
     const BAR_H: f32 = 4.0;
     f.card(r);
-    corner_marks(f.g, r);
+    if corners == Corners::Marked {
+        corner_marks(f.g, r);
+    }
 
     let w = r.w / cells.len().max(1) as f32;
     for (k, c) in cells.iter().enumerate() {
@@ -1581,7 +1574,7 @@ fn overview(f: &mut Frame, v: &View) {
     let today = fill(tr(T::ClicksMoved), &[&v.today_distance]);
     cells.push(Stat { label: tr(T::Today), value: v.today_clicks.clone(), unit: "", note: today, bar: None });
 
-    stat_strip(f, Rect::new(X0, TOP, CW, STRIP_H), &cells);
+    stat_strip(f, Rect::new(X0, TOP, CW, STRIP_H), &cells, Corners::Marked);
     let mut y = TOP + STRIP_H + PANEL_GAP;
 
     // Quick DPI switch: one segment per enabled stage.
@@ -1913,33 +1906,39 @@ fn lighting(f: &mut Frame, v: &View) {
     f.toggle(Some(Act::DarkMoving), c.x, c.y, v.power.dark_while_moving);
 }
 
+/// Statistics: the period, six numbers in two strips, the battery chart.
 fn stats(f: &mut Frame, v: &View) {
-    for (i, name) in PERIODS.iter().enumerate() {
-        let r = Rect::new(X0 + i as f32 * 104.0, TOP, 96.0, 36.0);
-        f.choice(Act::Period(i), r, tr(*name), "", v.period == i);
+    const PERIOD_CELL: f32 = 104.0;
+    const STRIP_H: f32 = 74.0;
+    const STRIP_CELLS: usize = 3;
+    let periods: Vec<Segment> = PERIODS.iter().enumerate().map(|(i, name)| Segment::named(Act::Period(i), tr(*name), v.period == i)).collect();
+    f.segments(Rect::new(X0, TOP, PERIOD_CELL * periods.len() as f32, SEGMENT_H), &periods);
+
+    // "36 m" is a number and its unit; counts have none.
+    let mut y = TOP + SEGMENT_H + PANEL_GAP;
+    for row in v.tiles.chunks(STRIP_CELLS) {
+        let cells: Vec<Stat> = row
+            .iter()
+            .map(|(label, value)| {
+                let (number, unit) = split_unit(value);
+                Stat { label, value: number, unit, note: String::new(), bar: None }
+            })
+            .collect();
+        stat_strip(f, Rect::new(X0, y, CW, STRIP_H), &cells, Corners::Plain);
+        // The strips share the hairline between them.
+        y += STRIP_H - 1.0;
     }
 
-    let w = (CW - 2.0 * GAP) / 3.0;
-    for (i, (label, value)) in v.tiles.iter().enumerate() {
-        let (row, col) = ((i / 3) as f32, (i % 3) as f32);
-        let r = Rect::new(X0 + col * (w + GAP), TOP + 48.0 + row * (78.0 + 12.0), w, 78.0);
-        f.card(r);
-        f.caption(label, r.x + 14.0, r.y + 14.0);
-        f.g.text(value, Rect::new(r.x + 14.0, r.y + 32.0, r.w - 28.0, 34.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
-    }
-
-    let card = Rect::new(X0, TOP + 48.0 + 2.0 * 90.0, CW, PAGE_H - (TOP + 48.0 + 180.0) - 4.0);
-    f.card(card);
     // The chart follows the selected period.
     let title = [T::ChartToday, T::ChartTitle, T::ChartAll][v.period.min(PERIODS.len() - 1)];
-    f.caption(tr(title), card.x + 16.0, card.y + 14.0);
+    let card = Rect::new(X0, y + 1.0 + PANEL_GAP, CW, PAGE_H - (y + 1.0 + PANEL_GAP) - 12.0);
+    let body = f.panel(card, tr(title));
     // History shorter than the period: the axis starts at the first sample.
     if let Some(day) = &v.chart_since {
-        let r = Rect::new(card.x + card.w / 2.0, card.y + 12.0, card.w / 2.0 - 16.0, 20.0);
-        f.g.text(&fill(tr(T::ChartSince), &[day]), r, Size::Caption, Weight::Normal, Align::Right, th().subtle);
+        f.panel_note(card, &fill(tr(T::ChartSince), &[day]));
     }
 
-    let plot = Rect::new(card.x + 16.0, card.y + 40.0, card.w - 64.0, card.h - 72.0);
+    let plot = Rect::new(body.x + PANEL_PAD, body.y + PANEL_PAD + 4.0, body.w - 2.0 * PANEL_PAD - 44.0, body.h - 2.0 * PANEL_PAD - 26.0);
     if v.chart.len() < 2 {
         let msg = tr(T::ChartEmpty);
         f.g.text(msg, plot, Size::Body, Weight::Normal, Align::Center, th().subtle);
@@ -1964,53 +1963,58 @@ fn stats(f: &mut Frame, v: &View) {
     }
 
     let pts: Vec<(f32, f32)> = v.chart.iter().map(|&(t, pct)| (plot.x + t * plot.w, plot.y + plot.h * (1.0 - pct / 100.0))).collect();
-    f.g.polyline(&pts, 2.0, th().accent);
+    f.g.polyline(&pts, 1.5, th().acc_fill);
 }
 
+/// Settings › General: one panel of setting rows (install, start at
+/// sign-in, update check), then where the app lives while its window is
+/// closed and where its data is.
 fn settings(f: &mut Frame, v: &View) {
-    let card = Rect::new(X0, BODY, CW, 104.0);
-    f.card(card);
+    const BTN_H: f32 = 28.0;
+    const BTN_W: f32 = 150.0;
+    const CHECK_H: f32 = 22.0;
+    const ERROR_H: f32 = 22.0;
+    let (x, w) = (X0, CW);
+
     let title = if v.installed { tr(T::Installed) } else { tr(T::NotInstalled) };
-    f.g.text(title, Rect::new(card.x + 18.0, card.y + 16.0, 380.0, 22.0), Size::Large, Weight::Semibold, Align::Left, th().text);
     let desc = if v.installed { v.install_dir.clone() } else { fill(tr(T::InstallDesc), &[&v.install_dir]) };
-    f.g.text(&desc, Rect::new(card.x + 18.0, card.y + 42.0, 390.0, 34.0), Size::Caption, Weight::Normal, Align::Wrap, th().muted);
-    if !v.error.is_empty() {
-        f.g.text(&v.error, Rect::new(card.x + 18.0, card.y + 78.0, 390.0, 20.0), Size::Caption, Weight::Normal, Align::Left, th().bad);
-    }
-    let btn = Rect::new(card.x + card.w - 150.0, card.y + 34.0, 132.0, 36.0);
+    let error_h = if v.error.is_empty() { 0.0 } else { ERROR_H };
+    let install = SettingRow { title, desc: &desc, control_h: BTN_H + error_h };
+    // Autostart only points at the installed copy: disabled, and why.
+    let auto_desc = if v.installed { tr(T::AutostartDesc).to_string() } else { format!("{} {}", tr(T::AutostartDesc), tr(T::AutostartLater)) };
+    let autostart = SettingRow { title: tr(T::Autostart), desc: &auto_desc, control_h: CHECK_H };
+    let update = SettingRow { title: tr(T::UpdateAuto), desc: tr(T::UpdateAutoDesc), control_h: CHECK_H };
+
+    let panel = Rect::new(x, BODY, w, install.height(w) + autostart.height(w) + update.height(w));
+    f.card(panel);
+
+    let mut y = BODY;
+    let c = f.row(x, y, w, &install, RowPlace::First);
+    let btn = Rect::new(c.x, c.y, BTN_W, BTN_H);
     if v.installed {
         f.push_button(Act::Uninstall, btn, tr(T::Uninstall), false);
     } else {
         f.push_button(Act::Install, btn, tr(T::Install), true);
     }
-
-    // Autostart only points at the installed copy: disabled, and why.
-    const LATER_H: f32 = 14.0;
-    let later = if v.installed { 0.0 } else { LATER_H };
-    let card = Rect::new(X0, card.y + card.h + GAP, CW, 76.0 + later);
-    f.card(card);
-    let title = Rect::new(card.x + 18.0, card.y + 16.0, 400.0, 22.0);
-    f.g.text(tr(T::Autostart), title, Size::Large, Weight::Semibold, Align::Left, th().text);
-    let desc = Rect::new(card.x + 18.0, card.y + 40.0, 420.0, 20.0);
-    f.g.text(tr(T::AutostartDesc), desc, Size::Caption, Weight::Normal, Align::Left, th().muted);
-    if !v.installed {
-        let r = Rect::new(desc.x, desc.y + 18.0, desc.w, 18.0);
-        f.g.text(tr(T::AutostartLater), r, Size::Caption, Weight::Normal, Align::Left, th().subtle);
+    if !v.error.is_empty() {
+        f.g.text(&v.error, Rect::new(c.x + BTN_W + 12.0, c.y, c.w - BTN_W - 12.0, BTN_H), Size::Caption, Weight::Normal, Align::Left, th().bad);
     }
-    let act = v.installed.then_some(Act::Autostart);
-    f.toggle(act, card.x + card.w - 58.0, card.y + (card.h - 22.0) / 2.0, v.autostart);
+    y += install.height(w);
 
-    let card = Rect::new(X0, card.y + card.h + GAP, CW, 88.0);
-    update::settings_card(f, &v.update, card);
+    let c = f.row(x, y, w, &autostart, RowPlace::Next);
+    f.toggle(v.installed.then_some(Act::Autostart), c.x, c.y, v.autostart);
+    y += autostart.height(w);
 
-    // Tray behaviour and where data lives (About has its own dialog); the
-    // folder sits right below room for two lines of tray text.
-    let card = Rect::new(X0, card.y + card.h + GAP, CW, 76.0);
-    f.card(card);
-    let r = Rect::new(card.x + 18.0, card.y + 14.0, card.w - 36.0, 34.0);
+    let c = f.row(x, y, w, &update, RowPlace::Next);
+    f.toggle(Some(Act::UpdateAuto), c.x, c.y, v.update.auto);
+
+    // Tray behaviour and where data lives.
+    let note = Rect::new(x, panel.y + panel.h + PANEL_GAP, w, 76.0);
+    f.card(note);
+    let r = Rect::new(note.x + PANEL_PAD, note.y + PANEL_PAD, note.w - 2.0 * PANEL_PAD, 34.0);
     f.g.text(tr(T::AboutTray), r, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
-    let r = Rect::new(card.x + 18.0, card.y + 50.0, card.w - 36.0, 18.0);
-    f.g.text(&fill(tr(T::DataDir), &[&v.data_dir]), r, Size::Caption, Weight::Normal, Align::Left, th().subtle);
+    let r = Rect::new(note.x + PANEL_PAD, note.y + 50.0, note.w - 2.0 * PANEL_PAD, 18.0);
+    f.g.text(&fill(tr(T::DataDir), &[&v.data_dir]), r, Size::Caption, Weight::Normal, Align::Left, th().muted);
 }
 
 fn setup_dialog(f: &mut Frame, v: &View) {
@@ -2058,27 +2062,24 @@ fn crash_dialog(f: &mut Frame) {
     f.push_button(Act::ShowLog, Rect::new(right - COPY_W, by, COPY_W, 36.0), tr(T::ShowLog), true);
 }
 
-/// About: logo, name and version, copyright, license, project links,
-/// update check.
-fn about_dialog(f: &mut Frame, v: &View) {
-    const W: f32 = 480.0;
-    const H: f32 = 376.0;
-    f.g.fill(Rect::new(0.0, 0.0, WIDTH, HEIGHT), 0.0, th().scrim);
-    let d = Rect::new((WIDTH - W) / 2.0, (HEIGHT - H) / 2.0, W, H);
-    f.g.fill(d, RADIUS, th().card_hi);
-    f.g.stroke(d, RADIUS, 1.0, th().border);
+/// Settings › About: logo, name and version, copyright, license,
+/// project links, update check, and the way to report a mouse.
+fn about_page(f: &mut Frame, v: &View) {
+    const H: f32 = 312.0;
+    const LOGO: f32 = 32.0;
+    let panel = Rect::new(X0, BODY, CW, H);
+    f.card(panel);
+    let inner = panel.inset(16.0);
 
-    let inner = d.inset(24.0);
-    f.caption(&tr(T::About).to_uppercase(), inner.x, inner.y);
-    logo(f.g, inner.x, inner.y + 28.0, 32.0);
-    let name = Rect::new(inner.x + 40.0, inner.y + 28.0, inner.w - 40.0, 30.0);
-    f.g.text(crate::APP_NAME, name, Size::Subtitle, Weight::Bold, Align::Left, th().text);
-    let ver = Rect::new(name.x + text_w(crate::APP_NAME, Size::Subtitle) + 10.0, name.y + 2.0, 120.0, 26.0);
-    f.g.text(VERSION, ver, Size::Large, Weight::Normal, Align::Left, th().muted);
-    let tag = Rect::new(name.x, name.y + 30.0, name.w, 18.0);
-    f.g.text(tr(T::AboutTagline), tag, Size::Caption, Weight::Normal, Align::Left, th().muted);
+    logo(f.g, inner.x, inner.y, LOGO);
+    let name = crate::APP_NAME.to_uppercase();
+    let name_x = inner.x + LOGO + 12.0;
+    f.g.text(&name, Rect::new(name_x, inner.y - 2.0, 200.0, 22.0), Size::Title, Weight::Semibold, Align::Left, th().text);
+    let ver_x = name_x + text_w(&name, Size::Title) + 12.0;
+    f.g.text(VERSION, Rect::new(ver_x, inner.y, 120.0, 20.0), Size::Value, Weight::Medium, Align::Left, th().muted);
+    f.g.text(tr(T::AboutTagline), Rect::new(name_x, inner.y + 20.0, inner.w - LOGO - 12.0, 18.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
 
-    let y = inner.y + 98.0;
+    let y = inner.y + 58.0;
     f.g.text(COPYRIGHT, Rect::new(inner.x, y, inner.w, 18.0), Size::Caption, Weight::Normal, Align::Left, th().text);
     let license = fill(tr(T::License), &[LICENSE]);
     f.g.text(&license, Rect::new(inner.x, y + 20.0, inner.w, 18.0), Size::Caption, Weight::Normal, Align::Left, th().text);
@@ -2089,15 +2090,15 @@ fn about_dialog(f: &mut Frame, v: &View) {
     let x = text_link(f, Act::OpenWeb(Web::Site), SITE, inner.x, y + 42.0);
     f.g.text("·", Rect::new(x + 6.0, y + 42.0, 10.0, 18.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
     text_link(f, Act::OpenWeb(Web::Repo), REPO, x + 18.0, y + 42.0);
-    update::about_row(f, &v.update, inner.x, y + 74.0, inner.w);
-    let privacy = Rect::new(inner.x, y + 136.0, inner.w, 34.0);
-    f.g.text(tr(T::UpdatePrivacy), privacy, Size::Caption, Weight::Normal, Align::Wrap, th().subtle);
 
-    let by = d.y + d.h - 24.0 - 36.0;
+    f.g.fill(Rect::new(panel.x + 1.0, y + 72.0, panel.w - 2.0, 1.0), 0.0, th().line);
+    update::about_row(f, &v.update, inner.x, y + 86.0, inner.w);
+    let privacy = Rect::new(inner.x, y + 148.0, inner.w, 34.0);
+    f.g.text(tr(T::UpdatePrivacy), privacy, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
+
     let report = tr(T::HelpAddMouse);
     let report_w = text_w(report, Size::Body) + 32.0;
-    f.push_button(Act::ReportOpen, Rect::new(inner.x, by, report_w, 36.0), report, false);
-    f.push_button(Act::CloseDialog, Rect::new(d.x + d.w - 24.0 - 110.0, by, 110.0, 36.0), tr(T::Close), true);
+    f.push_button(Act::ReportOpen, Rect::new(inner.x, panel.y + panel.h - 16.0 - 28.0, report_w, 28.0), report, false);
 }
 
 /// Accent text that opens `act`, underlined on hover; returns its right edge.
@@ -2114,56 +2115,65 @@ fn text_link(f: &mut Frame, act: Act, label: &str, x: f32, y: f32) -> f32 {
 
 // ---- appearance ------------------------------------------------------------
 
-/// Picker tile showing a theme's own colors: card, three swatches, name.
+/// Picker tile of a theme in its own colors: a small picture of the
+/// window (sidebar, three bars for text, line and accent), the name
+/// below. Selected: an accent border with a second outline inside.
 fn theme_tile(f: &mut Frame, act: Act, r: Rect, t: &Theme, name: &str, selected: bool) {
+    const PREVIEW_H: f32 = 44.0;
+    const SIDE: f32 = 0.24;
     let hot = f.button(act, r);
-    f.g.fill(r, R_CTRL, t.bg);
-    let (bw, bc) = if selected { (2.0, th().accent) } else if hot { (1.5, th().muted) } else { (1.0, th().border) };
-    f.g.stroke(r, R_CTRL, bw, bc);
-
-    for (k, c) in [t.card, t.accent, t.text].into_iter().enumerate() {
-        f.g.dot(r.x + 16.0 + k as f32 * 14.0, r.y + 18.0, 5.5, c);
+    let preview = Rect::new(r.x, r.y, r.w, PREVIEW_H);
+    f.g.fill(preview, 0.0, t.bg);
+    let side_w = (r.w * SIDE).round();
+    f.g.fill(Rect::new(r.x, r.y, side_w, PREVIEW_H), 0.0, t.side);
+    f.g.fill(Rect::new(r.x + side_w, r.y, 1.0, PREVIEW_H), 0.0, t.line);
+    let bx = r.x + side_w + 9.0;
+    let bw = r.w - side_w - 18.0;
+    for (k, (c, part)) in [(t.text, 0.55), (t.line2, 0.85), (t.acc_fill, 0.4)].into_iter().enumerate() {
+        f.g.fill(Rect::new(bx, r.y + 10.0 + k as f32 * 10.0, bw * part, 4.0), 0.0, c);
     }
-    let label = Rect::new(r.x + 10.0, r.y + 30.0, r.w - 20.0, 22.0);
-    f.g.text(name, label, Size::Caption, Weight::Semibold, Align::Left, t.text);
+
+    f.g.fill(Rect::new(r.x, r.y + PREVIEW_H, r.w, r.h - PREVIEW_H), 0.0, th().input);
+    f.g.fill(Rect::new(r.x, r.y + PREVIEW_H, r.w, 1.0), 0.0, th().line);
+    let label = Rect::new(r.x + 8.0, r.y + PREVIEW_H, r.w - 16.0, r.h - PREVIEW_H);
+    let weight = if selected { Weight::Semibold } else { Weight::Normal };
+    f.g.text(name, label, Size::Caption, weight, Align::Left, th().text);
+
+    f.g.stroke(r, 0.0, 1.0, if selected || hot { th().acc } else { th().line2 });
+    if selected {
+        f.g.stroke(r.inset(1.0), 0.0, 1.0, th().acc);
+    }
 }
 
+/// Settings › Appearance: theme tiles, then the languages by their own names.
 fn appearance(f: &mut Frame, v: &View) {
     const COLS: usize = 5;
-    const PAD: f32 = 20.0;
-    const CELL_GAP: f32 = 10.0;
-    let cell_w = (CW - 2.0 * PAD - (COLS - 1) as f32 * CELL_GAP) / COLS as f32;
-    let cell = |i: usize, y0: f32, h: f32| {
-        let (row, col) = ((i / COLS) as f32, (i % COLS) as f32);
-        Rect::new(X0 + PAD + col * (cell_w + CELL_GAP), y0 + row * (h + CELL_GAP), cell_w, h)
-    };
+    const TILE_GAP: f32 = 8.0;
+    const TILE_H: f32 = 70.0;
 
-    // Themes: "system" first, shown with the light/dark pair it switches between.
-    const TILE_H: f32 = 58.0;
-    let rows = (THEMES.len() + 1).div_ceil(COLS) as f32;
-    let card = Rect::new(X0, BODY, CW, 44.0 + rows * (TILE_H + CELL_GAP) + 6.0);
-    f.card(card);
-    f.caption(tr(T::Theme), card.x + PAD, card.y + 16.0);
-
-    let sys = cell(0, card.y + 40.0, TILE_H);
-    theme_tile(f, Act::Theme(0), sys, th(), tr(T::FollowSystem), v.theme_pick == 0);
+    // Themes: "system" first, shown in the colors it resolves to now.
+    let tiles = THEMES.len() + 1;
+    let panel = Rect::new(X0, BODY, CW, PANEL_HEAD + 2.0 * PANEL_PAD + TILE_H);
+    let body = f.panel(panel, tr(T::Theme));
+    let tile_w = (body.w - 2.0 * PANEL_PAD - (tiles - 1) as f32 * TILE_GAP) / tiles as f32;
+    let tile = |i: usize| Rect::new(body.x + PANEL_PAD + i as f32 * (tile_w + TILE_GAP), body.y + PANEL_PAD, tile_w, TILE_H);
+    theme_tile(f, Act::Theme(0), tile(0), th(), tr(T::FollowSystem), v.theme_pick == 0);
     for (i, t) in THEMES.iter().enumerate() {
-        let r = cell(i + 1, card.y + 40.0, TILE_H);
-        theme_tile(f, Act::Theme(i + 1), r, t, t.name, v.theme_pick == i + 1);
+        theme_tile(f, Act::Theme(i + 1), tile(i + 1), t, t.name, v.theme_pick == i + 1);
     }
 
-    // Languages: native names, "system" first.
-    const LANG_H: f32 = 34.0;
-    let y = card.y + card.h + GAP;
-    let rows = (Lang::ALL.len() + 1).div_ceil(COLS) as f32;
-    let card = Rect::new(X0, y, CW, 44.0 + rows * (LANG_H + CELL_GAP) + 6.0);
-    f.card(card);
-    f.caption(tr(T::Language), card.x + PAD, card.y + 16.0);
-
-    f.choice(Act::Lang(0), cell(0, card.y + 40.0, LANG_H), tr(T::FollowSystem), "", v.lang_pick == 0);
-    for (i, l) in Lang::ALL.iter().enumerate() {
-        let r = cell(i + 1, card.y + 40.0, LANG_H);
-        f.choice(Act::Lang(i + 1), r, l.native(), "", v.lang_pick == i + 1);
+    // Languages: native names, "system" first; a grid of segments.
+    let names: Vec<&str> = std::iter::once(tr(T::FollowSystem)).chain(Lang::ALL.iter().map(|l| l.native())).collect();
+    let rows = names.len().div_ceil(COLS);
+    let panel = Rect::new(X0, panel.y + panel.h + PANEL_GAP, CW, PANEL_HEAD + 2.0 * PANEL_PAD + rows as f32 * (SEGMENT_H - 1.0) + 1.0);
+    let body = f.panel(panel, tr(T::Language));
+    let cell_w = (body.w - 2.0 * PANEL_PAD) / COLS as f32;
+    for (line, chunk) in names.chunks(COLS).enumerate() {
+        let first = line * COLS;
+        let items: Vec<Segment> = chunk.iter().enumerate().map(|(k, name)| Segment::named(Act::Lang(first + k), *name, v.lang_pick == first + k)).collect();
+        // A short last line keeps the cell width of the full ones.
+        let r = Rect::new(body.x + PANEL_PAD, body.y + PANEL_PAD + line as f32 * (SEGMENT_H - 1.0), cell_w * items.len() as f32, SEGMENT_H);
+        f.segments(r, &items);
     }
 }
 

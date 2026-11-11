@@ -1462,7 +1462,10 @@ impl Controller {
             Act::Undo => {
                 self.undo();
             }
-            Act::About => self.view.dialog = Some(Dialog::About),
+            Act::About => {
+                self.stop_recording();
+                self.view.page = Page::About;
+            }
             Act::AssignMacro => self.view.dialog = Some(Dialog::AssignMacro),
             Act::StageNudge(by) => {
                 let i = self.view.active;
