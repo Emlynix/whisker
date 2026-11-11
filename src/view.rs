@@ -29,6 +29,7 @@ use crate::protocol::{
 mod art;
 mod buttons;
 mod device;
+mod pro;
 mod report;
 mod update;
 pub use buttons::{DelayMode, Picker, Tab, button_name};
@@ -248,7 +249,7 @@ const LOW: u8 = 20;
 const MID: u8 = 50;
 
 /// Screens. Macros is a tab of Buttons; Appearance, Mouse and About are
-/// tabs of Settings (`General`).
+/// tabs of Settings (`General`); Widget is a tab of Overlay.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Page {
     Overview,
@@ -262,6 +263,10 @@ pub enum Page {
     Appearance,
     Mouse,
     About,
+    /// Pages of the PRO version: mock-ups here (`view::pro`).
+    Profiles,
+    Overlay,
+    Widget,
 }
 
 /// Sidebar order; Settings (`General`) is pinned at the bottom.
@@ -276,6 +281,7 @@ impl Page {
         match self {
             Page::Macros => Page::Buttons,
             Page::Appearance | Page::Mouse | Page::About => Page::General,
+            Page::Widget => Page::Overlay,
             p => p,
         }
     }
@@ -288,6 +294,8 @@ impl Page {
             Page::Lighting => T::PageLighting,
             Page::Buttons => T::PageButtons,
             Page::Stats => T::PageStats,
+            Page::Profiles => T::PageProfiles,
+            Page::Overlay => T::PageOverlay,
             _ => T::PageSettings,
         }
     }
@@ -413,6 +421,8 @@ pub enum Act {
     About,
     /// Closes the About or "assign macro" dialog.
     CloseDialog,
+    /// A control of a PRO mock-up: answers the pointer, does nothing.
+    Mock(u8),
     /// Title bar: its empty part (moves the window) and the window buttons.
     Caption,
     WinMinimize,
@@ -846,14 +856,13 @@ impl Frame<'_> {
     }
 
     /// Underlined text tabs, e.g. "Buttons | Macros"; a tab is a page.
-    fn tabs(&mut self, items: &[(Page, T)], current: Page) {
+    fn tabs(&mut self, items: &[(Page, &str)], current: Page) {
         const GAP: f32 = 20.0;
         let y = TOP;
         self.g.fill(Rect::new(X0, y + TAB_H - 1.0, CW, 1.0), 0.0, th().line);
 
         let mut x = X0;
-        for &(page, key) in items {
-            let label = tr(key);
+        for &(page, label) in items {
             let r = Rect::new(x, y, text_w(label, Size::Body) + 8.0, TAB_H);
             let hot = self.button(Act::Nav(page), r);
             let sel = page == current;
@@ -1032,6 +1041,10 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
     let title = Rect::new(X0, TITLE_Y, CW, 24.0);
     f.g.text(&tr(v.page.title()).to_uppercase(), title, Size::Title, Weight::Semibold, Align::Left, th().text);
     f.g.fill(Rect::new(X0, TITLE_Y + 24.0 + TITLE_RULE.y, TITLE_RULE.w, TITLE_RULE.h), 0.0, th().acc_fill);
+    if matches!(v.page.nav(), Page::Profiles | Page::Overlay) {
+        let title_w = text_w(&tr(v.page.title()).to_uppercase(), Size::Title);
+        pro_tag(&mut f, X0 + title_w + 12.0, TITLE_Y + 4.0);
+    }
     header_status(&mut f, v);
     // Over the title row: never covers controls of the page.
     if let Some(b) = &v.banner {
@@ -1049,12 +1062,15 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
         Page::Polling => performance(&mut f, v),
         Page::Lighting => lighting(&mut f, v),
         Page::Buttons | Page::Macros => {
-            f.tabs(&BUTTON_TABS, v.page);
+            f.tabs(&BUTTON_TABS.map(|(p, t)| (p, tr(t))), v.page);
             if v.page == Page::Buttons { buttons::buttons_page(&mut f, v) } else { buttons::macros_page(&mut f, v) }
         }
         Page::Stats => stats(&mut f, v),
+        Page::Profiles => pro::profiles_page(&mut f),
+        Page::Overlay => pro::overlay_page(&mut f, v),
+        Page::Widget => pro::widget_page(&mut f, v),
         Page::General | Page::Appearance | Page::Mouse | Page::About => {
-            f.tabs(&SETTING_TABS, v.page);
+            f.tabs(&SETTING_TABS.map(|(p, t)| (p, tr(t))), v.page);
             match v.page {
                 Page::General => settings(&mut f, v),
                 Page::Appearance => appearance(&mut f, v),
@@ -1376,8 +1392,8 @@ fn sidebar(f: &mut Frame, v: &View) {
     const HATCH_H: f32 = 8.0;
     const PRO_ROW_H: f32 = 30.0;
     const FOOT_PAD: f32 = 4.0;
-    /// PRO pages: shown, not yet part of this version.
-    const PRO_PAGES: [(T, ProIcon); 2] = [(T::PageProfiles, ProIcon::Profiles), (T::PageOverlay, ProIcon::Overlay)];
+    /// Pages of the PRO version: mock-ups in this one.
+    const PRO_PAGES: [Page; 2] = [Page::Profiles, Page::Overlay];
 
     let side = Rect::new(0.0, TITLE_H, SIDE_W, PAGE_H - TITLE_H);
     f.g.fill(side, 0.0, th().side);
@@ -1396,8 +1412,8 @@ fn sidebar(f: &mut Frame, v: &View) {
     y += HATCH_H;
     pro_tag(f, NAV_PAD, y + (PRO_ROW_H - 16.0) / 2.0);
     y += PRO_ROW_H;
-    for (label, icon) in PRO_PAGES {
-        pro_item(f, label, icon, item(y));
+    for page in PRO_PAGES {
+        nav_item(f, Nav::Page(page), item(y), Mark::of(v.page.nav() == page));
         y += NAV_STEP;
     }
 
@@ -1487,6 +1503,8 @@ fn nav_item(f: &mut Frame, item: Nav, r: Rect, mark: Mark) {
     let c = if sel { th().text } else { th().muted };
     let icon_y = r.y + (r.h - NAV_ICON) / 2.0;
     match item {
+        Nav::Page(Page::Profiles) => pro_icon(f.g, ProIcon::Profiles, r.x + NAV_PAD, r.y + (r.h - 14.0) / 2.0, c),
+        Nav::Page(Page::Overlay) => pro_icon(f.g, ProIcon::Overlay, r.x + NAV_PAD, r.y + (r.h - 14.0) / 2.0, c),
         Nav::Page(p) => icon(f.g, p, r.x + NAV_PAD - 3.0, icon_y, c),
     }
     let text_x = r.x + NAV_PAD + NAV_ICON + 4.0;
@@ -1500,26 +1518,21 @@ enum ProIcon {
     Overlay,
 }
 
-/// A page of the PRO version: listed so people know it exists, but
-/// nothing to open in this one.
-fn pro_item(f: &mut Frame, label: T, icon: ProIcon, r: Rect) {
-    let c = Color(th().muted.0, 0x99);
-    let (x, y) = (r.x + NAV_PAD, r.y + (r.h - 14.0) / 2.0);
+/// Icon of a PRO page, on a 14 px grid.
+fn pro_icon(g: &Gfx, icon: ProIcon, x: f32, y: f32, c: Color) {
     match icon {
         // Two stacked squares.
         ProIcon::Profiles => {
-            f.g.stroke(Rect::new(x + 3.0, y, 11.0, 11.0), 0.0, 1.0, c);
-            f.g.line(x + 0.5, y + 3.0, x + 0.5, y + 13.5, 1.0, c);
-            f.g.line(x + 0.5, y + 13.5, x + 11.0, y + 13.5, 1.0, c);
+            g.stroke(Rect::new(x + 3.0, y, 11.0, 11.0), 0.0, 1.0, c);
+            g.line(x + 0.5, y + 3.0, x + 0.5, y + 13.5, 1.0, c);
+            g.line(x + 0.5, y + 13.5, x + 11.0, y + 13.5, 1.0, c);
         }
         // A screen with a box in its corner.
         ProIcon::Overlay => {
-            f.g.stroke(Rect::new(x, y + 1.0, 14.0, 12.0), 0.0, 1.0, c);
-            f.g.stroke(Rect::new(x + 2.5, y + 3.5, 5.0, 4.0), 0.0, 1.0, c);
+            g.stroke(Rect::new(x, y + 1.0, 14.0, 12.0), 0.0, 1.0, c);
+            g.stroke(Rect::new(x + 2.5, y + 3.5, 5.0, 4.0), 0.0, 1.0, c);
         }
     }
-    let text_x = r.x + NAV_PAD + NAV_ICON + 4.0;
-    f.g.text(tr(label), Rect::new(text_x, r.y, r.w - text_x - 4.0, r.h), Size::Body, Weight::Medium, Align::Left, c);
 }
 
 // ---- pages ---------------------------------------------------------------
@@ -1681,16 +1694,7 @@ fn overview(f: &mut Frame, v: &View) {
         f.segments(Rect::new(body.x + PANEL_PAD, body.y + PANEL_PAD, body.w - 2.0 * PANEL_PAD, SEGMENT_H), &items);
         y += panel.h + PANEL_GAP;
     }
-    pro_panel(f, Rect::new(X0, y, CW, PANEL_HEAD + 42.0), tr(T::PageProfiles));
-}
-
-/// A panel of the PRO version: its title with the tag, and one line
-/// saying where it lives. Nothing to press.
-fn pro_panel(f: &mut Frame, r: Rect, title: &str) {
-    let body = f.panel(r, title);
-    pro_tag(f, r.x + PANEL_PAD + text_w(title, Size::Body) + 10.0, r.y + (PANEL_HEAD - 16.0) / 2.0);
-    let note = Rect::new(body.x + PANEL_PAD, body.y, body.w - 2.0 * PANEL_PAD, body.h);
-    f.g.text(tr(T::ProOnly), note, Size::Caption, Weight::Normal, Align::Left, th().muted);
+    pro::profile_switch(f, Rect::new(X0, y, CW, PANEL_HEAD + SEGMENT_H + 2.0 * PANEL_PAD));
 }
 
 /// "Measured: 498 Hz" once Raw Input has a real measurement.

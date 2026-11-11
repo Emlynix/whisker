@@ -1476,8 +1476,8 @@ impl Controller {
                 }
             }
             Act::CloseDialog => self.view.dialog = None,
-            // Moving the window is the platform's business.
-            Act::Caption => {}
+            // Moving the window is the platform's business; a mock-up has none.
+            Act::Caption | Act::Mock(_) => {}
             Act::WinMinimize => window::minimize(),
             // Closing hides: the app stays in the tray.
             Act::WinClose => window::close(),

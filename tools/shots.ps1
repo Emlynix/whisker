@@ -43,14 +43,14 @@ $scenes = @(
     @{ name = "03-performance"; clicks = @(, @(80, $NAV.performance)) }
     @{ name = "04-lighting"; clicks = @(, @(80, $NAV.lighting)) }
     @{ name = "05-buttons"; clicks = @(, @(80, $NAV.buttons)) }
-    @{ name = "06-buttons-action"; clicks = @(@(80, $NAV.buttons), @(600, 152)) }
-    @{ name = "07-buttons-macros"; clicks = @(@(80, $NAV.buttons), @(307, 99)) }
+    @{ name = "06-buttons-action"; clicks = @(@(80, $NAV.buttons), @(600, 172)) }
+    @{ name = "07-buttons-macros"; clicks = @(@(80, $NAV.buttons), @(295, 107)) }
     @{ name = "08-statistics"; clicks = @(, @(80, $NAV.statistics)) }
-    @{ name = "09-statistics-week"; clicks = @(@(80, $NAV.statistics), @(346, 104)) }
+    @{ name = "09-statistics-week"; clicks = @(@(80, $NAV.statistics), @(346, 105)) }
     @{ name = "10-settings-general"; clicks = @(, @(80, $NAV.settings)) }
-    @{ name = "11-settings-appearance"; clicks = @(@(80, $NAV.settings), @(320, 99)) }
-    @{ name = "12-settings-mouse"; clicks = @(@(80, $NAV.settings), @(405, 99)) }
-    @{ name = "13-about"; clicks = @(@(80, $NAV.settings), @(470, 99)) }
+    @{ name = "11-settings-appearance"; clicks = @(@(80, $NAV.settings), @(310, 107)) }
+    @{ name = "12-settings-mouse"; clicks = @(@(80, $NAV.settings), @(392, 107)) }
+    @{ name = "13-about"; clicks = @(@(80, $NAV.settings), @(460, 107)) }
     @{ name = "14-picker"; open = "detect" }
     @{ name = "15-picker-list"; open = "detect-list" }
     @{ name = "16-picker-none"; open = "detect-none" }
@@ -58,6 +58,9 @@ $scenes = @(
     @{ name = "18-overview-sk"; cfg = @{ lang = "sk" } }
     @{ name = "19-dpi-ja"; cfg = @{ lang = "ja"; theme = "dracula" }; clicks = @(, @(80, $NAV.dpi)) }
     @{ name = "20-overview-m705"; cfg = @{ device = "logitech/auto" } }
+    @{ name = "21-profiles"; clicks = @(, @(80, 294)) }
+    @{ name = "22-overlay"; clicks = @(, @(80, 326)) }
+    @{ name = "23-widget"; cfg = @{ theme = "light" }; clicks = @(@(80, 326), @(390, 107)) }
 )
 
 function New-DemoData([string]$dir, [hashtable]$overrides) {
