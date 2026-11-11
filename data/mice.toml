@@ -1539,4 +1539,4 @@ vid = 0x24AE
 pids = 0x1415 receiver
 support = experimental
 dpi = 50..26000 step 10
-rates = 125, 250, 500, 1000, 2000, 4000
+rates = 125, 250, 500, 1000, 2000, 4000, 8000

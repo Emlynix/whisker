@@ -387,7 +387,7 @@ mod tests {
             serial: "SN-SECRET-42".into(),
             bt_address: bt.map(str::to_string),
         };
-        let mouse = Interface { path: r"\\?\hid#vid_1234&pid_5678&mi_01#7&secret&0&0000#{guid}".into(), info: info.clone(), usage_page: 1, usage: 2, output_len: 0, feature_len: 33 };
+        let mouse = Interface { path: r"\\?\hid#vid_1234&pid_5678&mi_01#7&secret&0&0000#{guid}".into(), info: info.clone(), usage_page: 1, usage: 2, input_len: 8, output_len: 0, feature_len: 33 };
         let mut vendor = mouse.clone();
         (vendor.usage_page, vendor.usage) = (0xFF00, 1);
         let t = if bt.is_some() { Transport::Bluetooth } else { Transport::Usb };
