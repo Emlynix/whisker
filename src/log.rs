@@ -160,6 +160,13 @@ pub fn exit() {
     }
 }
 
+/// The last `n` lines of the log, oldest first: what the app did last.
+pub fn last_lines(n: usize) -> Vec<String> {
+    let text = text();
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(n)..].iter().map(|l| l.to_string()).collect()
+}
+
 /// The log for a bug report: the last run and the current one, so the
 /// user hands out what the notice is about, not weeks of history.
 pub fn text() -> String {

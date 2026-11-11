@@ -377,6 +377,8 @@ fn initial_view(cfg: &AppConfig, ask_setup: bool) -> View {
         data_dir: store::data_dir().map(|d| d.display().to_string()).unwrap_or_default(),
         ask_setup,
         setup_autostart: true,
+        tui: cfg.tui,
+        log_tail: Vec::new(),
         fx_texture: cfg.fx_texture,
         fx_motion: cfg.fx_motion,
         status_pulse: u8::MAX,
@@ -1269,7 +1271,10 @@ fn hook_drag(a: Act, value: usize, phase: Phase) {
 
 fn hook_timer(id: usize) {
     with_ctrl(|c| match id {
-        TIMER_REFRESH => c.refresh_stats(),
+        TIMER_REFRESH => {
+            c.refresh_stats();
+            c.refresh_log_tail();
+        }
         TIMER_SAVE if !c.removed => c.stats.save(),
         TIMER_TOAST => c.hide_toast(),
         TIMER_FADE => c.fade_sync(),
@@ -1361,6 +1366,23 @@ impl Controller {
         let wave = 0.5 + 0.5 * (phase * std::f32::consts::TAU).cos();
         self.view.status_pulse = ((LOW + (1.0 - LOW) * wave) * u8::MAX as f32) as u8;
         window::invalidate();
+    }
+
+    /// Graphical or text mode; remembered like the theme.
+    fn toggle_tui(&mut self) {
+        self.cfg.tui = !self.cfg.tui;
+        self.view.tui = self.cfg.tui;
+        self.view.focus = None;
+        store::save_config(&self.cfg);
+        self.refresh_log_tail();
+    }
+
+    /// The text mode shows what the app did last; nothing to read otherwise.
+    fn refresh_log_tail(&mut self) {
+        const LINES: usize = 5;
+        if self.view.tui && self.view.page == Page::Overview {
+            self.view.log_tail = crate::log::last_lines(LINES);
+        }
     }
 
     fn toggle_fx(&mut self, a: Act) {
@@ -1527,6 +1549,7 @@ impl Controller {
             // Moving the window is the platform's business; a mock-up has none.
             Act::Caption | Act::Mock(_) => {}
             Act::FxTexture | Act::FxMotion => self.toggle_fx(a),
+            Act::ToggleTui => self.toggle_tui(),
             Act::WinMinimize => window::minimize(),
             // Closing hides: the app stays in the tray.
             Act::WinClose => window::close(),
@@ -2712,6 +2735,22 @@ impl Controller {
     }
 
     fn on_key_down(&mut self, vk: u16, m: Mods) -> bool {
+        const VK_F10: u16 = 0x79;
+        const VK_DIGIT_1: u16 = 0x31;
+        const VK_DIGIT_9: u16 = 0x39;
+        let bare = !(m.ctrl || m.alt || m.shift || m.win);
+        // F10 switches between the graphical and the text mode.
+        if vk == VK_F10 && bare && !self.modal() {
+            self.on_act(Act::ToggleTui);
+            return true;
+        }
+        // Text mode: the digits are the menu.
+        if self.view.tui && bare && !self.modal() && (VK_DIGIT_1..=VK_DIGIT_9).contains(&vk) {
+            if let Some(page) = view::page_of_key(&self.view, (vk - VK_DIGIT_1) as usize + 1) {
+                self.on_act(Act::Nav(page));
+                return true;
+            }
+        }
         // The report's pick list and text take the arrow keys.
         if let Some(r) = self.view.report.as_mut() {
             if matches!(vk, VK_UP | VK_DOWN | VK_PRIOR | VK_NEXT) {

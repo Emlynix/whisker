@@ -32,10 +32,12 @@ mod device;
 mod mesh;
 mod pro;
 mod report;
+mod tui;
 mod update;
 pub use buttons::{DelayMode, Picker, Tab, button_name};
 pub use device::{Badge, Banner, BrandRow, Detect, DetectRow, DetectStep, DeviceView, Found, LIST_ROWS, Pane, detect_pane_at};
 pub use report::{Answer, Ask, CheckView, Kind as ReportKind, PickRow, REPORT_ROWS, ReportView, Sending, Step as ReportStep, report_at, report_lines};
+pub use tui::page_of_key;
 pub use update::{Install, Offer, Probe, Step as UpdateStep, UpdateView, note_lines, notes_cut};
 use crate::devices::{Caps, DpiUi};
 use crate::platform::Access;
@@ -422,6 +424,8 @@ pub enum Act {
     About,
     /// Closes the About or "assign macro" dialog.
     CloseDialog,
+    /// Switches between the graphical and the text mode.
+    ToggleTui,
     /// Settings › Appearance › Effects.
     FxTexture,
     FxMotion,
@@ -614,6 +618,10 @@ pub struct View {
     pub fx_motion: bool,
     /// Opacity of the connection mark; it breathes while animations run.
     pub status_pulse: u8,
+    /// Text mode: the window drawn as a terminal screen (`view::tui`).
+    pub tui: bool,
+    /// Last lines of the diagnostic log, for the text mode's Overview.
+    pub log_tail: Vec<String>,
     pub lang_pick: usize,
     pub lighting: Lighting,
     pub dpi_colors: [u32; DPI_COLOR_SLOTS],
@@ -1050,46 +1058,50 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
     }
 
     title_bar(&mut f, v);
-    sidebar(&mut f, v);
-    status_bar(&mut f, v);
-    let title = Rect::new(X0, TITLE_Y, CW, 24.0);
-    f.g.text(&tr(v.page.title()).to_uppercase(), title, Size::Title, Weight::Semibold, Align::Left, th().text);
-    f.g.fill(Rect::new(X0, TITLE_Y + 24.0 + TITLE_RULE.y, TITLE_RULE.w, TITLE_RULE.h), 0.0, th().acc_fill);
-    if matches!(v.page.nav(), Page::Profiles | Page::Overlay) {
-        let title_w = text_w(&tr(v.page.title()).to_uppercase(), Size::Title);
-        pro_tag(&mut f, X0 + title_w + 12.0, TITLE_Y + 4.0);
-    }
-    header_status(&mut f, v);
-    // Over the title row: never covers controls of the page.
-    if let Some(b) = &v.banner {
-        device::banner(&mut f, b);
-    }
-    // No permission: say so where the mouse is expected.
-    let hint_page = matches!(v.page, Page::Overview | Page::Mouse);
-    if v.banner.is_none() && hint_page && v.access == Access::Denied {
-        device::access_banner(&mut f);
-    }
-
-    match v.page {
-        Page::Overview => overview(&mut f, v),
-        Page::Dpi => dpi(&mut f, v),
-        Page::Polling => performance(&mut f, v),
-        Page::Lighting => lighting(&mut f, v),
-        Page::Buttons | Page::Macros => {
-            f.tabs(&BUTTON_TABS.map(|(p, t)| (p, tr(t))), v.page);
-            if v.page == Page::Buttons { buttons::buttons_page(&mut f, v) } else { buttons::macros_page(&mut f, v) }
+    if v.tui {
+        tui::draw(&mut f, v);
+    } else {
+        sidebar(&mut f, v);
+        status_bar(&mut f, v);
+        let title = Rect::new(X0, TITLE_Y, CW, 24.0);
+        f.g.text(&tr(v.page.title()).to_uppercase(), title, Size::Title, Weight::Semibold, Align::Left, th().text);
+        f.g.fill(Rect::new(X0, TITLE_Y + 24.0 + TITLE_RULE.y, TITLE_RULE.w, TITLE_RULE.h), 0.0, th().acc_fill);
+        if matches!(v.page.nav(), Page::Profiles | Page::Overlay) {
+            let title_w = text_w(&tr(v.page.title()).to_uppercase(), Size::Title);
+            pro_tag(&mut f, X0 + title_w + 12.0, TITLE_Y + 4.0);
         }
-        Page::Stats => stats(&mut f, v),
-        Page::Profiles => pro::profiles_page(&mut f),
-        Page::Overlay => pro::overlay_page(&mut f, v),
-        Page::Widget => pro::widget_page(&mut f, v),
-        Page::General | Page::Appearance | Page::Mouse | Page::About => {
-            f.tabs(&SETTING_TABS.map(|(p, t)| (p, tr(t))), v.page);
-            match v.page {
-                Page::General => settings(&mut f, v),
-                Page::Appearance => appearance(&mut f, v),
-                Page::About => about_page(&mut f, v),
-                _ => device::device_page(&mut f, v),
+        header_status(&mut f, v);
+        // Over the title row: never covers controls of the page.
+        if let Some(b) = &v.banner {
+            device::banner(&mut f, b);
+        }
+        // No permission: say so where the mouse is expected.
+        let hint_page = matches!(v.page, Page::Overview | Page::Mouse);
+        if v.banner.is_none() && hint_page && v.access == Access::Denied {
+            device::access_banner(&mut f);
+        }
+
+        match v.page {
+            Page::Overview => overview(&mut f, v),
+            Page::Dpi => dpi(&mut f, v),
+            Page::Polling => performance(&mut f, v),
+            Page::Lighting => lighting(&mut f, v),
+            Page::Buttons | Page::Macros => {
+                f.tabs(&BUTTON_TABS.map(|(p, t)| (p, tr(t))), v.page);
+                if v.page == Page::Buttons { buttons::buttons_page(&mut f, v) } else { buttons::macros_page(&mut f, v) }
+            }
+            Page::Stats => stats(&mut f, v),
+            Page::Profiles => pro::profiles_page(&mut f),
+            Page::Overlay => pro::overlay_page(&mut f, v),
+            Page::Widget => pro::widget_page(&mut f, v),
+            Page::General | Page::Appearance | Page::Mouse | Page::About => {
+                f.tabs(&SETTING_TABS.map(|(p, t)| (p, tr(t))), v.page);
+                match v.page {
+                    Page::General => settings(&mut f, v),
+                    Page::Appearance => appearance(&mut f, v),
+                    Page::About => about_page(&mut f, v),
+                    _ => device::device_page(&mut f, v),
+                }
             }
         }
     }
@@ -1420,6 +1432,21 @@ fn title_bar(f: &mut Frame, v: &View) {
         let label = Rect::new(r.x + DEVICE_PAD, r.y, r.w - 2.0 * DEVICE_PAD, r.h);
         f.g.text(&v.device_name, label, Size::Caption, Weight::Medium, Align::Left, th().text);
     }
+
+    // Text mode switch: ">_ TUI", or "GUI" on the accent while it is on.
+    const MODE_H: f32 = 22.0;
+    let label = if v.tui { "GUI" } else { ">_ TUI" };
+    let mode_w = text_w(label, Size::Key) + 22.0;
+    let mode = Rect::new(WIDTH - WIN_BUTTONS.len() as f32 * WIN_BTN_W - 9.0 - mode_w, (TITLE_H - MODE_H) / 2.0, mode_w, MODE_H);
+    let hot = f.button(Act::ToggleTui, mode);
+    if v.tui {
+        f.g.fill(mode, 0.0, th().acc_fill);
+    } else {
+        f.g.fill(mode, 0.0, if hot { th().sel } else { th().input });
+        f.g.stroke(mode, 0.0, 1.0, th().line2);
+    }
+    let ink = if v.tui { th().acc_on } else if hot { th().text } else { th().muted };
+    f.g.text(label, mode, Size::Key, Weight::Semibold, Align::Center, ink);
 
     for (k, (act, icon)) in WIN_BUTTONS.into_iter().enumerate() {
         let r = Rect::new(WIDTH - (k + 1) as f32 * WIN_BTN_W, 0.0, WIN_BTN_W, TITLE_H - 1.0);
