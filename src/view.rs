@@ -426,6 +426,8 @@ pub enum Act {
     CloseDialog,
     /// Switches between the graphical and the text mode.
     ToggleTui,
+    /// Opens or closes the language list.
+    LangMenu,
     /// Settings › Appearance › Effects.
     FxTexture,
     FxMotion,
@@ -623,6 +625,8 @@ pub struct View {
     /// Last lines of the diagnostic log, for the text mode's Overview.
     pub log_tail: Vec<String>,
     pub lang_pick: usize,
+    /// The language list is open (Settings › General).
+    pub lang_menu: bool,
     pub lighting: Lighting,
     pub dpi_colors: [u32; DPI_COLOR_SLOTS],
     pub debounce: u8,
@@ -2206,8 +2210,9 @@ fn settings(f: &mut Frame, v: &View) {
     let auto_desc = if v.installed { tr(T::AutostartDesc).to_string() } else { format!("{} {}", tr(T::AutostartDesc), tr(T::AutostartLater)) };
     let autostart = SettingRow { title: tr(T::Autostart), desc: &auto_desc, control_h: CHECK_H };
     let update = SettingRow { title: tr(T::UpdateAuto), desc: tr(T::UpdateAutoDesc), control_h: CHECK_H };
+    let language = SettingRow { title: tr(T::Language), desc: "", control_h: BTN_H };
 
-    let panel = Rect::new(x, BODY, w, install.height(w) + autostart.height(w) + update.height(w));
+    let panel = Rect::new(x, BODY, w, install.height(w) + autostart.height(w) + update.height(w) + language.height(w));
     f.card(panel);
 
     let mut y = BODY;
@@ -2229,6 +2234,12 @@ fn settings(f: &mut Frame, v: &View) {
 
     let c = f.row(x, y, w, &update, RowPlace::Next);
     f.toggle(Some(Act::UpdateAuto), c.x, c.y, v.update.auto);
+    y += update.height(w);
+
+    // Language: a select with the languages by their own names.
+    let c = f.row(x, y, w, &language, RowPlace::Next);
+    let select = Rect::new(c.x, c.y, LANG_SELECT_W, BTN_H);
+    select_box(f, Act::LangMenu, select, lang_names()[v.lang_pick.min(Lang::ALL.len())], v.lang_menu);
 
     // Tray behaviour and where data lives.
     let note = Rect::new(x, panel.y + panel.h + PANEL_GAP, w, 76.0);
@@ -2237,6 +2248,61 @@ fn settings(f: &mut Frame, v: &View) {
     f.g.text(tr(T::AboutTray), r, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
     let r = Rect::new(note.x + PANEL_PAD, note.y + 50.0, note.w - 2.0 * PANEL_PAD, 18.0);
     f.g.text(&fill(tr(T::DataDir), &[&v.data_dir]), r, Size::Caption, Weight::Normal, Align::Left, th().muted);
+
+    // Drawn last: the open list lies over the rest of the page.
+    if v.lang_menu {
+        lang_list(f, v, select);
+    }
+}
+
+/// Width of the language select and of a column of its list.
+const LANG_SELECT_W: f32 = 190.0;
+
+/// "System" and the languages by their own names, in the order of `Act::Lang`.
+fn lang_names() -> Vec<&'static str> {
+    std::iter::once(tr(T::FollowSystem)).chain(Lang::ALL.iter().map(|l| l.native())).collect()
+}
+
+/// A select box: the chosen value and a chevron; a press opens its list.
+fn select_box(f: &mut Frame, act: Act, r: Rect, label: &str, open: bool) {
+    let hot = f.button(act, r);
+    f.g.fill(r, 0.0, th().input);
+    f.g.stroke(r, 0.0, 1.0, if hot || open { th().acc } else { th().line2 });
+    f.g.text(label, Rect::new(r.x + 10.0, r.y, r.w - 40.0, r.h), Size::Body, Weight::Normal, Align::Left, th().text);
+    glyph(f.g, Glyph::ChevronDown, r.x + r.w - 15.0, r.y + r.h / 2.0, th().muted);
+}
+
+/// The open language list: two columns over the page, above the select
+/// when there is no room below. A press anywhere else closes it.
+fn lang_list(f: &mut Frame, v: &View, select: Rect) {
+    const ROW: f32 = 26.0;
+    const COLS: usize = 2;
+    let names = lang_names();
+    let rows = names.len().div_ceil(COLS);
+    let (w, h) = (COLS as f32 * LANG_SELECT_W, rows as f32 * ROW + 2.0);
+    let below = select.y + select.h + 2.0;
+    let y = if below + h <= PAGE_H { below } else { select.y - h - 2.0 };
+    let list = Rect::new(select.x, y, w, h);
+
+    // Under the list: the whole window closes it.
+    f.button(Act::LangMenu, Rect::new(0.0, TITLE_H, WIDTH, HEIGHT - TITLE_H));
+    f.g.fill(list, 0.0, th().panel);
+    f.g.stroke(list, 0.0, 1.0, th().line2);
+    for (i, name) in names.iter().enumerate() {
+        // Down the first column, then the second.
+        let (col, row) = (i / rows, i % rows);
+        let r = Rect::new(list.x + 1.0 + col as f32 * LANG_SELECT_W, list.y + 1.0 + row as f32 * ROW, LANG_SELECT_W - 2.0, ROW);
+        let hot = f.button(Act::Lang(i), r);
+        let selected = v.lang_pick == i;
+        if selected {
+            f.g.fill(r, 0.0, th().acc_soft);
+            f.g.fill(Rect::new(r.x, r.y, 2.0, r.h), 0.0, th().acc_fill);
+        } else if hot {
+            f.g.fill(r, 0.0, th().sel);
+        }
+        let weight = if selected { Weight::Semibold } else { Weight::Normal };
+        f.g.text(name, Rect::new(r.x + 12.0, r.y, r.w - 16.0, r.h), Size::Body, weight, Align::Left, th().text);
+    }
 }
 
 fn setup_dialog(f: &mut Frame, v: &View) {
@@ -2287,9 +2353,10 @@ fn crash_dialog(f: &mut Frame) {
 /// Settings › About: logo, name and version, copyright, license,
 /// project links, update check, and the way to report a mouse.
 fn about_page(f: &mut Frame, v: &View) {
-    const H: f32 = 312.0;
+    const H: f32 = 296.0;
     const LOGO: f32 = 32.0;
-    let panel = Rect::new(X0, BODY, CW, H);
+    let top = pro::backup_panel(f, BODY) + PANEL_GAP;
+    let panel = Rect::new(X0, top, CW, H);
     f.card(panel);
     let inner = panel.inset(16.0);
 
@@ -2315,7 +2382,7 @@ fn about_page(f: &mut Frame, v: &View) {
 
     f.g.fill(Rect::new(panel.x + 1.0, y + 72.0, panel.w - 2.0, 1.0), 0.0, th().line);
     update::about_row(f, &v.update, inner.x, y + 86.0, inner.w);
-    let privacy = Rect::new(inner.x, y + 148.0, inner.w, 34.0);
+    let privacy = Rect::new(inner.x, y + 144.0, inner.w, 34.0);
     f.g.text(tr(T::UpdatePrivacy), privacy, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
 
     let report = tr(T::HelpAddMouse);
@@ -2367,9 +2434,8 @@ fn theme_tile(f: &mut Frame, act: Act, r: Rect, t: &Theme, name: &str, selected:
     }
 }
 
-/// Settings › Appearance: theme tiles, then the languages by their own names.
+/// Settings › Appearance: theme tiles and the effects.
 fn appearance(f: &mut Frame, v: &View) {
-    const COLS: usize = 5;
     const TILE_GAP: f32 = 8.0;
     const TILE_H: f32 = 70.0;
 
@@ -2394,20 +2460,6 @@ fn appearance(f: &mut Frame, v: &View) {
         f.toggle(Some(act), body.x + PANEL_PAD, y, on);
         let label_r = Rect::new(body.x + PANEL_PAD + 24.0, y, body.w - 2.0 * PANEL_PAD - 24.0, 22.0);
         f.g.text(tr(label), label_r, Size::Body, Weight::Normal, Align::Left, th().text);
-    }
-
-    // Languages: native names, "system" first; a grid of segments.
-    let names: Vec<&str> = std::iter::once(tr(T::FollowSystem)).chain(Lang::ALL.iter().map(|l| l.native())).collect();
-    let rows = names.len().div_ceil(COLS);
-    let panel = Rect::new(X0, panel.y + panel.h + PANEL_GAP, CW, PANEL_HEAD + 2.0 * PANEL_PAD + rows as f32 * (SEGMENT_H - 1.0) + 1.0);
-    let body = f.panel(panel, tr(T::Language));
-    let cell_w = (body.w - 2.0 * PANEL_PAD) / COLS as f32;
-    for (line, chunk) in names.chunks(COLS).enumerate() {
-        let first = line * COLS;
-        let items: Vec<Segment> = chunk.iter().enumerate().map(|(k, name)| Segment::named(Act::Lang(first + k), *name, v.lang_pick == first + k)).collect();
-        // A short last line keeps the cell width of the full ones.
-        let r = Rect::new(body.x + PANEL_PAD, body.y + PANEL_PAD + line as f32 * (SEGMENT_H - 1.0), cell_w * items.len() as f32, SEGMENT_H);
-        f.segments(r, &items);
     }
 }
 

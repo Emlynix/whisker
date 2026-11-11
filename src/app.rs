@@ -382,6 +382,7 @@ fn initial_view(cfg: &AppConfig, ask_setup: bool) -> View {
         fx_texture: cfg.fx_texture,
         fx_motion: cfg.fx_motion,
         status_pulse: u8::MAX,
+        lang_menu: false,
         theme_pick: match cfg.theme {
             theme::Choice::System => 0,
             theme::Choice::Fixed(i) => i + 1,
@@ -1422,6 +1423,10 @@ impl Controller {
         let before = self.overlay();
         crate::log!("act {a:?}");
         self.act(a);
+        // Any other press closes the open language list.
+        if a != Act::LangMenu {
+            self.view.lang_menu = false;
+        }
         // Page or dialog changed: the focused element is gone.
         if matches!(a, Act::Nav(_)) || self.overlay() != before {
             self.view.focus = None;
@@ -1550,6 +1555,7 @@ impl Controller {
             Act::Caption | Act::Mock(_) => {}
             Act::FxTexture | Act::FxMotion => self.toggle_fx(a),
             Act::ToggleTui => self.toggle_tui(),
+            Act::LangMenu => self.view.lang_menu = !self.view.lang_menu,
             Act::WinMinimize => window::minimize(),
             // Closing hides: the app stays in the tray.
             Act::WinClose => window::close(),
@@ -2794,6 +2800,10 @@ impl Controller {
     fn close_top(&mut self) -> bool {
         if self.view.ask_setup {
             return false;
+        }
+        // An open list closes before anything under it.
+        if std::mem::take(&mut self.view.lang_menu) {
+            return true;
         }
         let checking = self.wizard.as_ref().is_some_and(|w| w.verify.is_some());
         let closed = if checking {

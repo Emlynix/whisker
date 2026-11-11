@@ -256,3 +256,25 @@ pub(super) fn profile_switch(f: &mut Frame, r: Rect) {
     let items: Vec<Segment> = ["Default", "FPS", "Desktop"].into_iter().enumerate().map(|(k, name)| Segment::new(mock(120 + k as u8), name, k == 0)).collect();
     f.segments(Rect::new(body.x + PANEL_PAD, body.y + PANEL_PAD, body.w - 2.0 * PANEL_PAD, SEGMENT_H), &items);
 }
+
+/// Settings › About: "Backup & sync" of the PRO version, as a mock-up.
+/// Returns the y under the panel.
+pub(super) fn backup_panel(f: &mut Frame, y: f32) -> f32 {
+    const TITLE: &str = "Backup & sync";
+    const ROW: f32 = 40.0;
+    let panel = Rect::new(X0, y, CW, PANEL_HEAD + ROW);
+    let body = f.panel(panel, TITLE);
+    super::pro_tag(f, panel.x + PANEL_PAD + text_w(TITLE, Size::Body) + 10.0, panel.y + (PANEL_HEAD - 16.0) / 2.0);
+    f.panel_note(panel, tr(T::ProOnly));
+
+    check(f, 130, body.x + PANEL_PAD, body.y + (ROW - 22.0) / 2.0, 200.0, "Sync automatically", false, true);
+    // Buttons from the right: the file ones, then "Sync now".
+    let mut right = body.x + body.w - PANEL_PAD;
+    for (k, label) in ["Import…", "Export…", "Sync now"].into_iter().enumerate() {
+        let w = text_w(label, Size::Body) + 26.0;
+        right -= w;
+        f.push_button(mock(131 + k as u8), Rect::new(right, body.y + (ROW - BTN_H) / 2.0, w, BTN_H), label, false);
+        right -= 6.0;
+    }
+    panel.y + panel.h
+}

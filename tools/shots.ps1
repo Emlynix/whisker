@@ -61,6 +61,7 @@ $scenes = @(
     @{ name = "21-profiles"; clicks = @(, @(80, 294)) }
     @{ name = "22-overlay"; clicks = @(, @(80, 326)) }
     @{ name = "23-widget"; cfg = @{ theme = "light" }; clicks = @(@(80, 326), @(390, 107)) }
+    @{ name = "24-settings-language"; clicks = @(@(80, $NAV.settings), @(490, 456)) }
     # Text mode: the menu is rows of the grid.
     @{ name = "30-tui-overview"; cfg = @{ tui = "1" } }
     @{ name = "31-tui-dpi"; cfg = @{ tui = "1" ; theme = "light" }; clicks = @(, @(80, 123)) }
