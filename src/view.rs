@@ -2297,7 +2297,7 @@ fn about_page(f: &mut Frame, v: &View) {
 
 /// Accent text that opens `act`, underlined on hover; returns its right edge.
 fn text_link(f: &mut Frame, act: Act, label: &str, x: f32, y: f32) -> f32 {
-    let r = Rect::new(x, y, text_w(label, Size::Caption) + 4.0, 18.0);
+    let r = Rect::new(x, y, text_w(label, Size::Caption) * 1.12 + 4.0, 18.0);
     let hot = f.button(act, r);
     let c = if hot { th().text } else { th().accent };
     f.g.text(label, r, Size::Caption, Weight::Semibold, Align::Left, c);
