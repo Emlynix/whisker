@@ -95,6 +95,42 @@ pub fn open_url(url: &str) -> bool {
     Command::new(XDG_OPEN).arg(url).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().is_ok()
 }
 
+/// X11 property with the process id of a window's program.
+const WM_PID: &str = "_NET_WM_PID";
+const CARDINAL: &str = "CARDINAL";
+/// Bits of one item of a CARDINAL property.
+const PID_FORMAT: i32 = 32;
+
+/// File name of the program whose window is in focus, e.g. "firefox".
+/// Asked through GDK, which knows the active window under X11 only;
+/// `None` under Wayland, or when the window names no process.
+pub fn foreground_app() -> Option<String> {
+    use gtk::glib::translate::{ToGlibPtr, from_glib_full};
+    if !gtk::is_initialized() {
+        return None;
+    }
+    let screen = gtk::gdk::Screen::default()?;
+    // SAFETY: a live screen; the call returns a new reference or NULL.
+    let window: Option<gtk::gdk::Window> = unsafe { from_glib_full(gtk::gdk::ffi::gdk_screen_get_active_window(screen.to_glib_none().0)) };
+    let window = window?;
+    // A format-32 property comes as C longs.
+    let long = size_of::<std::ffi::c_long>();
+    let (_, format, data) = gtk::gdk::property_get(&window, &gtk::gdk::Atom::intern(WM_PID), &gtk::gdk::Atom::intern(CARDINAL), 0, long as u64, 0)?;
+    let pid = std::ffi::c_long::from_ne_bytes(data.get(..long)?.try_into().ok()?);
+    // Any program may set the property: only a plain process id is used.
+    if format != PID_FORMAT || pid <= 0 {
+        return None;
+    }
+    let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?;
+    Some(exe.file_name()?.to_string_lossy().into_owned())
+}
+
+/// Only an X11 session tells which window is in focus.
+pub fn foreground_known() -> bool {
+    // GDK may be asked only once GTK runs (it does not in unit tests).
+    gtk::is_initialized() && gtk::gdk::Display::default().is_some_and(|d| d.type_().name().contains("X11"))
+}
+
 /// Distribution and kernel for bug reports, e.g. `"Ubuntu 26.04 LTS (Linux 6.6.87)"`.
 pub fn os_version() -> String {
     let distro = std::fs::read_to_string(OS_RELEASE).ok().and_then(|t| pretty_name(&t)).unwrap_or_else(|| "Linux".into());

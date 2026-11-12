@@ -12,6 +12,17 @@
 //! list only the chosen mouse's profiles, so `Act::Profile(i)` counts rows
 //! of that list. Export writes the active profile or all of them to a
 //! file the user picks; import adds a file's profiles to the list.
+//!
+//! Automatic switching: a profile may name a program. Once a second the
+//! app in focus is looked up; while it is that program, its profile works.
+//!
+//! ```text
+//! app in focus      working profile
+//! game.exe          the profile with app = game.exe
+//! anything else     the profile the user chose (`Profile::current`),
+//!                   which is never one that works for an app
+//! Whisker itself    no change, so the working profile can be edited
+//! ```
 
 use super::{Controller, Undo};
 use crate::i18n::{T, fill, tr};
@@ -23,6 +34,9 @@ use crate::shell::FileAsk;
 use crate::store::{self, AppConfig, PROFILE_MAX, PROFILE_NAME_MAX, PROFILE_TOTAL, Profile};
 use std::path::PathBuf;
 use crate::view::{Act, Dialog, Page, ProfileRow};
+
+/// Programs remembered for the "choose app" list, the last seen first.
+const RECENT_APPS: usize = 8;
 
 /// Extension of an exported file.
 const PROFILE_EXT: &str = "whisker";
@@ -75,6 +89,7 @@ fn rows(cfg: &AppConfig) -> (Vec<ProfileRow>, usize) {
         let (buttons, macros) = if k == cfg.profile { (&cfg.buttons, &cfg.macros) } else { (&p.buttons, &p.macros) };
         ProfileRow {
             name: label(p),
+            app: p.app.clone(),
             remapped: buttons.iter().zip(DEFAULT_ACTIONS).filter(|(a, d)| *a != d).count(),
             macros: macros.iter().filter(|m| !m.is_empty()).count(),
         }
@@ -116,7 +131,8 @@ fn add(cfg: &mut AppConfig, seed: Seed) -> bool {
         Seed::Blank => Profile { name: free_name(&taken), device: device.clone(), ..Profile::default() },
         Seed::Active => {
             let from = &cfg.profiles[cfg.profile];
-            Profile { name: numbered(&taken, &label(from)), device: device.clone(), ..from.clone() }
+            // The app stays with the original: a program has one profile.
+            Profile { name: numbered(&taken, &label(from)), device: device.clone(), app: String::new(), ..from.clone() }
         }
     };
     cfg.profiles.push(new);
@@ -146,6 +162,63 @@ pub(super) fn restore(cfg: &mut AppConfig, at: usize, profile: Profile) {
     let at = at.min(cfg.profiles.len());
     cfg.profiles.insert(at, profile);
     cfg.set_active(at);
+}
+
+/// The profile automatic switching wants at work while `front` is the
+/// app in focus; `None` to leave things as they are: switching is off,
+/// the app is unknown or Whisker itself (`own`), or the profile works
+/// already.
+fn auto_target(cfg: &AppConfig, front: Option<&str>, own: &str) -> Option<usize> {
+    if !cfg.auto_profiles {
+        return None;
+    }
+    let front = front.filter(|f| !f.eq_ignore_ascii_case(own))?;
+    let device = device_of(cfg);
+    let for_front = cfg.profiles.iter().position(|p| p.device == device && !p.app.is_empty() && p.app.eq_ignore_ascii_case(front));
+    for_front.or_else(|| chosen(cfg)).filter(|&i| i != cfg.profile)
+}
+
+/// The profile that works when no app asks for another: the one the user
+/// chose, unless that works for an app (it would then work in every other
+/// app too); then the mouse's first profile without an app.
+fn chosen(cfg: &AppConfig) -> Option<usize> {
+    let device = device_of(cfg);
+    let mut free = cfg.profiles.iter().enumerate().filter(|(_, p)| p.device == device && p.app.is_empty());
+    free.clone().find(|(_, p)| p.current).or_else(|| free.next()).map(|(i, _)| i)
+}
+
+/// Puts `app` first among the recently seen ones.
+fn note_app(recent: &mut Vec<String>, app: &str) {
+    recent.retain(|a| !a.eq_ignore_ascii_case(app));
+    recent.insert(0, app.to_string());
+    recent.truncate(RECENT_APPS);
+}
+
+/// Gives `app` to the working profile; a program has one profile, so any
+/// other profile of the mouse loses it. An empty name takes it away.
+/// A profile that gets an app stops being the chosen one: the mouse's
+/// first profile without an app is, so other apps do not get this one.
+fn set_app(cfg: &mut AppConfig, app: &str) {
+    let app = store::clean_app(app);
+    let device = device_of(cfg).to_string();
+    for p in cfg.profiles.iter_mut().filter(|p| p.device == device && p.app.eq_ignore_ascii_case(&app)) {
+        p.app.clear();
+    }
+    let Some(p) = cfg.profiles.get_mut(cfg.profile) else {
+        return;
+    };
+    p.app = app;
+    if p.app.is_empty() || !std::mem::take(&mut p.current) {
+        return;
+    }
+    if let Some(next) = cfg.profiles.iter_mut().find(|p| p.device == device && p.app.is_empty()) {
+        next.current = true;
+    }
+}
+
+/// File name of this program, as the app in focus is named.
+fn own_app() -> String {
+    std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())).unwrap_or_default()
 }
 
 /// Which profiles an export takes.
@@ -185,7 +258,7 @@ struct Imported {
 
 /// A profile as a mouse gets it at first: never named, nothing changed.
 fn untouched(p: &Profile) -> bool {
-    p.name.is_empty() && p.buttons == DEFAULT_ACTIONS && p.macros.iter().all(Vec::is_empty)
+    p.name.is_empty() && p.app.is_empty() && p.buttons == DEFAULT_ACTIONS && p.macros.iter().all(Vec::is_empty)
 }
 
 /// Marks profile `i` as its mouse's active one; on the chosen mouse it
@@ -254,6 +327,10 @@ fn merge(cfg: &mut AppConfig, incoming: Vec<Profile>, model: impl Fn(&str) -> Op
             cfg.profiles.len()
         };
 
+        // A program has one profile of a mouse: the one that has it keeps it.
+        if theirs.iter().any(|&i| !fresh && cfg.profiles[i].app.eq_ignore_ascii_case(&p.app)) {
+            p.app.clear();
+        }
         let names: Vec<&str> = theirs.iter().filter(|_| !fresh).map(|&i| cfg.profiles[i].name.as_str()).collect();
         if names.contains(&p.name.as_str()) {
             p.name = numbered(&names, &label(&p));
@@ -322,8 +399,10 @@ impl Controller {
     /// without button settings has no use for profiles: no list.
     pub(super) fn sync_profiles(&mut self) {
         (self.view.profiles, self.view.profile) = rows(&self.cfg);
+        self.view.auto_profiles = self.cfg.auto_profiles && self.view.auto_known;
         let names: Vec<String> = if self.view.caps.buttons { self.view.profiles.iter().map(|r| r.name.clone()).collect() } else { Vec::new() };
         window::set_tray_profiles(&names, self.view.profile);
+        self.sync_app_watch();
     }
 
     pub(super) fn profile_act(&mut self, a: Act) {
@@ -336,8 +415,105 @@ impl Controller {
             Act::ProfileExport => self.export_profiles(Scope::Active),
             Act::ProfileExportAll => self.export_profiles(Scope::All),
             Act::ProfileImport => self.import_profiles(),
+            Act::AutoSwitch => self.toggle_auto(),
+            Act::AppChoose => self.view.dialog = Some(Dialog::AppPick),
+            Act::AppPick(i) => self.pick_app(i),
+            Act::AppClear => self.assign_app(""),
             _ => {}
         }
+    }
+
+    /// The app in focus is looked up while it matters: switching is on, or
+    /// the window is open and may show the "choose app" list. Never in a
+    /// demo, where nothing outside the window counts.
+    fn sync_app_watch(&mut self) {
+        let wanted = self.view.caps.buttons && self.view.auto_known && (self.cfg.auto_profiles || self.visible) && !crate::platform::demo();
+        if wanted == self.app_watch {
+            return;
+        }
+        self.app_watch = wanted;
+        match wanted {
+            true => window::set_timer(super::TIMER_APP, super::APP_MS),
+            false => window::kill_timer(super::TIMER_APP),
+        }
+    }
+
+    /// One look at the app in focus: it joins the recent ones, and its
+    /// profile is put to work once the app is in front for a second look
+    /// (focus that only passes by, as a notification's, switches nothing).
+    /// The mouse gets the layout only if it differs from the one at work;
+    /// the config is not written: the chosen profile has not changed.
+    pub(super) fn watch_app(&mut self) {
+        let front = crate::platform::foreground_app().map(|a| store::clean_app(&a)).filter(|a| !a.is_empty());
+        let settled = front.is_some() && front == self.front;
+        self.front = front.clone();
+        let own = own_app();
+        if let Some(app) = front.as_deref().filter(|a| !a.eq_ignore_ascii_case(&own)) {
+            let before = self.view.apps.first().cloned();
+            note_app(&mut self.view.apps, app);
+            if self.view.dialog == Some(Dialog::AppPick) && before.as_deref() != Some(app) {
+                window::invalidate();
+            }
+        }
+        let Some(i) = auto_target(&self.cfg, front.as_deref(), &own).filter(|_| settled) else {
+            return;
+        };
+        crate::log!("auto profile {i}");
+        self.leave_layout();
+        self.put_to_work(i);
+    }
+
+    /// Puts profile `i` to work without choosing it; the mouse gets its
+    /// layout only if that differs from the one at work.
+    fn put_to_work(&mut self, i: usize) {
+        let before = (self.cfg.buttons, self.cfg.macros.clone());
+        if !self.cfg.work_on(i) {
+            return;
+        }
+        self.view.buttons = self.cfg.buttons;
+        self.view.macros = self.cfg.macros.clone();
+        self.view.notice.clear();
+        if before != (self.cfg.buttons, self.cfg.macros.clone()) {
+            self.send_setting(Command::SetButtons(self.cfg.buttons, self.cfg.macros.clone()));
+        }
+        self.sync_profiles();
+        window::invalidate();
+    }
+
+    /// Before the app ends: a profile put to work for an app gives way to
+    /// the chosen one, so the mouse is not left with the app's layout.
+    pub(super) fn settle_profile(&mut self) {
+        if let Some(i) = chosen(&self.cfg).filter(|&i| i != self.cfg.profile && self.view.caps.buttons && self.cfg.auto_profiles) {
+            self.put_to_work(i);
+        }
+    }
+
+    /// Turns the switching on or off; off, the chosen profile works again.
+    fn toggle_auto(&mut self) {
+        self.cfg.auto_profiles = !self.cfg.auto_profiles && self.view.auto_known;
+        let chosen = own(&self.cfg).into_iter().find(|&i| self.cfg.profiles[i].current).filter(|&i| i != self.cfg.profile);
+        if let Some(i) = chosen.filter(|_| !self.cfg.auto_profiles) {
+            self.leave_layout();
+            self.cfg.set_active(i);
+            self.layout_changed();
+            return;
+        }
+        store::save_config(&self.cfg);
+        self.sync_profiles();
+    }
+
+    /// A program picked from the recent ones for the working profile.
+    fn pick_app(&mut self, i: usize) {
+        self.view.dialog = None;
+        if let Some(app) = self.view.apps.get(i).cloned() {
+            self.assign_app(&app);
+        }
+    }
+
+    fn assign_app(&mut self, app: &str) {
+        set_app(&mut self.cfg, app);
+        store::save_config(&self.cfg);
+        self.sync_profiles();
     }
 
     /// Makes row `row` of the chosen mouse's profiles the active one and
@@ -695,6 +871,77 @@ mod tests {
         assert_eq!(import_note(Imported { here: 2, ..Imported::default() }), "Profiles imported: 2");
         let mixed = Imported { here: 0, elsewhere: 5, same: 1, skipped: 2, layout: false };
         assert_eq!(import_note(mixed), "Profiles imported: 0 · for other mice: 5 · already there: 1 · skipped: 2");
+    }
+
+    #[test]
+    fn the_app_in_focus_picks_the_working_profile() {
+        let mut cfg = on_mouse(LIONEL);
+        assert!(add(&mut cfg, Seed::Blank));
+        assert!(cfg.activate(0));
+        set_app(&mut cfg, "Game.exe");
+        assert!(cfg.activate(1));
+        assert!(cfg.profiles[1].current);
+        const OWN: &str = "whisker.exe";
+
+        // Off: nothing moves by itself.
+        assert_eq!(auto_target(&cfg, Some("game.exe"), OWN), None);
+        cfg.auto_profiles = true;
+        // The game comes to the front: its profile, whatever the letter case.
+        assert_eq!(auto_target(&cfg, Some("game.exe"), OWN), Some(0));
+        assert!(cfg.work_on(0));
+        assert_eq!(auto_target(&cfg, Some("game.exe"), OWN), None, "at work already");
+        // Whisker in front, or an app that cannot be told: as it is, to edit it.
+        assert_eq!(auto_target(&cfg, Some("Whisker.exe"), OWN), None);
+        assert_eq!(auto_target(&cfg, None, OWN), None);
+        // Any other app: back to the profile the user chose.
+        assert_eq!(auto_target(&cfg, Some("explorer.exe"), OWN), Some(1));
+    }
+
+    #[test]
+    fn a_profile_with_an_app_is_never_the_chosen_one() {
+        // The usual way: make a profile, give it the game.
+        let mut cfg = on_mouse(LIONEL);
+        cfg.auto_profiles = true;
+        assert!(add(&mut cfg, Seed::Blank));
+        assert!(cfg.profiles[1].current, "new and chosen, as any profile picked by hand");
+        set_app(&mut cfg, "game.exe");
+        assert_eq!((cfg.profiles[0].current, cfg.profiles[1].current), (true, false));
+        // Leaving the game leads back to the plain profile, not to this one.
+        assert_eq!(auto_target(&cfg, Some("explorer.exe"), "whisker.exe"), Some(0));
+
+        // A copy of it does not take the game along.
+        assert!(add(&mut cfg, Seed::Active));
+        assert_eq!((cfg.profiles[1].app.as_str(), cfg.profiles[2].app.as_str()), ("game.exe", ""));
+
+        // An imported profile for the same game comes without it.
+        let file = vec![Profile { name: "Imp".into(), device: LIONEL.into(), app: "GAME.EXE".into(), ..Profile::default() }];
+        assert_eq!(merge(&mut cfg, file, known).here, 1);
+        assert_eq!(cfg.profiles[3].app, "");
+    }
+
+    #[test]
+    fn a_program_has_one_profile_of_a_mouse() {
+        let mut cfg = on_mouse(LIONEL);
+        assert!(add(&mut cfg, Seed::Blank));
+        set_app(&mut cfg, "game.exe");
+        assert!(cfg.activate(0));
+        set_app(&mut cfg, "GAME.exe");
+        assert_eq!((cfg.profiles[0].app.as_str(), cfg.profiles[1].app.as_str()), ("GAME.exe", ""));
+        set_app(&mut cfg, "");
+        assert_eq!(cfg.profiles[0].app, "");
+    }
+
+    #[test]
+    fn recent_apps_keep_the_last_seen_first() {
+        let mut recent = Vec::new();
+        for app in ["a.exe", "b.exe", "A.EXE"] {
+            note_app(&mut recent, app);
+        }
+        assert_eq!(recent, ["A.EXE", "b.exe"]);
+        for n in 0..RECENT_APPS + 3 {
+            note_app(&mut recent, &format!("{n}.exe"));
+        }
+        assert_eq!(recent.len(), RECENT_APPS);
     }
 
     #[test]

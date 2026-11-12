@@ -417,6 +417,14 @@ pub enum Act {
     ProfileExportAll,
     /// Adds the profiles of a file.
     ProfileImport,
+    /// Profiles follow the app in focus: on or off.
+    AutoSwitch,
+    /// Opens the list of recently seen apps for the active profile.
+    AppChoose,
+    /// Row of that list: the app the active profile works for.
+    AppPick(usize),
+    /// The active profile works for no app.
+    AppClear,
     ChangeMouse,
     /// Slider of a driver-based mouse's single DPI value.
     BasicDpi,
@@ -513,6 +521,8 @@ pub enum Dialog {
     Crashed,
     AssignMacro,
     Update,
+    /// The recently seen apps, to pick one for the active profile.
+    AppPick,
 }
 
 /// Header chip: settings on their way to the mouse.
@@ -548,6 +558,8 @@ impl Focus {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProfileRow {
     pub name: String,
+    /// Program the profile works for while it is in focus; empty for none.
+    pub app: String,
     /// Buttons that differ from the default layout.
     pub remapped: usize,
     /// Recorded macros.
@@ -662,6 +674,12 @@ pub struct View {
     pub profile: usize,
     /// The active profile's new name while it is typed.
     pub rename: Option<String>,
+    /// Profiles follow the app in focus.
+    pub auto_profiles: bool,
+    /// This system tells which app is in focus.
+    pub auto_known: bool,
+    /// Programs seen in focus lately, the last first.
+    pub apps: Vec<String>,
     /// Open "assign action" dialog.
     pub picker: Option<Picker>,
     pub macro_sel: usize,
@@ -1158,6 +1176,10 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
         Some(Dialog::Update) => {
             f.hits.clear();
             update::update_dialog(&mut f, &v.update);
+        }
+        Some(Dialog::AppPick) => {
+            f.hits.clear();
+            profiles::app_dialog(&mut f, v);
         }
         None => {}
     }

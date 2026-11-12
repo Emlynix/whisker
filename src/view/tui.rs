@@ -798,12 +798,14 @@ fn statistics(g: &mut Grid, v: &View) {
     }
 }
 
-/// Profiles: the list, its buttons, and the PRO version's switching by app.
+/// Profiles: the list, its buttons, and the switching by the app in focus.
 fn profiles(g: &mut Grid, v: &View) {
     const NAME_X: i32 = 5;
-    const NAME_W: i32 = 24;
-    const BUTTONS_X: i32 = 32;
-    const MACROS_X: i32 = 46;
+    const NAME_W: i32 = 21;
+    const APP_X: i32 = 27;
+    const APP_W: i32 = 20;
+    const BUTTONS_X: i32 = 48;
+    const MACROS_X: i32 = 58;
     let r = PAGE_X;
     let count = v.profiles.len() as i32;
     let count_text = |n: usize| if n == 0 { "—".to_string() } else { n.to_string() };
@@ -812,6 +814,7 @@ fn profiles(g: &mut Grid, v: &View) {
     let list_h = count + 6;
     g.frame(r, 1, PAGE_W, list_h, tr(T::PageProfiles), Lead::Focused, None);
     g.put_in(r + NAME_X, 2, NAME_W, &tr(T::ColName).to_uppercase(), Style::Dim);
+    g.put_in(r + APP_X, 2, APP_W, &tr(T::ColApp).to_uppercase(), Style::Dim);
     g.put_in(r + BUTTONS_X, 2, MACROS_X - BUTTONS_X - 1, &tr(T::PageButtons).to_uppercase(), Style::Dim);
     g.put_in(r + MACROS_X, 2, 12, &tr(T::PageMacros).to_uppercase(), Style::Dim);
     for (i, p) in v.profiles.iter().enumerate() {
@@ -830,10 +833,11 @@ fn profiles(g: &mut Grid, v: &View) {
         if let Some(typed) = v.rename.as_deref().filter(|_| active) {
             let shown = if typed.is_empty() { format!("▏{}", fit(&p.name, NAME_W - 1)) } else { format!("{}▏", fit(typed, NAME_W - 1)) };
             g.link(r + NAME_X, y, &shown, style, act);
-            g.link(r + BUTTONS_X, y, &fit(tr(T::RenameHint), PAGE_W - BUTTONS_X - 2), style, act);
+            g.link(r + APP_X, y, &fit(tr(T::RenameHint), PAGE_W - APP_X - 2), style, act);
             continue;
         }
         g.link(r + NAME_X, y, &fit(&p.name, NAME_W), style, act);
+        g.link(r + APP_X, y, &if p.app.is_empty() { "—".to_string() } else { fit(&p.app, APP_W) }, style, act);
         g.link(r + BUTTONS_X, y, &count_text(p.remapped), style, act);
         g.link(r + MACROS_X, y, &count_text(p.macros), style, act);
         if active {
@@ -865,13 +869,22 @@ fn profiles(g: &mut Grid, v: &View) {
     g.put(r + PAGE_W - 2 - cells(&mouse), list_h - 1, &mouse, Style::Dim);
 
     let y = 1 + list_h;
-    g.frame(r, y, PAGE_W, 4, "Automatic switching", Lead::Plain, Some("PRO"));
-    let x = g.check(r + 2, y + 1, "Switch by active app", false, Some(Act::Mock(30)));
-    let x = g.put(x + 4, y + 1, "otherwise use", Style::Dim);
-    g.radio(x + 2, y + 1, "Default", true, Act::Mock(31));
-    g.put_in(r + 2, y + 2, PAGE_W - 4, tr(T::ProOnly), Style::Faint);
+    // The switch, the app buttons of the active profile on their own row
+    // (long translations), the note.
+    g.frame(r, y, PAGE_W, 5, tr(T::AutoSwitch), Lead::Plain, None);
+    g.check(r + 2, y + 1, &fit(tr(T::AutoSwitchOn), PAGE_W - 8), v.auto_profiles, v.auto_known.then_some(Act::AutoSwitch));
+    let has_app = v.profiles.get(v.profile).is_some_and(|p| !p.app.is_empty());
+    let mut x = r + 2;
+    for (label, act) in [(T::AppChoose, v.auto_known.then_some(Act::AppChoose)), (T::AppClear, has_app.then_some(Act::AppClear))] {
+        let text = format!("[ {} ]", fit(tr(label), (PAGE_W - 8) / 2 - 4));
+        x = match act {
+            Some(act) => g.link(x, y + 2, &text, Style::Accent, act),
+            None => g.put(x, y + 2, &text, Style::Faint),
+        } + 2;
+    }
+    g.put_in(r + 2, y + 3, PAGE_W - 4, tr(if v.auto_known { T::AutoNote } else { T::AutoUnknown }), Style::Faint);
 
-    g.wrap(r + 1, y + 5, PAGE_W - 2, tr(T::ProfileNote), Style::Faint);
+    g.wrap(r + 1, y + 6, PAGE_W - 2, tr(T::ProfileNote), Style::Faint);
 }
 
 /// The in-game overlay of the PRO version: a mock-up.

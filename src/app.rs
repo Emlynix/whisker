@@ -53,6 +53,9 @@ const TIMER_SCAN: usize = 6;
 const TIMER_UPDATE: usize = 7;
 /// Subtle animations: only while the window is shown.
 const TIMER_FX: usize = 8;
+/// Looks up the app in focus, for profiles that follow it.
+const TIMER_APP: usize = 9;
+const APP_MS: u32 = 1000;
 /// Five frames a second are plenty for a mark that breathes in 2.4 s.
 const FX_TICK_MS: u32 = 200;
 const STATUS_PULSE: Duration = Duration::from_millis(2400);
@@ -170,6 +173,10 @@ struct Controller {
     send_busy: bool,
     /// A file dialog of the profiles is open: no second one over it.
     asking_file: bool,
+    /// The timer that looks up the app in focus runs.
+    app_watch: bool,
+    /// The app in focus at the last look.
+    front: Option<String>,
 }
 
 /// DPI and rate to put back after the checks, re-sent while a reading
@@ -312,6 +319,8 @@ pub fn run(mode: StartMode, last: crate::log::Last) {
         send_seq: 0,
         send_busy: false,
         asking_file: false,
+        app_watch: false,
+        front: None,
     };
     ctrl.stats.set_vendor(stats_vendor(ctrl.cfg.device.as_deref()));
     CTRL.with(|c| *c.borrow_mut() = Some(ctrl));
@@ -349,6 +358,7 @@ pub fn run(mode: StartMode, last: crate::log::Last) {
     // Guided checks may have changed a setting: put it back before exit.
     with_ctrl(|c| {
         c.close_report();
+        c.settle_profile();
         c.mouse.flush(FLUSH_LIMIT);
     });
     with_ctrl(|c| {
@@ -407,6 +417,9 @@ fn initial_view(cfg: &AppConfig, ask_setup: bool) -> View {
         profiles: Vec::new(),
         profile: cfg.profile,
         rename: None,
+        auto_profiles: cfg.auto_profiles,
+        auto_known: platform::foreground_known(),
+        apps: demo_apps(),
         picker: None,
         macro_sel: 0,
         recording: false,
@@ -430,6 +443,14 @@ fn initial_view(cfg: &AppConfig, ask_setup: bool) -> View {
         report: None,
         update: UpdateView::new(cfg.update_check, updater::install_kind()),
     }
+}
+
+/// Debug builds in demo mode: sample programs for the "choose app" list.
+fn demo_apps() -> Vec<String> {
+    if !platform::demo() {
+        return Vec::new();
+    }
+    ["game.exe", "blender.exe", "firefox.exe"].map(String::from).to_vec()
 }
 
 /// Makes the chosen mouse's active profile the working one. Only a model
@@ -1359,6 +1380,7 @@ fn hook_timer(id: usize) {
         TIMER_SCAN => c.scan(),
         TIMER_UPDATE => c.auto_check(),
         TIMER_FX => c.animate(),
+        TIMER_APP => c.watch_app(),
         _ => {}
     });
 }
@@ -1423,6 +1445,7 @@ impl Controller {
 
     fn show(&mut self) {
         self.visible = true;
+        self.sync_profiles();
         window::show();
         self.mouse.send(Command::Visible(true));
         self.mouse.send(Command::RefreshNow);
@@ -1476,6 +1499,7 @@ impl Controller {
     /// Hidden window: slow polling, no UI refresh timer.
     fn on_hidden(&mut self) {
         self.visible = false;
+        self.sync_profiles();
         // Checks change settings: never leave them changed out of sight.
         self.cancel_checks();
         self.on_focus_lost();
@@ -1603,6 +1627,7 @@ impl Controller {
             }
             Act::Profile(_) | Act::ProfileNew | Act::ProfileDuplicate | Act::ProfileRename | Act::ProfileDelete => self.profile_act(a),
             Act::ProfileExport | Act::ProfileExportAll | Act::ProfileImport => self.profile_act(a),
+            Act::AutoSwitch | Act::AppChoose | Act::AppPick(_) | Act::AppClear => self.profile_act(a),
             Act::ChangeMouse => self.open_detect_scan(),
             Act::BannerSwitch => self.switch_to_offer(),
             Act::BannerDismiss => self.ignore_offer(),

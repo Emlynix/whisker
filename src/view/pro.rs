@@ -8,9 +8,8 @@
 //! ```text
 //!  PROFILES                               OVERLAY [PRO]
 //!  (the free page, `view::profiles`)      [x] Show overlay in games
-//!  +- Automatic switching [PRO] -----+    +- preview --------------------+
-//!  | [x] Switch by active app        |    +- Style / Shows / Position ---+
-//!  +---------------------------------+
+//!                                         +- preview --------------------+
+//!                                         +- Style / Shows / Position ---+
 //! ```
 
 use super::{
@@ -29,10 +28,16 @@ fn mock(id: u8) -> Act {
 
 /// A checkbox with its label; pressing it does nothing.
 fn check(f: &mut Frame, id: u8, x: f32, y: f32, w: f32, label: &str, on: bool, live: bool) {
+    check_box(f, mock(id), x, y, w, label, on, live);
+}
+
+/// A checkbox with its label that sends `act`; not `live`, it is dimmed
+/// and takes no press.
+pub(super) fn check_box(f: &mut Frame, act: Act, x: f32, y: f32, w: f32, label: &str, on: bool, live: bool) {
     const DIMMED: u8 = 0x73;
     let alpha = if live { 0xff } else { DIMMED };
     let r = Rect::new(x, y, w, 22.0);
-    let hot = live && f.button(mock(id), r);
+    let hot = live && f.button(act, r);
     let b = Rect::new(x, y + (22.0 - CHECK) / 2.0, CHECK, CHECK);
     if on {
         f.g.fill(b, 0.0, Color(th().acc_fill.0, alpha));
@@ -45,15 +50,6 @@ fn check(f: &mut Frame, id: u8, x: f32, y: f32, w: f32, label: &str, on: bool, l
     f.g.text(label, Rect::new(x + CHECK + 10.0, y, w - CHECK - 10.0, 22.0), Size::Body, Weight::Normal, Align::Left, Color(ink.0, alpha));
 }
 
-/// A select box showing `label`.
-fn select(f: &mut Frame, id: u8, r: Rect, label: &str) {
-    let hot = f.button(mock(id), r);
-    f.g.fill(r, 0.0, th().input);
-    f.g.stroke(r, 0.0, 1.0, if hot { th().acc } else { th().line2 });
-    f.g.text(label, Rect::new(r.x + 10.0, r.y, r.w - 40.0, r.h), Size::Body, Weight::Normal, Align::Left, th().text);
-    glyph(f.g, Glyph::ChevronDown, r.x + r.w - 15.0, r.y + r.h / 2.0, th().muted);
-}
-
 /// A key cap: display only.
 fn key_cap(f: &mut Frame, x: f32, y: f32, label: &str) -> f32 {
     let w = text_w(label, Size::Key) + 12.0;
@@ -63,24 +59,6 @@ fn key_cap(f: &mut Frame, x: f32, y: f32, label: &str) -> f32 {
     f.g.fill(Rect::new(r.x, r.y + r.h - 2.0, r.w, 2.0), 0.0, th().line2);
     f.g.text(label, Rect::new(r.x, r.y - 1.0, r.w, r.h), Size::Key, Weight::Semibold, Align::Center, th().text);
     w
-}
-
-/// Profiles page: switching by the app in focus, of the PRO version.
-pub(super) fn auto_switch(f: &mut Frame, y: f32) {
-    const TITLE: &str = "Automatic switching";
-    const FALLBACK: &str = "Otherwise use";
-    const SELECT_W: f32 = 150.0;
-    let panel = Rect::new(X0, y, CW, PANEL_HEAD + BTN_H + 2.0 * PANEL_PAD);
-    let body = f.panel(panel, TITLE);
-    super::pro_tag(f, panel.x + PANEL_PAD + text_w(TITLE, Size::Body) + 10.0, panel.y + (PANEL_HEAD - 16.0) / 2.0);
-    f.panel_note(panel, tr(T::ProOnly));
-
-    let row_y = body.y + PANEL_PAD;
-    check(f, 30, body.x + PANEL_PAD, row_y + (BTN_H - 22.0) / 2.0, 240.0, "Switch by active app", false, true);
-    let select_x = body.x + body.w - PANEL_PAD - SELECT_W;
-    let label_w = text_w(FALLBACK, Size::Body) + 12.0;
-    f.g.text(FALLBACK, Rect::new(select_x - label_w, row_y, label_w, BTN_H), Size::Body, Weight::Normal, Align::Left, th().muted);
-    select(f, 31, Rect::new(select_x, row_y, SELECT_W, BTN_H), "Default");
 }
 
 /// The in-game overlay.

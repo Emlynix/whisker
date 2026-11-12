@@ -8,25 +8,28 @@
 //!  |▌Default           2          1               Active |
 //!  | FPS               —          —                      |
 //!  | White Shark Lionel      [Export][Export all][Import…] |
-//!  +- Automatic switching [PRO] ------------------------+
+//!  +- Automatic switching ------ Otherwise the profile… -+
+//!  | [x] Switch by active app  [Choose app…][Remove app]  |
 //! ```
 //! The list is the chosen mouse's own: the foot names the mouse and holds
 //! the file buttons. A press on a row makes its profile the active one. "Rename" turns the
 //! active row's name into a field; the controller feeds it the keys.
+//! "Choose app…" opens the programs seen in focus lately: the picked one
+//! puts the active profile to work whenever it is in focus.
 
-use super::{Act, CW, Frame, PANEL_GAP, PANEL_HEAD, PANEL_PAD, Page, ProfileRow, SEGMENT_H, Segment, TOP, View, X0, pro, text_w, th};
+use super::{Act, CW, Frame, HEIGHT, PANEL_GAP, PANEL_HEAD, PANEL_PAD, Page, ProfileRow, R_CTRL, RADIUS, SEGMENT_H, Segment, TOP, View, WIDTH, X0, pro, text_w, th};
 use crate::gfx::{Align, Rect, Size, Weight};
 use crate::i18n::{T, tr};
 use crate::store::PROFILE_MAX;
 
 const BTN_H: f32 = 28.0;
-const TABLE_ROW: f32 = 30.0;
+const TABLE_ROW: f32 = 29.0;
 /// Row under the list: the mouse's name and the file buttons.
-const FOOT_H: f32 = 40.0;
+const FOOT_H: f32 = 36.0;
 /// Two lines of the note under the page title.
 const NOTE_H: f32 = 40.0;
-/// Left edge of the name, buttons and macros columns, as parts of the width.
-const COLS: [f32; 3] = [0.0, 0.50, 0.68];
+/// Left edge of the name, app, buttons and macros columns, as parts of the width.
+const COLS: [f32; 4] = [0.0, 0.36, 0.63, 0.76];
 /// The field a name is typed into.
 const FIELD_W: f32 = 230.0;
 const FIELD_PAD: f32 = 6.0;
@@ -82,7 +85,9 @@ fn row(f: &mut Frame, v: &View, i: usize, p: &ProfileRow, r: Rect, col_x: impl F
     }
     let weight = if active { Weight::Semibold } else { Weight::Normal };
     f.g.text(&p.name, Rect::new(col_x(0), r.y, col_x(1) - col_x(0) - 8.0, r.h), Size::Body, weight, Align::Left, th().text);
-    for (k, n) in [(1, p.remapped), (2, p.macros)] {
+    let app = if p.app.is_empty() { "—" } else { p.app.as_str() };
+    f.g.text(app, Rect::new(col_x(1), r.y, col_x(2) - col_x(1) - 8.0, r.h), Size::Body, Weight::Normal, Align::Left, th().muted);
+    for (k, n) in [(2, p.remapped), (3, p.macros)] {
         f.g.text(&count(n), Rect::new(col_x(k), r.y, 80.0, r.h), Size::Value, Weight::Normal, Align::Left, th().muted);
     }
     if active {
@@ -116,7 +121,7 @@ pub(super) fn page(f: &mut Frame, v: &View) {
     }
 
     let col_x = |k: usize| body.x + PANEL_PAD + (body.w - 2.0 * PANEL_PAD) * COLS[k];
-    for (k, name) in [T::ColName, T::PageButtons, T::PageMacros].into_iter().enumerate() {
+    for (k, name) in [T::ColName, T::ColApp, T::PageButtons, T::PageMacros].into_iter().enumerate() {
         f.g.text(tr(name), Rect::new(col_x(k), body.y, 160.0, TABLE_ROW), Size::Caption, Weight::Normal, Align::Left, th().muted);
     }
     for (i, p) in v.profiles.iter().enumerate() {
@@ -136,7 +141,65 @@ pub(super) fn page(f: &mut Frame, v: &View) {
     }
     let mouse = Rect::new(foot.x + PANEL_PAD, foot.y, right - foot.x - PANEL_PAD, FOOT_H);
     f.g.text(&v.device_name, mouse, Size::Body, Weight::Normal, Align::Left, th().text);
-    pro::auto_switch(f, panel.y + panel.h + PANEL_GAP);
+    auto_switch(f, v, panel.y + panel.h + PANEL_GAP);
+}
+
+/// Profiles that follow the app in focus: the switch, and the app of the
+/// active profile.
+fn auto_switch(f: &mut Frame, v: &View, y: f32) {
+    let panel = Rect::new(X0, y, CW, PANEL_HEAD + BTN_H + 2.0 * PANEL_PAD);
+    let body = f.panel(panel, tr(T::AutoSwitch));
+    f.panel_note(panel, tr(if v.auto_known { T::AutoNote } else { T::AutoUnknown }));
+
+    let row_y = body.y + PANEL_PAD;
+    // From the right: the app of the active profile.
+    let has_app = v.profiles.get(v.profile).is_some_and(|p| !p.app.is_empty());
+    let mut right = body.x + body.w - PANEL_PAD;
+    for (label, act) in [(T::AppClear, has_app.then_some(Act::AppClear)), (T::AppChoose, v.auto_known.then_some(Act::AppChoose))] {
+        let w = text_w(tr(label), Size::Body) + 26.0;
+        right -= w;
+        head_button(f, act, Rect::new(right, row_y, w, BTN_H), tr(label), false);
+        right -= 6.0;
+    }
+    // The switch takes what is left: a long label is cut, never under the buttons.
+    let check_x = body.x + PANEL_PAD;
+    pro::check_box(f, Act::AutoSwitch, check_x, row_y + (BTN_H - 22.0) / 2.0, right - 6.0 - check_x, tr(T::AutoSwitchOn), v.auto_profiles, v.auto_known);
+}
+
+/// "App for profile FPS": the programs seen in focus lately, one row each.
+pub(super) fn app_dialog(f: &mut Frame, v: &View) {
+    const W: f32 = 460.0;
+    const ITEM_H: f32 = 34.0;
+    const HEAD_H: f32 = 60.0;
+    const HINT_H: f32 = 44.0;
+    const FOOT_H: f32 = 68.0;
+    let rows = v.apps.len().max(1) as f32;
+    let h = HEAD_H + ITEM_H * rows + HINT_H + FOOT_H;
+    f.g.fill(Rect::new(0.0, 0.0, WIDTH, HEIGHT), 0.0, th().scrim);
+    let d = Rect::new((WIDTH - W) / 2.0, (HEIGHT - h) / 2.0, W, h);
+    f.g.fill(d, RADIUS, th().card_hi);
+    f.g.stroke(d, RADIUS, 1.0, th().border);
+
+    let name = v.profiles.get(v.profile).map(|p| p.name.as_str()).unwrap_or_default();
+    let title = crate::i18n::fill(tr(T::AppPickTitle), &[name]);
+    f.g.text(&title, Rect::new(d.x + 24.0, d.y + 18.0, d.w - 48.0, 28.0), Size::Subtitle, Weight::Bold, Align::Left, th().text);
+
+    let list_y = d.y + HEAD_H;
+    if v.apps.is_empty() {
+        f.g.text(tr(T::AppPickEmpty), Rect::new(d.x + 28.0, list_y, d.w - 56.0, ITEM_H), Size::Body, Weight::Normal, Align::Left, th().muted);
+    }
+    for (i, app) in v.apps.iter().enumerate() {
+        let r = Rect::new(d.x + 16.0, list_y + i as f32 * ITEM_H, d.w - 32.0, ITEM_H - 4.0);
+        if f.button(Act::AppPick(i), r) {
+            f.g.fill(r, R_CTRL, th().hover);
+        }
+        f.g.text(app, Rect::new(r.x + 12.0, r.y, r.w - 24.0, r.h), Size::Body, Weight::Semibold, Align::Left, th().text);
+    }
+    let hint = Rect::new(d.x + 28.0, list_y + ITEM_H * rows + 6.0, d.w - 56.0, HINT_H - 6.0);
+    f.g.text(tr(T::AppPickHint), hint, Size::Caption, Weight::Normal, Align::Wrap, th().muted);
+
+    let by = d.y + d.h - 24.0 - 36.0;
+    f.push_button(Act::CloseDialog, Rect::new(d.x + d.w - 24.0 - 120.0, by, 120.0, 36.0), tr(T::Cancel), false);
 }
 
 /// Most profiles in one row of the Overview switch: names stay readable.

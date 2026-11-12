@@ -40,6 +40,46 @@ pub fn dark_mode() -> bool {
     !(r == 0 && value == 1)
 }
 
+/// File name of the program whose window is in focus, e.g. "game.exe".
+/// `None` when no window is, or its process may not be asked (a program
+/// run as administrator).
+pub fn foreground_app() -> Option<String> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+    /// Room for the program's full path, in UTF-16 units.
+    const PATH_CHARS: usize = 1024;
+
+    let mut path = [0u16; PATH_CHARS];
+    let mut len = PATH_CHARS as u32;
+    // SAFETY: plain queries; the handle is closed, `path` has `len` units.
+    let found = unsafe {
+        let window = GetForegroundWindow();
+        if window.is_null() {
+            return None;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(window, &mut pid);
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if process.is_null() {
+            return None;
+        }
+        let found = QueryFullProcessImageNameW(process, 0, path.as_mut_ptr(), &mut len);
+        CloseHandle(process);
+        found
+    };
+    if found == 0 {
+        return None;
+    }
+    let full = PathBuf::from(String::from_utf16_lossy(&path[..len as usize]));
+    Some(full.file_name()?.to_string_lossy().into_owned())
+}
+
+/// Windows always tells which window is in focus.
+pub fn foreground_known() -> bool {
+    true
+}
+
 /// Opens an `http(s)` link in the default browser; other schemes are refused
 /// so a crafted string can never start a program.
 pub fn open_url(url: &str) -> bool {

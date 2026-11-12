@@ -136,6 +136,11 @@ pub const AUTOSTART_OFF_ARG: &str = "--autostart-off";
 /// Passed to the updated exe so it waits for the old process to exit.
 pub const UPDATED_ARG: &str = "--updated";
 
+// `foreground_app() -> Option<String>`: file name of the program whose
+// window is in focus, e.g. "game.exe"; `None` when it cannot be told.
+// `foreground_known() -> bool`: whether this system tells it at all
+// (Windows: yes; Linux: under X11, not under Wayland).
+
 /// Debug builds: `WHISKER_DEMO` keeps the app off all hardware and other
 /// instances, so screenshots are repeatable: no HID, no input hook, no
 /// single-instance claim.

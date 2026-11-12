@@ -367,9 +367,21 @@ pub enum T {
     ImportElsewhere,
     ImportSame,
     ImportSkipped,
+    /// Profiles page: profiles that follow the app in focus.
+    AutoSwitch,
+    AutoSwitchOn,
+    AutoNote,
+    AutoUnknown,
+    ColApp,
+    AppChoose,
+    AppClear,
+    /// Dialog: `{}` = name of the profile the app is chosen for.
+    AppPickTitle,
+    AppPickHint,
+    AppPickEmpty,
 }
 
-const COUNT: usize = T::ImportSkipped as usize + 1;
+const COUNT: usize = T::AppPickEmpty as usize + 1;
 type Table = [&'static str; COUNT];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -875,6 +887,16 @@ const EN: Table = [
     "for other mice: {}",
     "already there: {}",
     "skipped: {}",
+    "Automatic switching",
+    "Switch by active app",
+    "Otherwise the profile you chose.",
+    "This system does not tell which app is active.",
+    "App",
+    "Choose app…",
+    "Remove app",
+    "App for profile {}",
+    "Bring the app to the front, then come back here: it shows up in this list.",
+    "No app seen yet.",
 ];
 
 const SK: Table = [
@@ -1206,6 +1228,16 @@ const SK: Table = [
     "pre iné myši: {}",
     "už existujú: {}",
     "vynechané: {}",
+    "Automatické prepínanie",
+    "Prepínať podľa aktívnej aplikácie",
+    "Inak platí profil, ktorý ste zvolili.",
+    "Tento systém neoznamuje, ktorá aplikácia je aktívna.",
+    "Aplikácia",
+    "Vybrať aplikáciu…",
+    "Odobrať aplikáciu",
+    "Aplikácia pre profil {}",
+    "Prepnite sa do aplikácie a vráťte sa sem: objaví sa v tomto zozname.",
+    "Zatiaľ nebola zachytená žiadna aplikácia.",
 ];
 
 const CS: Table = [
@@ -1537,6 +1569,16 @@ const CS: Table = [
     "pro jiné myši: {}",
     "už existují: {}",
     "vynechané: {}",
+    "Automatické přepínání",
+    "Přepínat podle aktivní aplikace",
+    "Jinak platí profil, který jste zvolili.",
+    "Tento systém nesděluje, která aplikace je aktivní.",
+    "Aplikace",
+    "Vybrat aplikaci…",
+    "Odebrat aplikaci",
+    "Aplikace pro profil {}",
+    "Přepněte se do aplikace a vraťte se sem: objeví se v tomto seznamu.",
+    "Zatím nebyla zachycena žádná aplikace.",
 ];
 
 const PL: Table = [
@@ -1868,6 +1910,16 @@ const PL: Table = [
     "dla innych myszy: {}",
     "już istnieją: {}",
     "pominięte: {}",
+    "Automatyczne przełączanie",
+    "Przełączaj według aktywnej aplikacji",
+    "W innym razie działa wybrany profil.",
+    "Ten system nie podaje, która aplikacja jest aktywna.",
+    "Aplikacja",
+    "Wybierz aplikację…",
+    "Usuń aplikację",
+    "Aplikacja dla profilu {}",
+    "Przejdź do aplikacji i wróć tutaj: pojawi się na tej liście.",
+    "Nie zauważono jeszcze żadnej aplikacji.",
 ];
 
 const DE: Table = [
@@ -2199,6 +2251,16 @@ const DE: Table = [
     "für andere Mäuse: {}",
     "bereits vorhanden: {}",
     "übersprungen: {}",
+    "Automatisches Umschalten",
+    "Nach aktiver App umschalten",
+    "Sonst gilt das gewählte Profil.",
+    "Dieses System meldet nicht, welche App aktiv ist.",
+    "App",
+    "App wählen…",
+    "App entfernen",
+    "App für Profil {}",
+    "Wechseln Sie zur App und kommen Sie zurück: Sie erscheint in dieser Liste.",
+    "Noch keine App erkannt.",
 ];
 
 const FR: Table = [
@@ -2530,6 +2592,16 @@ const FR: Table = [
     "pour d’autres souris : {}",
     "déjà présents : {}",
     "ignorés : {}",
+    "Changement automatique",
+    "Changer selon l’application active",
+    "Sinon, le profil choisi s’applique.",
+    "Ce système n’indique pas quelle application est active.",
+    "Application",
+    "Choisir l’application…",
+    "Retirer l’application",
+    "Application pour le profil {}",
+    "Passez à l’application puis revenez ici : elle apparaît dans cette liste.",
+    "Aucune application détectée pour l’instant.",
 ];
 
 const ES: Table = [
@@ -2861,6 +2933,16 @@ const ES: Table = [
     "para otros ratones: {}",
     "ya existentes: {}",
     "omitidos: {}",
+    "Cambio automático",
+    "Cambiar según la aplicación activa",
+    "Si no, se usa el perfil elegido.",
+    "Este sistema no indica qué aplicación está activa.",
+    "Aplicación",
+    "Elegir aplicación…",
+    "Quitar aplicación",
+    "Aplicación para el perfil {}",
+    "Cambie a la aplicación y vuelva aquí: aparecerá en esta lista.",
+    "Aún no se ha detectado ninguna aplicación.",
 ];
 
 const PT: Table = [
@@ -3192,6 +3274,16 @@ const PT: Table = [
     "para outros ratos: {}",
     "já existentes: {}",
     "ignorados: {}",
+    "Mudança automática",
+    "Mudar conforme a aplicação ativa",
+    "Caso contrário, vale o perfil escolhido.",
+    "Este sistema não indica qual aplicação está ativa.",
+    "Aplicação",
+    "Escolher aplicação…",
+    "Remover aplicação",
+    "Aplicação para o perfil {}",
+    "Mude para a aplicação e volte aqui: ela aparece nesta lista.",
+    "Ainda não foi detetada nenhuma aplicação.",
 ];
 
 const IT: Table = [
@@ -3523,6 +3615,16 @@ const IT: Table = [
     "per altri mouse: {}",
     "già presenti: {}",
     "saltati: {}",
+    "Cambio automatico",
+    "Cambia in base all’app attiva",
+    "Altrimenti vale il profilo scelto.",
+    "Questo sistema non indica quale app è attiva.",
+    "App",
+    "Scegli app…",
+    "Rimuovi app",
+    "App per il profilo {}",
+    "Passa all’app e torna qui: comparirà in questo elenco.",
+    "Nessuna app rilevata finora.",
 ];
 
 const JA: Table = [
@@ -3854,6 +3956,16 @@ const JA: Table = [
     "他のマウス用: {}",
     "既にあります: {}",
     "スキップ: {}",
+    "自動切り替え",
+    "アクティブなアプリで切り替える",
+    "それ以外は選択したプロファイルを使います。",
+    "このシステムではアクティブなアプリを取得できません。",
+    "アプリ",
+    "アプリを選択…",
+    "アプリを解除",
+    "プロファイル {} のアプリ",
+    "アプリに切り替えてからここに戻ると、この一覧に表示されます。",
+    "まだアプリが検出されていません。",
 ];
 
 const KO: Table = [
@@ -4185,6 +4297,16 @@ const KO: Table = [
     "다른 마우스용: {}",
     "이미 있음: {}",
     "건너뜀: {}",
+    "자동 전환",
+    "활성 앱에 따라 전환",
+    "그 외에는 선택한 프로필을 사용합니다.",
+    "이 시스템은 활성 앱을 알려주지 않습니다.",
+    "앱",
+    "앱 선택…",
+    "앱 해제",
+    "프로필 {}의 앱",
+    "앱으로 전환했다가 여기로 돌아오면 이 목록에 나타납니다.",
+    "아직 감지된 앱이 없습니다.",
 ];
 
 const ZH_HANS: Table = [
@@ -4516,6 +4638,16 @@ const ZH_HANS: Table = [
     "其他鼠标：{}",
     "已存在：{}",
     "已跳过：{}",
+    "自动切换",
+    "按活动应用切换",
+    "否则使用您选择的配置文件。",
+    "此系统无法得知哪个应用处于活动状态。",
+    "应用",
+    "选择应用…",
+    "移除应用",
+    "配置文件 {} 的应用",
+    "切换到该应用后再回到这里，它会出现在此列表中。",
+    "尚未检测到任何应用。",
 ];
 
 const ZH_HANT: Table = [
@@ -4847,6 +4979,16 @@ const ZH_HANT: Table = [
     "其他滑鼠：{}",
     "已存在：{}",
     "已略過：{}",
+    "自動切換",
+    "依使用中的應用程式切換",
+    "否則使用您選擇的設定檔。",
+    "此系統無法得知哪個應用程式正在使用。",
+    "應用程式",
+    "選擇應用程式…",
+    "移除應用程式",
+    "設定檔 {} 的應用程式",
+    "切換到該應用程式後再回到這裡，它會出現在此清單中。",
+    "尚未偵測到任何應用程式。",
 ];
 
 #[cfg(test)]

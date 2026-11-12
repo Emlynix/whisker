@@ -16,7 +16,8 @@
 //! profile=1                 index of the active profile
 //! profile0.name=Desktop     every profile: name, its mouse, buttons, macros
 //! profile0.device=whiteshark/lionel
-//! profile0.current=1        the active one among its mouse's profiles
+//! profile0.current=1        the one the user chose among its mouse's profiles
+//! profile0.app=game.exe     works while this app is in focus (`auto_profiles=1`)
 //! profile0.buttons=100100,…
 //! profile0.macro2=…
 //! known_mice=046D:C52B|logitech/m705,…    mice the user has chosen
@@ -76,15 +77,19 @@ pub struct Profile {
     /// Model id of the mouse it was made for; empty until a mouse with
     /// button settings takes it over (profiles of an older config).
     pub device: String,
-    /// The active one among its mouse's profiles.
+    /// The one the user chose among its mouse's profiles. Automatic
+    /// switching puts another to work for a while and comes back to it.
     pub current: bool,
+    /// File name of the program this profile works for while it is in
+    /// focus, e.g. "game.exe"; empty for none.
+    pub app: String,
     pub buttons: [Action; BUTTON_COUNT],
     pub macros: Vec<Vec<MacroEvent>>,
 }
 
 impl Default for Profile {
     fn default() -> Self {
-        Self { name: String::new(), device: String::new(), current: false, buttons: DEFAULT_ACTIONS, macros: vec![Vec::new(); MACRO_COUNT] }
+        Self { name: String::new(), device: String::new(), current: false, app: String::new(), buttons: DEFAULT_ACTIONS, macros: vec![Vec::new(); MACRO_COUNT] }
     }
 }
 
@@ -112,6 +117,8 @@ pub struct AppConfig {
     pub profiles: Vec<Profile>,
     /// Index of the active profile.
     pub profile: usize,
+    /// Profiles follow the app in focus (`Profile::app`).
+    pub auto_profiles: bool,
     /// Mice chosen so far, the last used first: one of them is switched to
     /// when it is connected.
     pub known_mice: Vec<KnownMouse>,
@@ -160,6 +167,7 @@ impl Default for AppConfig {
             macros: vec![Vec::new(); MACRO_COUNT],
             profiles: vec![Profile::default()],
             profile: 0,
+            auto_profiles: false,
             known_mice: Vec::new(),
             device: None,
             device_usb: None,
@@ -198,7 +206,7 @@ impl AppConfig {
     }
 
     /// Loads profile `i` as the working one, without keeping the layout
-    /// worked on, and marks it as its mouse's active profile.
+    /// worked on, and marks it as the one chosen for its mouse.
     pub fn set_active(&mut self, i: usize) {
         let Some(device) = self.profiles.get(i).map(|p| p.device.clone()) else {
             return;
@@ -208,6 +216,18 @@ impl AppConfig {
         }
         self.profile = i;
         (self.buttons, self.macros) = (self.profiles[i].buttons, self.profiles[i].macros.clone());
+    }
+
+    /// Puts profile `i` to work for the app in focus: the profile the
+    /// user chose keeps its mark. `false` if there is none.
+    pub fn work_on(&mut self, i: usize) -> bool {
+        if i >= self.profiles.len() {
+            return false;
+        }
+        self.keep_active();
+        self.profile = i;
+        (self.buttons, self.macros) = (self.profiles[i].buttons, self.profiles[i].macros.clone());
+        true
     }
 
     /// The mouse `device` (a model with button settings) is the chosen one:
@@ -250,6 +270,19 @@ impl AppConfig {
 pub fn clean_name(name: &str) -> String {
     let allowed = |c: &char| c.is_alphanumeric() || matches!(c, ' ' | '-' | '.');
     let kept: String = name.chars().filter(allowed).take(PROFILE_NAME_MAX).collect();
+    kept.trim().to_string()
+}
+
+/// Characters of a program's file name.
+const APP_NAME_MAX: usize = 64;
+
+/// A program's file name as stored and compared, e.g. "game.exe": one
+/// line, nothing that would break a config line, and no invisible or
+/// direction-changing characters that would show another name.
+pub fn clean_app(name: &str) -> String {
+    let hidden = |c: char| matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}');
+    let allowed = |c: &char| !c.is_control() && !hidden(*c) && !matches!(c, '=' | '/' | '\\');
+    let kept: String = name.chars().filter(allowed).take(APP_NAME_MAX).collect();
     kept.trim().to_string()
 }
 
@@ -440,6 +473,7 @@ fn parse_profile(key: &str, v: &str, profiles: &mut Vec<Profile>) {
         "name" => p.name = clean_name(v),
         "device" => p.device = clean_device(v),
         "current" => p.current = v == "1",
+        "app" => p.app = clean_app(v),
         "buttons" => parse_buttons(v, &mut p.buttons),
         _ => {
             if let Some(i) = index_of(field, "macro", MACRO_COUNT) {
@@ -476,7 +510,7 @@ fn macro_lines(prefix: &str, macros: &[Vec<MacroEvent>]) -> String {
 /// The lines of profile `k`, with the given layout and macros.
 fn profile_lines(k: usize, p: &Profile, buttons: &[Action; BUTTON_COUNT], macros: &[Vec<MacroEvent>]) -> String {
     let head = format!("profile{k}.");
-    let mut text = format!("{head}name={}\n{head}device={}\n{head}current={}\n{head}buttons={}\n", p.name, p.device, p.current as u8, button_text(buttons));
+    let mut text = format!("{head}name={}\n{head}device={}\n{head}current={}\n{head}app={}\n{head}buttons={}\n", p.name, p.device, p.current as u8, p.app, button_text(buttons));
     text += &macro_lines(&head, macros);
     text
 }
@@ -543,6 +577,7 @@ fn parse_config(text: &str, mut c: AppConfig) -> AppConfig {
             ("fx_texture", _) => c.fx_texture = v != "0",
             ("fx_motion", _) => c.fx_motion = v != "0",
             ("tui", _) => c.tui = v == "1",
+            ("auto_profiles", _) => c.auto_profiles = v == "1",
             ("update_check", _) => c.update_check = v != "0",
             ("update_checked", Some(_)) => c.update_checked = v.parse().unwrap_or(0),
             ("update_skip", _) => c.update_skip = Some(v.to_string()).filter(|v| !v.is_empty()),
@@ -584,6 +619,7 @@ fn format_config(c: &AppConfig) -> String {
         format!("fx_texture={}", c.fx_texture as u8),
         format!("fx_motion={}", c.fx_motion as u8),
         format!("tui={}", c.tui as u8),
+        format!("auto_profiles={}", c.auto_profiles as u8),
         format!("update_check={}", c.update_check as u8),
         format!("update_checked={}", c.update_checked),
         format!("update_skip={}", c.update_skip.as_deref().unwrap_or("")),
@@ -674,6 +710,7 @@ fn sanitize(mut c: AppConfig) -> AppConfig {
 fn safe_profile(mut p: Profile) -> Profile {
     p.name = clean_name(&p.name);
     p.device = clean_device(&p.device);
+    p.app = clean_app(&p.app);
     (p.buttons, p.macros) = safe_layout(p.buttons, std::mem::take(&mut p.macros));
     p
 }
@@ -962,7 +999,7 @@ mod tests {
     #[test]
     fn export_and_import_roundtrip() {
         use crate::protocol::{Edge, Ev};
-        let mut fps = Profile { name: "FPS".into(), device: LIONEL.into(), current: true, ..Profile::default() };
+        let mut fps = Profile { name: "FPS".into(), device: LIONEL.into(), current: true, app: "Game 2 (x64).exe".into(), ..Profile::default() };
         fps.buttons[5] = Action::Key { mods: 0x01, usage: 0x06 };
         fps.macros[1] = vec![MacroEvent { ev: Ev::Key(0x04, Edge::Down), delay_ms: 30 }, MacroEvent { ev: Ev::Key(0x04, Edge::Up), delay_ms: 30 }];
         let desk = Profile { name: "Desktop".into(), device: OTHER.into(), ..Profile::default() };
@@ -985,6 +1022,24 @@ mod tests {
         assert_eq!(got.len(), 2, "only the profiles the file sets");
         assert_eq!((got[0].name.as_str(), got[0].device.as_str()), ("AB", "/xy"));
         assert!(got[0].buttons.contains(&Action::Mouse(crate::protocol::MB_LEFT)));
+    }
+
+    #[test]
+    fn an_app_puts_a_profile_to_work_without_choosing_it() {
+        let mut c = AppConfig::default();
+        c.profiles.push(Profile { name: "FPS".into(), app: "game.exe".into(), ..Profile::default() });
+        c.use_device(LIONEL);
+        c.auto_profiles = true;
+        assert!(c.work_on(1));
+        assert_eq!((c.profile, c.profiles[0].current, c.profiles[1].current), (1, true, false));
+
+        // Saved while the game runs: the next start is on the chosen profile.
+        let mut back = sanitize(parse_config(&format_config(&c), AppConfig::default()));
+        assert!(back.auto_profiles);
+        assert_eq!(back.profiles[1].app, "game.exe");
+        back.use_device(LIONEL);
+        assert_eq!(back.profile, 0);
+        assert_eq!(clean_app(" a=b/c\\d\n\u{202E}.exe "), "abcd.exe");
     }
 
     #[test]

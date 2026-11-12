@@ -60,6 +60,9 @@ $scenes = @(
     @{ name = "20-overview-m705"; cfg = @{ device = "logitech/auto" } }
     @{ name = "21-profiles"; clicks = @(, @(80, $NAV.profiles)) }
     @{ name = "23-profiles-rename"; clicks = @(@(80, $NAV.profiles), @(659, 148)) }
+    @{ name = "25-profiles-app"; clicks = @(@(80, $NAV.profiles), @(607, 400)) }
+    @{ name = "26-profiles-sk"; cfg = @{ lang = "sk" }; clicks = @(, @(80, $NAV.profiles)) }
+    @{ name = "40-tui-profiles-sk"; cfg = @{ tui = "1"; lang = "sk" }; clicks = @(, @(80, 195)) }
     @{ name = "22-overlay"; clicks = @(, @(80, 326)) }
     @{ name = "24-settings-language"; clicks = @(@(80, $NAV.settings), @(490, 456)) }
     # Text mode: the menu is rows of the grid.
@@ -88,8 +91,8 @@ function New-DemoData([string]$dir, [hashtable]$overrides) {
         theme = "tokyo"; lang = "en"; ignored_mice = ""
         update_check = "0"; update_checked = "$Now"; update_skip = ""; update_notified = ""
         # Three profiles, the second active; the third swaps Back and Forward.
-        profile = "1"; "profile1.name" = "FPS"; "profile2.name" = "Desktop"
-        "profile2.buttons" = "100100,100200,100400,101000,100800,400100"
+        profile = "1"; "profile0.device" = "whiteshark/lionel"; "profile1.name" = "FPS"; "profile2.name" = "Desktop"
+        "profile2.buttons" = "100100,100200,100400,101000,100800,400100"; "profile1.app" = "game.exe"; auto_profiles = "1"
     }
     foreach ($k in $overrides.Keys) { $cfg[$k] = $overrides[$k] }
     Set-Content "$dir/config.txt" ($cfg.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -Encoding utf8NoBOM
