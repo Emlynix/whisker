@@ -10,6 +10,7 @@
 use super::{Ability, DpiRange, Ident, Pick, Reading, percent_from_mv};
 use crate::hid_link::raw::Channel;
 use std::cell::Cell;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -86,8 +87,9 @@ pub fn parse_reply(r: &[u8], device: u8, feature: u8, tag: u8) -> Option<Result<
     if r[2] == ERROR_IDX && r[3] == feature && r[4] == tag {
         return Some(Err(r.get(5).copied().unwrap_or(0)));
     }
-    if r[2] == HIDPP10_ERROR {
-        return Some(Err(r.get(4).copied().unwrap_or(0)));
+    // HID++ 1.0 error: `.. | 8F | feature | tag | code`.
+    if r[2] == HIDPP10_ERROR && r[3] == feature && r[4] == tag {
+        return Some(Err(r.get(5).copied().unwrap_or(0)));
     }
     (r[2] == feature && r[3] == tag).then(|| Ok(r[4..].to_vec()))
 }
@@ -150,6 +152,23 @@ impl Wire for Channel {
     }
 }
 
+/// A `getProtocolVersion` reply `[major, minor, echo]` of a HID++ 2.0
+/// device to our own ping: the echo tells it from another program's.
+fn ping_ok(p: &[u8]) -> bool {
+    matches!(p, [major, _, PING_DATA, ..] if *major >= 2)
+}
+
+/// What a device is, from its answer about its type: `None` = no clean
+/// answer, `Some(None)` = it has no name feature.
+/// A device that did not answer may be a keyboard: it is no fallback.
+fn fit_of(kind: Option<Option<u8>>) -> Option<Fit> {
+    kind.map(fit)
+}
+
+/// The software id the next opened device starts after: ids go on across
+/// reconnects, so a reply held since the last session matches nothing.
+static LAST_SW: AtomicU8 = AtomicU8::new(SW_LAST);
+
 pub struct Hidpp<W: Wire = Channel> {
     ch: W,
     device: u8,
@@ -187,12 +206,12 @@ impl Hidpp {
                 if !d.ping() {
                     continue;
                 }
-                match fit(d.kind()) {
-                    Fit::Pointer => return Some((d, iface.info.clone())),
-                    Fit::Unknown => {
+                match fit_of(d.kind()) {
+                    Some(Fit::Pointer) => return Some((d, iface.info.clone())),
+                    Some(Fit::Unknown) => {
                         fallback.get_or_insert((d, iface.info.clone()));
                     }
-                    Fit::Other => {}
+                    Some(Fit::Other) | None => {}
                 }
             }
         }
@@ -202,13 +221,18 @@ impl Hidpp {
 
 impl<W: Wire> Hidpp<W> {
     fn on(ch: W, device: u8) -> Self {
-        Hidpp { ch, device, features: HashMap::new(), sw: Cell::new(SW_LAST), late: Cell::new(false) }
+        Hidpp { ch, device, features: HashMap::new(), sw: Cell::new(LAST_SW.load(Ordering::Relaxed)), late: Cell::new(false) }
     }
 
-    /// DeviceName.getDeviceType: 0 keyboard … 3 mouse.
-    fn kind(&mut self) -> Option<u8> {
-        let f = self.feature(F_NAME)?;
-        self.call(f, 2, &[])?.first().copied()
+    /// DeviceName.getDeviceType: 0 keyboard … 3 mouse. `Some(None)` when
+    /// the device has no name feature, `None` when it gave no clean answer.
+    fn kind(&mut self) -> Option<Option<u8>> {
+        let index = self.call(ROOT, 0, &F_NAME.to_be_bytes())?.first().copied()?;
+        if index == 0 {
+            return Some(None);
+        }
+        self.features.insert(F_NAME, index);
+        Some(Some(self.call(index, 2, &[])?.first().copied()?))
     }
 
     fn call(&self, feature: u8, func: u8, params: &[u8]) -> Option<Vec<u8>> {
@@ -257,6 +281,7 @@ impl<W: Wire> Hidpp<W> {
     fn next_tag(&self, func: u8) -> u8 {
         let sw = if self.sw.get() >= SW_LAST { SW_FIRST } else { self.sw.get() + 1 };
         self.sw.set(sw);
+        LAST_SW.store(sw, Ordering::Relaxed);
         tag(func, sw)
     }
 
@@ -280,7 +305,7 @@ impl<W: Wire> Hidpp<W> {
 
     /// Root `getProtocolVersion`: answers only for a HID++ 2.0 device.
     fn ping(&self) -> bool {
-        self.exchange(ROOT, 1, &[0, 0, PING_DATA], Nudge::Always).is_some_and(|p| p.first().is_some_and(|&major| major >= 2))
+        self.exchange(ROOT, 1, &[0, 0, PING_DATA], Nudge::Always).is_some_and(|p| ping_ok(&p))
     }
 
     fn feature(&mut self, id: u16) -> Option<u8> {
@@ -483,6 +508,35 @@ mod tests {
 
         let other = [0x11, 0x01, 0x07, 0x00, 0, 0];
         assert_eq!(parse_reply(&other, 1, 5, 0x2A), None);
+    }
+
+    #[test]
+    fn an_old_style_error_answers_only_its_own_request() {
+        // HID++ 1.0 error: 10 | device | 8F | feature | tag | code.
+        let err = [0x10, 0x01, 0x8F, 0x05, 0x2A, 0x02, 0x00];
+        assert_eq!(parse_reply(&err, 1, 5, 0x2A), Some(Err(0x02)));
+        assert_eq!(parse_reply(&err, 1, 5, 0x2B), None);
+        assert_eq!(parse_reply(&err, 1, 6, 0x2A), None);
+    }
+
+    #[test]
+    fn a_ping_needs_its_own_echo() {
+        assert!(ping_ok(&[4, 5, PING_DATA]));
+        // Another program's ping, or a HID++ 1.0 device.
+        assert!(!ping_ok(&[4, 5, 0x11]));
+        assert!(!ping_ok(&[1, 0, PING_DATA]));
+        assert!(!ping_ok(&[4]));
+    }
+
+    #[test]
+    fn a_silent_device_is_no_fallback() {
+        const MOUSE: u8 = 3;
+        // The name feature answered: its type decides.
+        assert_eq!(fit_of(Some(Some(MOUSE))), Some(Fit::Pointer));
+        // The device says it has no name feature: usable as a fallback.
+        assert_eq!(fit_of(Some(None)), Some(Fit::Unknown));
+        // No clean answer: it may be a keyboard; never opened.
+        assert_eq!(fit_of(None), None);
     }
 
     /// A paired M705 as the receiver relays it. `Late`: each reply leaves
