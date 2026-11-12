@@ -9,8 +9,9 @@
 
 use super::{Ability, DpiRange, Ident, Pick, Reading, percent_from_mv};
 use crate::hid_link::raw::Channel;
+use std::cell::Cell;
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const VID: u16 = 0x046D;
 
@@ -18,7 +19,9 @@ const REPORT_SHORT: u8 = 0x10;
 const REPORT_LONG: u8 = 0x11;
 const LONG_LEN: usize = 20;
 const PARAMS: usize = 16;
-const SW_ID: u8 = 0x0A;
+/// Software ids of our requests; 0 marks the device's own notifications.
+const SW_FIRST: u8 = 1;
+const SW_LAST: u8 = 15;
 const DIRECT: u8 = 0xFF;
 const ERROR_IDX: u8 = 0xFF;
 const HIDPP10_ERROR: u8 = 0x8F;
@@ -57,13 +60,18 @@ const MODE_ONBOARD: u8 = 1;
 /// getOnboardMode: software on the computer sets DPI and report rate.
 const MODE_HOST: u8 = 2;
 
-/// Request frame: `[11, device, feature, fn<<4|sw, params…]`.
-pub fn request(device: u8, feature: u8, func: u8, params: &[u8]) -> [u8; LONG_LEN] {
+/// Function and software id as one byte: `fn<<4 | sw`.
+pub fn tag(func: u8, sw: u8) -> u8 {
+    (func << 4) | (sw & 0x0F)
+}
+
+/// Request frame: `[11, device, feature, tag, params…]`.
+pub fn request(device: u8, feature: u8, tag: u8, params: &[u8]) -> [u8; LONG_LEN] {
     let mut f = [0u8; LONG_LEN];
     f[0] = REPORT_LONG;
     f[1] = device;
     f[2] = feature;
-    f[3] = (func << 4) | SW_ID;
+    f[3] = tag;
     let n = params.len().min(PARAMS);
     f[4..4 + n].copy_from_slice(&params[..n]);
     f
@@ -71,11 +79,10 @@ pub fn request(device: u8, feature: u8, func: u8, params: &[u8]) -> [u8; LONG_LE
 
 /// Reply to our request: `Some(Ok(params))`, `Some(Err(code))`, or `None`
 /// for unrelated reports (notifications, other requests).
-pub fn parse_reply(r: &[u8], device: u8, feature: u8, func: u8) -> Option<Result<Vec<u8>, u8>> {
+pub fn parse_reply(r: &[u8], device: u8, feature: u8, tag: u8) -> Option<Result<Vec<u8>, u8>> {
     if r.len() < 5 || !(r[0] == REPORT_LONG || r[0] == REPORT_SHORT) || r[1] != device {
         return None;
     }
-    let tag = (func << 4) | SW_ID;
     if r[2] == ERROR_IDX && r[3] == feature && r[4] == tag {
         return Some(Err(r.get(5).copied().unwrap_or(0)));
     }
@@ -127,10 +134,39 @@ fn fit(kind: Option<u8>) -> Fit {
     }
 }
 
-pub struct Hidpp {
-    ch: Channel,
+/// The reports of one HID++ collection: the device, or a test double.
+pub trait Wire {
+    fn write(&self, report: &[u8], timeout: Duration) -> bool;
+    fn read(&self, len: usize, timeout: Duration) -> Option<Vec<u8>>;
+}
+
+impl Wire for Channel {
+    fn write(&self, report: &[u8], timeout: Duration) -> bool {
+        Channel::write(self, report, timeout)
+    }
+
+    fn read(&self, len: usize, timeout: Duration) -> Option<Vec<u8>> {
+        Channel::read(self, len, timeout)
+    }
+}
+
+pub struct Hidpp<W: Wire = Channel> {
+    ch: W,
     device: u8,
     features: HashMap<u16, u8>,
+    /// Software id of the last request.
+    sw: Cell<u8>,
+    /// The device holds each reply until the next request arrives.
+    late: Cell<bool>,
+}
+
+/// When a call sends the extra request that releases a held reply.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Nudge {
+    /// Only after the device stayed silent: a prompt device gets one request.
+    IfSilent,
+    /// Right away: an empty receiver slot then costs one timeout, not two.
+    Always,
 }
 
 impl Hidpp {
@@ -147,7 +183,7 @@ impl Hidpp {
                 let Some(ch) = Channel::open(&iface.path) else {
                     break;
                 };
-                let mut d = Hidpp { ch, device: dev, features: HashMap::new() };
+                let mut d = Hidpp::on(ch, dev);
                 if !d.ping() {
                     continue;
                 }
@@ -162,6 +198,12 @@ impl Hidpp {
         }
         fallback
     }
+}
+
+impl<W: Wire> Hidpp<W> {
+    fn on(ch: W, device: u8) -> Self {
+        Hidpp { ch, device, features: HashMap::new(), sw: Cell::new(SW_LAST), late: Cell::new(false) }
+    }
 
     /// DeviceName.getDeviceType: 0 keyboard … 3 mouse.
     fn kind(&mut self) -> Option<u8> {
@@ -170,17 +212,75 @@ impl Hidpp {
     }
 
     fn call(&self, feature: u8, func: u8, params: &[u8]) -> Option<Vec<u8>> {
-        let req = request(self.device, feature, func, params);
-        if !self.ch.write(&req, TIMEOUT) {
+        self.exchange(feature, func, params, Nudge::IfSilent)
+    }
+
+    /// One request and its reply.
+    ///
+    /// A receiver may hand each reply over only when the next request
+    /// arrives (seen with an M705 on a Unifying receiver):
+    ///
+    /// ```text
+    /// request A ──>            request A ──>
+    ///           <── reply A    nudge     ──>
+    /// request B ──>                      <── reply A
+    ///           <── reply B    (reply to the nudge waits for the next request)
+    ///   prompt device              late device
+    /// ```
+    /// Every request has its own software id, so a reply that comes late is
+    /// never taken for the answer to the request after it.
+    fn exchange(&self, feature: u8, func: u8, params: &[u8], nudge: Nudge) -> Option<Vec<u8>> {
+        let tag = self.next_tag(func);
+        if !self.ch.write(&request(self.device, feature, tag, params), TIMEOUT) {
             return None;
         }
-        let dev = self.device;
-        self.ch.read_until(LONG_LEN, TIMEOUT, |r| parse_reply(r, dev, feature, func))?.ok()
+        let nudged = self.late.get() || nudge == Nudge::Always;
+        if nudged {
+            self.nudge();
+        }
+        if let Some(r) = self.reply(feature, tag) {
+            return r.ok();
+        }
+        if nudged {
+            return None;
+        }
+
+        // Silent: the reply may be held back; one more request releases it.
+        self.nudge();
+        let r = self.reply(feature, tag)?;
+        self.late.set(true);
+        crate::log!("hidpp: replies come one request late");
+        r.ok()
+    }
+
+    /// The tag of a new request: the next software id, `SW_FIRST..=SW_LAST`.
+    fn next_tag(&self, func: u8) -> u8 {
+        let sw = if self.sw.get() >= SW_LAST { SW_FIRST } else { self.sw.get() + 1 };
+        self.sw.set(sw);
+        tag(func, sw)
+    }
+
+    /// A ping whose only job is to make the device send what it holds.
+    fn nudge(&self) {
+        let tag = self.next_tag(1);
+        self.ch.write(&request(self.device, ROOT, tag, &[0, 0, PING_DATA]), TIMEOUT);
+    }
+
+    /// The reply to the request `tag`; other reports are skipped.
+    fn reply(&self, feature: u8, tag: u8) -> Option<Result<Vec<u8>, u8>> {
+        let start = Instant::now();
+        while let Some(left) = TIMEOUT.checked_sub(start.elapsed()) {
+            let r = self.ch.read(LONG_LEN, left)?;
+            if let Some(v) = parse_reply(&r, self.device, feature, tag) {
+                return Some(v);
+            }
+        }
+        None
     }
 
     /// Root `getProtocolVersion`: answers only for a HID++ 2.0 device.
     fn ping(&self) -> bool {
-        self.call(ROOT, 1, &[0, 0, PING_DATA]).is_some_and(|p| p.first().is_some_and(|&major| major >= 2))
+        self.exchange(ROOT, 1, &[0, 0, PING_DATA], Nudge::Always).is_some_and(|p| p.first().is_some_and(|&major| major >= 2))
     }
 
     fn feature(&mut self, id: u16) -> Option<u8> {
@@ -344,6 +444,8 @@ fn main_firmware(p: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
 
     #[test]
     fn firmware_is_the_main_application() {
@@ -366,7 +468,7 @@ mod tests {
 
     #[test]
     fn request_layout() {
-        let f = request(1, 0x05, 3, &[0, 0x06, 0x40]);
+        let f = request(1, 0x05, tag(3, 0x0A), &[0, 0x06, 0x40]);
         assert_eq!(&f[..7], &[0x11, 0x01, 0x05, 0x3A, 0x00, 0x06, 0x40]);
     }
 
@@ -374,13 +476,87 @@ mod tests {
     fn reply_ok_error_and_noise() {
         let mut ok = [0u8; 20];
         ok[..6].copy_from_slice(&[0x11, 0x01, 0x05, 0x2A, 0x00, 0x03]);
-        assert_eq!(parse_reply(&ok, 1, 5, 2).unwrap().unwrap()[..2], [0x00, 0x03]);
+        assert_eq!(parse_reply(&ok, 1, 5, 0x2A).unwrap().unwrap()[..2], [0x00, 0x03]);
 
         let err = [0x11, 0x01, 0xFF, 0x05, 0x2A, 0x08, 0, 0];
-        assert_eq!(parse_reply(&err, 1, 5, 2), Some(Err(0x08)));
+        assert_eq!(parse_reply(&err, 1, 5, 0x2A), Some(Err(0x08)));
 
         let other = [0x11, 0x01, 0x07, 0x00, 0, 0];
-        assert_eq!(parse_reply(&other, 1, 5, 2), None);
+        assert_eq!(parse_reply(&other, 1, 5, 0x2A), None);
+    }
+
+    /// A paired M705 as the receiver relays it. `Late`: each reply leaves
+    /// only when the next request arrives (seen on a Unifying receiver).
+    struct FakeMouse {
+        late: bool,
+        held: RefCell<Option<Vec<u8>>>,
+        ready: RefCell<VecDeque<Vec<u8>>>,
+        writes: Cell<usize>,
+    }
+
+    const FAKE_FEATURES: [(u16, u8); 3] = [(F_FW, 2), (F_NAME, 3), (F_BATTERY_LEVEL, 6)];
+    const FAKE_BATTERY: u8 = 70;
+
+    impl FakeMouse {
+        fn new(late: bool) -> Self {
+            // A late device still holds the reply to somebody's last request.
+            let stale = late.then(|| vec![REPORT_LONG, 1, ROOT, tag(0, 0x0A), 0]);
+            FakeMouse { late, held: RefCell::new(stale), ready: RefCell::default(), writes: Cell::new(0) }
+        }
+
+        fn answer(req: &[u8]) -> Vec<u8> {
+            let mut r = req.to_vec();
+            let func = req[3] >> 4;
+            match (req[2], func) {
+                (ROOT, 0) => {
+                    let id = u16::from_be_bytes([req[4], req[5]]);
+                    r[4] = FAKE_FEATURES.iter().find(|f| f.0 == id).map_or(0, |f| f.1);
+                }
+                (ROOT, _) => r[4..7].copy_from_slice(&[4, 5, req[6]]),
+                _ => r[4..7].copy_from_slice(&[FAKE_BATTERY, 0, 0]),
+            }
+            r
+        }
+    }
+
+    impl Wire for FakeMouse {
+        fn write(&self, req: &[u8], _: Duration) -> bool {
+            self.writes.set(self.writes.get() + 1);
+            if req[1] != 1 {
+                return true;
+            }
+            let reply = Self::answer(req);
+            if !self.late {
+                self.ready.borrow_mut().push_back(reply);
+                return true;
+            }
+            self.ready.borrow_mut().extend(self.held.replace(Some(reply)));
+            true
+        }
+
+        fn read(&self, _: usize, _: Duration) -> Option<Vec<u8>> {
+            self.ready.borrow_mut().pop_front()
+        }
+    }
+
+    #[test]
+    fn late_replies_are_not_taken_for_the_next_request() {
+        for late in [false, true] {
+            let mut d = Hidpp::on(FakeMouse::new(late), 1);
+            assert!(d.ping(), "late {late}");
+            assert_eq!(d.feature(F_NAME), Some(3), "late {late}");
+            assert_eq!(d.feature(F_FW), Some(2), "late {late}");
+            assert_eq!(d.feature(F_BATTERY_UNIFIED), None, "late {late}");
+            assert_eq!(d.read().and_then(|r| r.battery), Some(FAKE_BATTERY), "late {late}");
+        }
+    }
+
+    #[test]
+    fn a_prompt_mouse_gets_one_request_per_call() {
+        let mut d = Hidpp::on(FakeMouse::new(false), 1);
+        let before = d.ch.writes.get();
+        assert_eq!(d.feature(F_NAME), Some(3));
+        assert_eq!(d.ch.writes.get(), before + 1);
     }
 
     #[test]
