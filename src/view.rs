@@ -252,7 +252,7 @@ const LOW: u8 = 20;
 const MID: u8 = 50;
 
 /// Screens. Macros is a tab of Buttons; Appearance, Mouse and About are
-/// tabs of Settings (`General`); Widget is a tab of Overlay.
+/// tabs of Settings (`General`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Page {
     Overview,
@@ -269,7 +269,6 @@ pub enum Page {
     /// Pages of the PRO version: mock-ups here (`view::pro`).
     Profiles,
     Overlay,
-    Widget,
 }
 
 /// Sidebar order; Settings (`General`) is pinned at the bottom.
@@ -284,7 +283,6 @@ impl Page {
         match self {
             Page::Macros => Page::Buttons,
             Page::Appearance | Page::Mouse | Page::About => Page::General,
-            Page::Widget => Page::Overlay,
             p => p,
         }
     }
@@ -622,8 +620,6 @@ pub struct View {
     pub status_pulse: u8,
     /// Text mode: the window drawn as a terminal screen (`view::tui`).
     pub tui: bool,
-    /// Last lines of the diagnostic log, for the text mode's Overview.
-    pub log_tail: Vec<String>,
     pub lang_pick: usize,
     /// The language list is open (Settings › General).
     pub lang_menu: bool,
@@ -1096,8 +1092,7 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
             }
             Page::Stats => stats(&mut f, v),
             Page::Profiles => pro::profiles_page(&mut f),
-            Page::Overlay => pro::overlay_page(&mut f, v),
-            Page::Widget => pro::widget_page(&mut f, v),
+            Page::Overlay => pro::overlay_page(&mut f),
             Page::General | Page::Appearance | Page::Mouse | Page::About => {
                 f.tabs(&SETTING_TABS.map(|(p, t)| (p, tr(t))), v.page);
                 match v.page {
@@ -1757,10 +1752,11 @@ fn split_unit(value: &str) -> (String, &str) {
     }
 }
 
-/// Overview: what the mouse reports, as one strip of numbers; then the
-/// quick DPI switch and the profile switch of the PRO version.
-fn overview(f: &mut Frame, v: &View) {
-    const STRIP_H: f32 = 108.0;
+/// The numbers of the Overview, for both the graphical and the text mode:
+/// battery, DPI, polling rate, today. A cell the mouse has nothing for is
+/// left out.
+fn overview_stats(v: &View) -> Vec<Stat<'static>> {
+    const RATE_UNIT: &str = "Hz";
     let mut cells = Vec::new();
 
     // Battery: from the mouse's driver, or from the OS for a Bluetooth mouse.
@@ -1803,12 +1799,24 @@ fn overview(f: &mut Frame, v: &View) {
             (value, note.to_string())
         }
     };
-    let (value, unit) = split_unit(&hz);
+    // The unit outlives the text it was split from.
+    let (value, unit) = match split_unit(&hz) {
+        (number, "") => (number, ""),
+        (number, _) => (number, RATE_UNIT),
+    };
     cells.push(Stat { label: tr(T::PollingRate), value, unit, note, bar: None });
 
     let today = fill(tr(T::ClicksMoved), &[&v.today_distance]);
     cells.push(Stat { label: tr(T::Today), value: v.today_clicks.clone(), unit: "", note: today, bar: None });
+    cells
+}
 
+/// Overview: what the mouse reports, as one strip of numbers; then the
+/// quick DPI switch and the profile switch of the PRO version.
+fn overview(f: &mut Frame, v: &View) {
+    const STRIP_H: f32 = 108.0;
+    let stages = v.caps.dpi == DpiUi::Stages;
+    let cells = overview_stats(v);
     stat_strip(f, Rect::new(X0, TOP, CW, STRIP_H), &cells, Corners::Marked);
     let mut y = TOP + STRIP_H + PANEL_GAP;
 

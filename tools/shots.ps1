@@ -60,18 +60,17 @@ $scenes = @(
     @{ name = "20-overview-m705"; cfg = @{ device = "logitech/auto" } }
     @{ name = "21-profiles"; clicks = @(, @(80, 294)) }
     @{ name = "22-overlay"; clicks = @(, @(80, 326)) }
-    @{ name = "23-widget"; cfg = @{ theme = "light" }; clicks = @(@(80, 326), @(390, 107)) }
     @{ name = "24-settings-language"; clicks = @(@(80, $NAV.settings), @(490, 456)) }
     # Text mode: the menu is rows of the grid.
     @{ name = "30-tui-overview"; cfg = @{ tui = "1" } }
     @{ name = "31-tui-dpi"; cfg = @{ tui = "1" ; theme = "light" }; clicks = @(, @(80, 123)) }
-    @{ name = "32-tui-performance"; cfg = @{ tui = "1" }; clicks = @(, @(80, 138)) }
-    @{ name = "33-tui-lighting"; cfg = @{ tui = "1" }; clicks = @(, @(80, 153)) }
-    @{ name = "34-tui-buttons"; cfg = @{ tui = "1" }; clicks = @(, @(80, 168)) }
-    @{ name = "35-tui-statistics"; cfg = @{ tui = "1" }; clicks = @(, @(80, 183)) }
-    @{ name = "36-tui-profiles"; cfg = @{ tui = "1" }; clicks = @(, @(80, 213)) }
-    @{ name = "37-tui-overlay"; cfg = @{ tui = "1" }; clicks = @(, @(80, 228)) }
-    @{ name = "38-tui-settings"; cfg = @{ tui = "1" }; clicks = @(, @(80, 258)) }
+    @{ name = "32-tui-performance"; cfg = @{ tui = "1" }; clicks = @(, @(80, 141)) }
+    @{ name = "33-tui-lighting"; cfg = @{ tui = "1" }; clicks = @(, @(80, 159)) }
+    @{ name = "34-tui-buttons"; cfg = @{ tui = "1" }; clicks = @(, @(80, 177)) }
+    @{ name = "35-tui-statistics"; cfg = @{ tui = "1" }; clicks = @(, @(80, 195)) }
+    @{ name = "36-tui-profiles"; cfg = @{ tui = "1" }; clicks = @(, @(80, 231)) }
+    @{ name = "37-tui-overlay"; cfg = @{ tui = "1" }; clicks = @(, @(80, 249)) }
+    @{ name = "38-tui-settings"; cfg = @{ tui = "1" }; clicks = @(, @(80, 555)) }
 )
 
 function New-DemoData([string]$dir, [hashtable]$overrides) {

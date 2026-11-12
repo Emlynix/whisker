@@ -49,6 +49,7 @@ impl Color {
 ///        Subtitle 16 dialog titles                 AppName 12  "WHISKER", spaced
 ///                                                  Title   18  page title, spaced
 ///                                                  Hero    28  big numbers, tightened
+///                                                  Term    14  cells of the text mode
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Size {
@@ -64,6 +65,7 @@ pub enum Size {
     AppName,
     Title,
     Hero,
+    Term,
 }
 
 /// Font family of a text style.
@@ -80,7 +82,7 @@ impl Size {
             Size::Key => 11.0,
             Size::Caption | Size::Label | Size::Fine | Size::AppName => 12.0,
             Size::Body | Size::Value => 13.0,
-            Size::Large => 14.0,
+            Size::Large | Size::Term => 14.0,
             Size::Subtitle => 16.0,
             Size::Title => 18.0,
             Size::Hero => 28.0,
@@ -102,7 +104,7 @@ impl Size {
 
     pub const fn face(self) -> Face {
         match self {
-            Size::Tag | Size::Key | Size::Fine | Size::Value | Size::AppName | Size::Title | Size::Hero => Face::Mono,
+            Size::Tag | Size::Key | Size::Fine | Size::Value | Size::AppName | Size::Title | Size::Hero | Size::Term => Face::Mono,
             _ => Face::Ui,
         }
     }

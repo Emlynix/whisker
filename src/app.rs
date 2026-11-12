@@ -378,7 +378,6 @@ fn initial_view(cfg: &AppConfig, ask_setup: bool) -> View {
         ask_setup,
         setup_autostart: true,
         tui: cfg.tui,
-        log_tail: Vec::new(),
         fx_texture: cfg.fx_texture,
         fx_motion: cfg.fx_motion,
         status_pulse: u8::MAX,
@@ -1274,7 +1273,6 @@ fn hook_timer(id: usize) {
     with_ctrl(|c| match id {
         TIMER_REFRESH => {
             c.refresh_stats();
-            c.refresh_log_tail();
         }
         TIMER_SAVE if !c.removed => c.stats.save(),
         TIMER_TOAST => c.hide_toast(),
@@ -1375,15 +1373,6 @@ impl Controller {
         self.view.tui = self.cfg.tui;
         self.view.focus = None;
         store::save_config(&self.cfg);
-        self.refresh_log_tail();
-    }
-
-    /// The text mode shows what the app did last; nothing to read otherwise.
-    fn refresh_log_tail(&mut self) {
-        const LINES: usize = 5;
-        if self.view.tui && self.view.page == Page::Overview {
-            self.view.log_tail = crate::log::last_lines(LINES);
-        }
     }
 
     fn toggle_fx(&mut self, a: Act) {

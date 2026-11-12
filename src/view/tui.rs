@@ -3,44 +3,46 @@
 //! in the title bar or F10. Same data, same actions as the pages.
 //!
 //! ```text
-//!  WHISKER  White Shark Lionel ▾  ■ connected · 78 %          fw 1.77      row 0: header bar
-//! ┌ Menu ────────────┐┌ Status ───────────────────────────────────────┐
-//! │ ▸ Overview       ││ BATTERY    DPI       POLLING RATE   TODAY     │   20 columns of menu,
-//! │ 2 DPI            ││ ▀█ █▀█     …                                  │   76 of page boxes
-//! ├ PRO ─────────────┤└───────────────────────────────────────────────┘
-//! │ 7 Profiles       │┌ Quick DPI ───────────┐┌ Profile  PRO ─────────┐
-//! ├ Device ──────────┤│  1000  1600 ▸2400    ││ (•) Default           │
-//! │ BAT ████░░ 78%   │└──────────────────────┘└───────────────────────┘
-//! └──────────────────┘
-//!  1-9 Page  Tab Move  Ent Select  F10 GUI                              █   last row: keys
+//!                     Overview                                             row 0: page title
+//! ┌ Menu ──────────┐┌──────────────────────────────────────────────────┐
+//! │ ▸ Overview     ││ BATTERY        POLLING RATE     TODAY            │   18 columns of menu,
+//! │ 2 DPI          ││ ▀█ █▀█ %       …                                 │   76 of page boxes
+//! ├ PRO ───────────┤└──────────────────────────────────────────────────┘
+//! │ 7 Profiles     │┌ Quick DPI ──────────────────────── Edit stages ──┐
+//! │                ││  1000   1600  ▸2400                              │
+//! ├────────────────┤└──────────────────────────────────────────────────┘
+//! │ 9 Settings     │
+//! └────────────────┘
+//!  ■ connected · 78 %                 1-9 Page  Tab Move  Ent Select  F10 GUI   last row
 //! ```
-//! A page first fills a grid of 96 x 31 cells (`Grid`), then the grid is
+//! Each page shows what its graphical twin shows, decided by the same
+//! data (`overview_stats`, `nav_pages`, the mouse's `Caps`).
+//!
+//! A page first fills a grid of 94 x 31 cells (`Grid`), then the grid is
 //! drawn: text in the mono face, box lines and blocks as plain geometry,
 //! so columns never drift with a fallback font.
 
 use super::buttons::{action_label, button_name};
-use super::{
-    Act, EFFECT_NAMES, Frame, HEIGHT, Hit, Kind, PALETTE, Page, RATES, TITLE_H, View, WIDTH, battery_hint, battery_text, nav_pages, status_text, th,
-};
+use super::{Act, DpiUi, EFFECT_NAMES, Frame, HEIGHT, Hit, Kind, PALETTE, Page, RATES, Stat, TITLE_H, View, WIDTH, nav_pages, overview_stats, status_line, th};
 use crate::gfx::{Align, Color, Rect, Seg, Size, Weight};
 use crate::i18n::{Lang, T, fill, tr};
 use crate::protocol::{BRIGHTNESS_MAX, Direction, Effect, Lod, SPEED_MAX};
 use crate::store::{DEBOUNCE_CHOICES, SLEEP_CHOICES};
 use crate::theme::THEMES;
 
-const COLS: i32 = 96;
+/// The grid fills the window under the title bar: 94 x 8.4 = 790 px of
+/// 800, 31 x 18 = 558 px of 568.
+const COLS: i32 = 94;
 const ROWS: i32 = 31;
-/// Cell of the 13 px mono face: 0.6 em wide, 15 px line.
-const CELL_W: f32 = 7.8;
-const CELL_H: f32 = 15.0;
+/// Cell of the 14 px mono face (`Size::Term`): 0.6 em wide, 18 px line.
+const CELL_W: f32 = 8.4;
+const CELL_H: f32 = 18.0;
 /// Menu column and the page area right of it.
-const MENU_W: i32 = 20;
+const MENU_W: i32 = 18;
 const PAGE_X: i32 = MENU_W;
 const PAGE_W: i32 = COLS - MENU_W;
 /// Half of the page area: two boxes side by side.
 const HALF_W: i32 = PAGE_W / 2;
-/// Space above the grid, under the title bar.
-const TOP_PAD: f32 = 24.0;
 /// A character of a script without half-width glyphs takes two cells.
 const WIDE_FROM: u32 = 0x2E80;
 
@@ -54,7 +56,6 @@ enum Style {
     Head,
     Accent,
     AccentBold,
-    Ok,
     Warn,
     Border,
     /// Border of the page's first box.
@@ -64,11 +65,9 @@ enum Style {
     /// Accent ground: tags, the selected row.
     Tag,
     Selected,
-    /// Header bar and its parts.
+    /// The last row: the connection, then the keys and their labels.
     Bar,
-    BarKey,
     BarOk,
-    /// Function-key bar: the key and its label.
     FnKey,
     FnLabel,
 }
@@ -210,13 +209,6 @@ impl Grid {
         self.paint(x, y, &" ".repeat(w.max(0) as usize), Style::Selected, act, None);
     }
 
-    /// "key          value".
-    fn kv(&mut self, x: i32, y: i32, w: i32, key: &str, value: &str, style: Style) {
-        const KEY_W: i32 = 12;
-        self.put_in(x, y, KEY_W - 1, &key.to_lowercase(), Style::Dim);
-        self.put_in(x + KEY_W, y, w - KEY_W, value, style);
-    }
-
     /// Text wrapped at spaces into lines of `w` cells; returns the rows used.
     fn wrap(&mut self, x: i32, y: i32, w: i32, text: &str, style: Style) -> i32 {
         let mut row = 0;
@@ -285,10 +277,11 @@ fn text_page(p: Page) -> Page {
 
 fn build(v: &View) -> Grid {
     let mut g = Grid::new();
-    header(&mut g, v);
+    let page = text_page(v.page);
+    g.put(PAGE_X + 1, 0, tr(page.title()), Style::Head);
     menu(&mut g, v);
-    keys(&mut g, v);
-    match text_page(v.page) {
+    status(&mut g, v);
+    match page {
         Page::Overview => overview(&mut g, v),
         Page::Dpi => dpi(&mut g, v),
         Page::Polling => performance(&mut g, v),
@@ -296,24 +289,10 @@ fn build(v: &View) -> Grid {
         Page::Buttons => buttons(&mut g, v),
         Page::Stats => statistics(&mut g, v),
         Page::Profiles => profiles(&mut g),
-        Page::Overlay => overlay(&mut g, v),
+        Page::Overlay => overlay(&mut g),
         _ => settings(&mut g, v),
     }
     g
-}
-
-fn header(g: &mut Grid, v: &View) {
-    g.put(0, 0, &" ".repeat(COLS as usize), Style::Bar);
-    let x = g.put(0, 0, &format!(" {} ", crate::APP_NAME.to_uppercase()), Style::BarKey);
-    let name = if v.device_name.is_empty() { tr(T::ChangeMouse).to_string() } else { v.device_name.clone() };
-    let x = g.link(x + 1, 0, &format!(" {} ▾ ", fit(&name, 30)), Style::Bar, Act::ChangeMouse);
-    let (status, _) = status_text(v);
-    let x = g.put(x + 1, 0, "■", if v.connected { Style::BarOk } else { Style::Bar });
-    g.put(x, 0, &format!(" {}", fit(&status.to_lowercase(), 34)), Style::Bar);
-    if !v.device.firmware.is_empty() {
-        let fw = format!("fw {} ", fit(&v.device.firmware, 24));
-        g.put(COLS - cells(&fw), 0, &fw, Style::Bar);
-    }
 }
 
 /// Pages in menu order with their numbers: the mouse's own pages, the
@@ -329,19 +308,23 @@ pub fn page_of_key(v: &View, number: usize) -> Option<Page> {
     menu_pages(v).into_iter().find(|(n, _)| *n == number).map(|(_, p)| p)
 }
 
+/// The sidebar: the mouse's pages, the PRO group, Settings pinned at the
+/// bottom over a line.
 fn menu(g: &mut Grid, v: &View) {
-    const DEVICE_Y: i32 = 21;
-    g.frame(0, 1, MENU_W, ROWS - 2, "Menu", Lead::Plain, None);
+    const BOTTOM: i32 = ROWS - 2;
+    g.frame(0, 1, MENU_W, BOTTOM, "Menu", Lead::Plain, None);
+    let rule = format!("├{}┤", "─".repeat((MENU_W - 2) as usize));
     let current = text_page(v.page);
     let mut y = 3;
     for (number, page) in menu_pages(v) {
         if page == Page::Profiles {
-            g.put(0, y, &format!("├{}┤", "─".repeat((MENU_W - 2) as usize)), Style::Border);
+            g.put(0, y, &rule, Style::Border);
             g.put(2, y, " PRO ", Style::Tag);
             y += 1;
         }
         if page == Page::General {
-            y += 1;
+            g.put(0, BOTTOM - 2, &rule, Style::Border);
+            y = BOTTOM - 1;
         }
         let label = fit(tr(page.title()), MENU_W - 6);
         let act = Act::Nav(page);
@@ -349,128 +332,117 @@ fn menu(g: &mut Grid, v: &View) {
             g.selected_row(1, y, MENU_W - 2, Some(act));
             g.link(1, y, &format!(" ▸ {label}"), Style::Selected, act);
         } else {
+            // The whole row answers a press, not only its letters.
+            g.paint(1, y, &" ".repeat((MENU_W - 2) as usize), Style::Text, Some(act), None);
             g.link(1, y, &format!(" {number}"), Style::Accent, act);
             g.link(3, y, &format!(" {label}"), Style::Text, act);
         }
         y += 1;
     }
-
-    // The mouse at a glance, whatever page is open.
-    g.put(0, DEVICE_Y, &format!("├{}┤", "─".repeat((MENU_W - 2) as usize)), Style::Border);
-    g.put(2, DEVICE_Y, &format!(" {} ", fit(tr(T::TabMouse), 12)), Style::Head);
-    if v.connected && v.has_battery {
-        g.put(2, DEVICE_Y + 2, "BAT ", Style::Dim);
-        g.gauge(6, DEVICE_Y + 2, 8, v.battery as f32 / 100.0, Style::Ok);
-        g.put(15, DEVICE_Y + 2, &format!("{}%", v.battery), Style::Text);
-    }
-    let (dpi, rate) = current_dpi_rate(v);
-    for (row, (key, value)) in [("DPI", dpi), ("RATE", rate), ("FW", v.device.firmware.clone())].into_iter().enumerate() {
-        if value.is_empty() {
-            continue;
-        }
-        g.put(2, DEVICE_Y + 3 + row as i32, key, Style::Dim);
-        g.put_in(8, DEVICE_Y + 3 + row as i32, MENU_W - 10, &value, Style::Text);
-    }
 }
 
-/// DPI and report rate as the mouse has them now; empty when unknown.
-fn current_dpi_rate(v: &View) -> (String, String) {
-    let dpi = match v.stages.get(v.active) {
-        Some(s) => s.dpi.to_string(),
-        None => v.basic.dpi.map(|d| d.to_string()).unwrap_or_default(),
-    };
-    let rate = if v.caps.extras {
-        format!("{} Hz", RATES[v.polling.min(RATES.len() - 1)])
-    } else {
-        v.basic.rate.or(v.measured).map(|hz| format!("{hz} Hz")).unwrap_or_default()
-    };
-    (dpi, rate)
-}
-
-/// The last row: what the keys do, and a cursor that blinks with the
-/// animations.
-fn keys(g: &mut Grid, v: &View) {
-    const KEYS: [(&str, &str); 5] = [("1-9", "Page"), ("Tab", "Move"), ("Ent", "Select"), ("Esc", "Close"), ("F10", "GUI")];
-    const BLINK_AT: u8 = 0xa0;
+/// The last row, as the status bar: connection and battery on the left
+/// (a press opens Settings › Mouse), the keys on the right.
+fn status(g: &mut Grid, v: &View) {
+    const KEYS: [(&str, &str); 4] = [("1-9", "Page"), ("Tab", "Move"), ("Ent", "Select"), ("F10", "GUI")];
     let y = ROWS - 1;
-    g.put(0, y, &" ".repeat(COLS as usize), Style::FnLabel);
-    let mut x = 0;
+    g.put(0, y, &" ".repeat(COLS as usize), Style::Bar);
+
+    let keys_w: i32 = KEYS.iter().map(|(key, label)| cells(key) + cells(label) + 3).sum();
+    let keys_x = COLS - keys_w;
+    let mut x = keys_x;
     for (key, label) in KEYS {
         x = g.put(x, y, &format!(" {key} "), Style::FnKey);
         let act = (key == "F10").then_some(Act::ToggleTui);
         x = g.paint(x, y, &format!("{label} "), Style::FnLabel, act, None);
     }
-    if !v.fx_motion || v.status_pulse >= BLINK_AT {
-        g.put(COLS - 2, y, "█", Style::Accent);
-    }
+
+    let act = Act::Nav(Page::Mouse);
+    let (text, _) = status_line(v);
+    g.link(0, y, " ■ ", if v.connected { Style::BarOk } else { Style::Bar }, act);
+    g.link(3, y, &fit(&text, keys_x - 5), Style::Bar, act);
 }
 
+/// Overview: the numbers of the graphical Overview, the quick DPI switch
+/// for a mouse with stages, the profile switch of the PRO version.
 fn overview(g: &mut Grid, v: &View) {
+    const STRIP_H: i32 = 9;
+    const PANEL_H: i32 = 5;
     let r = PAGE_X;
-    g.frame(r, 1, PAGE_W, 7, "Status", Lead::Focused, None);
-    let col = [r + 2, r + 21, r + 40, r + 58];
-    let (dpi, rate) = current_dpi_rate(v);
-
-    if v.connected && v.has_battery {
-        g.put_in(col[0], 2, 18, &tr(T::Battery).to_uppercase(), Style::Dim);
-        let end = g.big(col[0], 3, &v.battery.to_string(), Style::Head);
-        g.put(end, 5, "%", Style::Dim);
-        g.gauge(col[0], 6, 15, v.battery as f32 / 100.0, Style::Ok);
+    let stats = overview_stats(v);
+    g.frame(r, 1, PAGE_W, STRIP_H, "", Lead::Focused, None);
+    let step = (PAGE_W - 2) / stats.len().max(1) as i32;
+    for (k, stat) in stats.iter().enumerate() {
+        stat_cell(g, r + 2 + k as i32 * step, 2, step - 2, stat);
     }
-    if !dpi.is_empty() {
-        g.put_in(col[1], 2, 18, &tr(T::ActiveDpi).to_uppercase(), Style::Dim);
-        g.big(col[1], 3, &dpi, Style::Head);
-        let enabled = v.stages.iter().filter(|s| s.enabled).count();
-        if enabled > 0 {
-            g.put(col[1], 6, &fill(tr(T::StageOf), &[&(v.active + 1).to_string(), &enabled.to_string()]).to_lowercase(), Style::Dim);
+    let mut y = 1 + STRIP_H;
+
+    if v.caps.dpi == DpiUi::Stages {
+        g.frame(r, y, PAGE_W, PANEL_H, tr(T::QuickDpi), Lead::Plain, None);
+        let edit = format!(" {} ", tr(T::EditStages));
+        g.link(r + PAGE_W - 3 - cells(&edit), y, &edit, Style::Accent, Act::Nav(Page::Dpi));
+        let mut x = r + 2;
+        for (i, s) in v.stages.iter().enumerate().filter(|(_, s)| s.enabled) {
+            let on = i == v.active;
+            let text = if on { format!(" ▸{} ", s.dpi) } else { format!("  {} ", s.dpi) };
+            x = g.link(x, y + 2, &text, if on { Style::Selected } else { Style::Text }, Act::Activate(i)) + 1;
         }
-    }
-    if !rate.is_empty() {
-        g.put_in(col[2], 2, 17, &tr(T::PollingRate).to_uppercase(), Style::Dim);
-        let end = g.big(col[2], 3, &digits(&rate), Style::Head);
-        g.put(end, 5, "Hz", Style::Dim);
-        if let Ok(hz) = digits(&rate).parse::<u32>() {
-            let ms = format!("{:.1} ms", 1000.0 / hz.max(1) as f32).replace(".0 ", " ");
-            g.put(col[2], 6, &ms, Style::Dim);
-        }
-    }
-    g.put_in(col[3], 2, 16, &tr(T::Today).to_uppercase(), Style::Dim);
-    g.big(col[3], 3, &digits(&v.today_clicks), Style::Head);
-    g.put_in(col[3], 6, 17, &fill(tr(T::ClicksMoved), &[&v.today_distance]), Style::Dim);
-
-    // Quick DPI: the enabled stages, three to a line.
-    g.frame(r, 8, HALF_W, 6, tr(T::QuickDpi), Lead::Plain, None);
-    for (k, (i, s)) in v.stages.iter().enumerate().filter(|(_, s)| s.enabled).enumerate() {
-        let (x, y) = (r + 2 + (k as i32 % 3) * 11, 10 + k as i32 / 3);
-        let on = i == v.active;
-        let text = if on { format!(" ▸{} ", s.dpi) } else { format!("  {} ", s.dpi) };
-        g.link(x, y, &text, if on { Style::Selected } else { Style::Text }, Act::Activate(i));
+        y += PANEL_H;
     }
 
-    g.frame(r + HALF_W, 8, HALF_W, 6, "Profile", Lead::Plain, Some("PRO"));
+    g.frame(r, y, PAGE_W, PANEL_H, "Profile", Lead::Plain, Some("PRO"));
+    let mut x = r + 2;
     for (k, name) in ["Default", "FPS", "Desktop"].into_iter().enumerate() {
-        g.radio(r + HALF_W + 2, 9 + k as i32, name, k == 0, Act::Mock(120 + k as u8));
+        x = g.radio(x, y + 2, name, k == 0, Act::Mock(120 + k as u8)) + 3;
     }
-    g.put_in(r + HALF_W + 16, 12, HALF_W - 18, tr(T::ProOnly), Style::Faint);
+    let note = fit(tr(T::ProOnly), r + PAGE_W - 3 - x);
+    g.put(r + PAGE_W - 2 - cells(&note), y + 2, &note, Style::Faint);
+}
 
-    // Battery history as columns.
-    g.frame(r, 14, PAGE_W, 9, tr(T::ChartToday), Lead::Plain, None);
-    chart(g, r + 1, 15, PAGE_W - 8, 6, &v.chart, tr(T::ChartEmpty));
+/// One number of the Overview in `w` cells: caption, the value in big
+/// digits with its unit, a bar, a note.
+///
+/// ```text
+///  BATTERY
+///  ▀▀█ █▀█
+///   ▀█ █ █ %
+///  ▀▀▀ ▀▀▀
+///  ████████░░░░░
+///  Lasts about
+///  12 more days
+/// ```
+fn stat_cell(g: &mut Grid, x: i32, y: i32, w: i32, stat: &Stat) {
+    const APPROX: char = '≈';
+    const DIGIT_W: i32 = 4;
+    const BAR_MAX: i32 = 16;
+    g.put_in(x, y, w, &stat.label.to_uppercase(), Style::Dim);
 
-    g.frame(r, 23, HALF_W, 7, tr(T::TabMouse), Lead::Plain, None);
-    g.kv(r + 2, 24, HALF_W - 4, tr(T::DevModel), &v.device_name, Style::Text);
-    if v.connected && v.has_battery {
-        g.kv(r + 2, 25, HALF_W - 4, tr(T::Battery), &format!("{} · {}", battery_text(v), battery_hint(v)), Style::Ok);
+    // Big digits for a plain number that fits; anything else as text.
+    let number = stat.value.trim_start_matches(APPROX).trim();
+    let plain = !number.is_empty() && number.chars().all(|c| c.is_ascii_digit() || c.is_whitespace());
+    let number = digits(number);
+    let approx = stat.value.starts_with(APPROX);
+    // The last digit has no gap after it unless a unit follows.
+    let unit_w = if stat.unit.is_empty() { -1 } else { cells(stat.unit) };
+    let big_w = if approx { 2 } else { 0 } + number.len() as i32 * DIGIT_W + unit_w;
+    if plain && big_w <= w {
+        if approx {
+            g.put(x, y + 2, &APPROX.to_string(), Style::Dim);
+        }
+        let end = g.big(x + if approx { 2 } else { 0 }, y + 1, &number, Style::Head);
+        g.put(end, y + 3, stat.unit, Style::Dim);
+    } else {
+        let end = g.put_in(x, y + 2, w, &stat.value, Style::Head);
+        g.put(end + 1, y + 2, stat.unit, Style::Dim);
     }
-    g.kv(r + 2, 26, HALF_W - 4, tr(T::Today), &format!("{} {}", v.today_clicks, fill(tr(T::ClicksMoved), &[&v.today_distance])), Style::Text);
 
-    // The tail of the diagnostic log: what the app did last.
-    g.frame(r + HALF_W, 23, HALF_W, 7, "Log", Lead::Plain, None);
-    for (row, line) in v.log_tail.iter().rev().take(5).rev().enumerate() {
-        let (time, text) = line.trim_start().split_once(' ').unwrap_or(("", line));
-        g.put_in(r + HALF_W + 2, 24 + row as i32, 8, time, Style::Faint);
-        g.put_in(r + HALF_W + 11, 24 + row as i32, HALF_W - 13, text, Style::Dim);
+    if let Some((pct, color)) = stat.bar {
+        let bar_w = (w - 2).min(BAR_MAX);
+        let filled = (pct.min(100) as i32 * bar_w + 50) / 100;
+        g.paint(x, y + 4, &"█".repeat(filled as usize), Style::Text, None, Some(color.0));
+        g.put(x + filled, y + 4, &"░".repeat((bar_w - filled) as usize), Style::Faint);
     }
+    g.wrap(x, y + 5, w, &stat.note, Style::Dim);
 }
 
 /// A chart of `rows` text rows: one column per cell, built from the
@@ -514,10 +486,10 @@ fn dpi(g: &mut Grid, v: &View) {
     const LEVEL_W: i32 = 44;
     const TRACK_W: i32 = 58;
     let r = PAGE_X;
-    if v.stages.is_empty() {
+    if v.caps.dpi == DpiUi::Single {
         // One value, set with the pointer in the graphical mode.
         g.frame(r, 1, PAGE_W, 8, tr(T::ActiveDpi), Lead::Focused, None);
-        let (dpi, _) = current_dpi_rate(v);
+        let dpi = v.basic.dpi.map(|d| d.to_string()).unwrap_or_default();
         let end = g.big(r + 3, 3, &dpi, Style::Head);
         g.put(end, 5, "DPI", Style::Dim);
         return;
@@ -761,7 +733,7 @@ fn buttons(g: &mut Grid, v: &View) {
         let style = if on { Style::Selected } else { Style::Text };
         g.link(r + MAP_W + 2, y, &(i + 1).to_string(), if on { Style::Selected } else { Style::Accent }, act);
         g.link(r + MAP_W + 5, y, &fit(button_name(i), 19), style, act);
-        g.link(r + MAP_W + 25, y, &format!("{} ▾", fit(&action_label(*a), 17)), if on { Style::Selected } else { Style::Head }, act);
+        g.link(r + MAP_W + 26, y, &format!("{} ▾", fit(&action_label(*a), 16)), if on { Style::Selected } else { Style::Head }, act);
     }
 
     g.frame(r, 21, PAGE_W, 9, "", Lead::Plain, None);
@@ -849,17 +821,18 @@ fn profiles(g: &mut Grid) {
     g.put_in(r + 2, 27, PAGE_W - 4, tr(T::ProOnly), Style::Faint);
 }
 
-/// Overlay & widget of the PRO version: a mock-up.
-fn overlay(g: &mut Grid, v: &View) {
+/// The in-game overlay of the PRO version: a mock-up.
+fn overlay(g: &mut Grid) {
+    const SHOWS: [&str; 6] = ["Clicks per second", "Polling rate", "Battery", "DPI", "Acceleration graph", "Speed graph"];
+    const SHOWN: usize = 4;
     let r = PAGE_X;
-    let (dpi, rate) = current_dpi_rate(v);
     g.frame(r, 1, PAGE_W, 8, "Overlay preview", Lead::Focused, Some("PRO"));
     for y in 2..8 {
         let dots: String = (0..PAGE_W - 2).map(|i| if (i + y) % 4 == 0 { '·' } else { ' ' }).collect();
         g.put(r + 1, y, &dots, Style::Faint);
     }
-    let sample = format!("7 CPS · {} · {}% · {} DPI", if rate.is_empty() { "500 Hz" } else { &rate }, v.battery, if dpi.is_empty() { "2400" } else { &dpi });
-    g.put(r + PAGE_W - 3 - cells(&sample), 2, &sample, Style::AccentBold);
+    let sample = "7 CPS · 500 Hz · 78 % · 2400 DPI";
+    g.put(r + PAGE_W - 3 - cells(sample), 2, sample, Style::AccentBold);
 
     g.frame(r, 9, HALF_W, 9, "Overlay", Lead::Plain, None);
     g.check(r + 2, 10, "Show in games", true, Some(Act::Mock(40)));
@@ -882,25 +855,14 @@ fn overlay(g: &mut Grid, v: &View) {
         g.radio(r + HALF_W + 16, 11 + k as i32, &format!("{pct}%"), k == 1, Act::Mock(80 + k as u8));
     }
 
-    g.frame(r, 18, HALF_W, 12, "Shows", Lead::Plain, None);
-    for (k, name) in ["Clicks per second", "Polling rate", "Battery", "DPI", "Acceleration graph", "Speed graph"].into_iter().enumerate() {
-        g.put(r + 2, 19 + k as i32, "≡", Style::Faint);
-        g.check(r + 4, 19 + k as i32, name, k < 4, Some(Act::Mock(60 + k as u8)));
+    // What the overlay shows: two columns, as in the graphical mode.
+    g.frame(r, 18, PAGE_W, 7, "Shows", Lead::Plain, None);
+    for (k, name) in SHOWS.into_iter().enumerate() {
+        let (x, y) = (r + 2 + (k as i32 % 2) * HALF_W, 20 + k as i32 / 2);
+        g.put(x, y, "≡", Style::Faint);
+        g.check(x + 2, y, name, k < SHOWN, Some(Act::Mock(60 + k as u8)));
     }
-
-    g.frame(r + HALF_W, 18, HALF_W, 12, "Desktop widget", Lead::Plain, None);
-    g.check(r + HALF_W + 2, 19, "Show on desktop", true, Some(Act::Mock(90)));
-    g.check(r + HALF_W + 2, 20, "Always on top", false, Some(Act::Mock(91)));
-    let x = g.radio(r + HALF_W + 2, 22, "Medium", true, Act::Mock(101));
-    g.radio(x + 2, 22, "Small", false, Act::Mock(100));
-    g.put(r + HALF_W + 2, 24, "┌──────────────────────┐", Style::Border);
-    g.put(r + HALF_W + 2, 25, "│", Style::Border);
-    g.put(r + HALF_W + 4, 25, &format!("{}%", v.battery), Style::Head);
-    g.gauge(r + HALF_W + 9, 25, 8, v.battery as f32 / 100.0, Style::Ok);
-    g.put_in(r + HALF_W + 18, 25, 6, &v.today_distance, Style::Text);
-    g.put(r + HALF_W + 25, 25, "│", Style::Border);
-    g.put(r + HALF_W + 2, 26, "└──────────────────────┘", Style::Border);
-    g.put_in(r + HALF_W + 2, 28, HALF_W - 4, tr(T::ProOnly), Style::Faint);
+    g.put_in(r + 2, 26, PAGE_W - 4, tr(T::ProOnly), Style::Faint);
 }
 
 fn settings(g: &mut Grid, v: &View) {
@@ -943,14 +905,25 @@ fn settings(g: &mut Grid, v: &View) {
         g.radio(x, y, &fit(name, LANG_STEP - 6), v.lang_pick == i, Act::Lang(i));
     }
 
-    g.frame(r, 22, PAGE_W, 8, tr(T::About), Lead::Plain, None);
-    g.put(r + 2, 24, &format!("{} {} · GPL-3.0-or-later", crate::APP_NAME, env!("CARGO_PKG_VERSION")), Style::Text);
-    // Two to a row: the labels are sentences in some languages.
-    for (k, (label, act)) in [(T::UpdateCheck, Act::UpdateCheck), (T::HelpAddMouse, Act::ReportOpen), (T::ShowLog, Act::ShowLog), (T::ChangeMouse, Act::ChangeMouse)].into_iter().enumerate() {
-        let (x, y) = (r + 2 + (k as i32 % 2) * HALF_W, 25 + k as i32 / 2);
-        g.link(x, y, &format!("[ {} ]", fit(tr(label), HALF_W - 8)), Style::Accent, act);
+    // The mouse as Settings › Mouse lists it: the status bar leads here.
+    const FACTS: usize = 5;
+    const CAPTION_W: i32 = 13;
+    g.frame(r, 22, HALF_W, 8, tr(T::TabMouse), Lead::Plain, None);
+    for (row, (caption, value)) in v.device.rows.iter().take(FACTS).enumerate() {
+        let y = 23 + row as i32;
+        g.put_in(r + 2, y, CAPTION_W - 1, tr(*caption), Style::Dim);
+        let (text, style) = if value.is_empty() { (tr(T::NotReported), Style::Faint) } else { (value.as_str(), Style::Text) };
+        g.put_in(r + 2 + CAPTION_W, y, HALF_W - 4 - CAPTION_W, text, style);
     }
-    g.put_in(r + 2, 28, PAGE_W - 4, &fill(tr(T::DataDir), &[&v.data_dir]), Style::Faint);
+    g.link(r + 2, 28, &format!("[ {} ]", fit(tr(T::ChangeMouse), HALF_W - 8)), Style::Accent, Act::ChangeMouse);
+
+    let x = r + HALF_W + 2;
+    g.frame(r + HALF_W, 22, HALF_W, 8, tr(T::About), Lead::Plain, None);
+    g.put_in(x, 23, HALF_W - 4, &format!("{} {} · GPL-3.0-or-later", crate::APP_NAME, env!("CARGO_PKG_VERSION")), Style::Text);
+    for (k, (label, act)) in [(T::UpdateCheck, Act::UpdateCheck), (T::HelpAddMouse, Act::ReportOpen), (T::ShowLog, Act::ShowLog)].into_iter().enumerate() {
+        g.link(x, 24 + k as i32, &format!("[ {} ]", fit(tr(label), HALF_W - 8)), Style::Accent, act);
+    }
+    g.put_in(x, 28, HALF_W - 4, &fill(tr(T::DataDir), &[&v.data_dir]), Style::Faint);
 }
 
 // ---- drawing ----------------------------------------------------------------
@@ -965,22 +938,22 @@ fn colors(style: Style) -> (Color, Option<Color>, Weight) {
         Style::Head => (t.text, None, Weight::Semibold),
         Style::Accent => (t.acc, None, Weight::Medium),
         Style::AccentBold | Style::Title => (t.acc, None, Weight::Semibold),
-        Style::Ok => (t.ok, None, Weight::Medium),
         Style::Warn => (t.warn, None, Weight::Medium),
         Style::Focus => (t.acc_fill, None, Weight::Medium),
-        Style::Tag | Style::Selected | Style::BarKey => (t.acc_on, Some(t.acc_fill), Weight::Semibold),
+        Style::Tag | Style::Selected => (t.acc_on, Some(t.acc_fill), Weight::Semibold),
         Style::Bar | Style::FnLabel => (t.text, Some(t.sel), Weight::Medium),
         Style::BarOk => (t.ok, Some(t.sel), Weight::Medium),
         Style::FnKey => (t.text, None, Weight::Semibold),
     }
 }
 
-/// Where the grid sits in the window.
+/// Where the grid sits in the window: centred, its last row on the
+/// window's bottom edge like the status bar.
 fn origin() -> (f32, f32) {
-    ((WIDTH - COLS as f32 * CELL_W) / 2.0, TITLE_H + TOP_PAD)
+    ((WIDTH - COLS as f32 * CELL_W) / 2.0, HEIGHT - ROWS as f32 * CELL_H)
 }
 
-/// The box of a cell, its edges on whole pixels: a cell is 7.8 px wide,
+/// The box of a cell, its edges on whole pixels: a cell is 8.4 px wide,
 /// and blocks drawn at fractions would leave seams between them.
 fn cell_rect(x: i32, y: i32) -> Rect {
     let (ox, oy) = origin();
@@ -1137,7 +1110,7 @@ fn flush(f: &mut Frame, word: &mut String, x: i32, y: i32, weight: Weight, c: Co
     }
     let r = cell_rect(x, y);
     let w = cells(word) as f32 * CELL_W + CELL_W;
-    f.g.text(word, Rect::new(r.x, r.y, w, CELL_H), Size::Value, weight, Align::Left, c);
+    f.g.text(word, Rect::new(r.x, r.y, w, CELL_H), Size::Term, weight, Align::Left, c);
     word.clear();
 }
 
@@ -1177,7 +1150,7 @@ mod tests {
     #[test]
     fn a_gauge_fills_its_share() {
         let mut g = Grid::new();
-        g.gauge(0, 0, 10, 0.78, Style::Ok);
+        g.gauge(0, 0, 10, 0.78, Style::Accent);
         let filled = (0..10).filter(|&x| g.cells[x as usize].ch == '█').count();
         assert_eq!(filled, 8);
         assert_eq!(g.cells[9].ch, '░');

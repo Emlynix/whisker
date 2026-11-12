@@ -15,7 +15,7 @@
 //! ```
 
 use super::{
-    Act, BODY, CW, Frame, Glyph, PANEL_GAP, PANEL_HEAD, PANEL_PAD, Page, RowPlace, SEGMENT_H, Segment, SettingRow, TOP, View, Web, X0, glyph, text_link, text_w, th,
+    Act, CW, Frame, Glyph, PANEL_GAP, PANEL_HEAD, PANEL_PAD, Page, RowPlace, SEGMENT_H, Segment, SettingRow, TOP, Web, X0, glyph, text_link, text_w, th,
 };
 use crate::gfx::{Align, Color, Rect, Size, Weight};
 use crate::i18n::{T, tr};
@@ -127,21 +127,15 @@ pub(super) fn profiles_page(f: &mut Frame) {
     select(f, 31, Rect::new(c.x + text_w(label, Size::Body) + 12.0, c.y + 32.0, 150.0, BTN_H), "Default");
 }
 
-/// Tabs of "Overlay & widget".
-fn overlay_tabs(f: &mut Frame, current: Page) {
-    f.tabs(&[(Page::Overlay, "In-game overlay"), (Page::Widget, "Desktop widget")], current);
-}
-
-/// Overlay & widget › In-game overlay.
-pub(super) fn overlay_page(f: &mut Frame, v: &View) {
+/// The in-game overlay.
+pub(super) fn overlay_page(f: &mut Frame) {
     const PREVIEW_H: f32 = 84.0;
     const PREVIEW_BG: Color = Color::rgb(0x1c2026);
     const PREVIEW_INK: Color = Color::rgb(0xededed);
     const CELL_H: f32 = 28.0;
     const SHOWS: [(&str, bool); 6] =
         [("Clicks per second", true), ("Polling rate", true), ("Battery", true), ("DPI", true), ("Acceleration graph", false), ("Speed graph", false)];
-    overlay_tabs(f, v.page);
-    let mut y = BODY - 4.0;
+    let mut y = TOP;
 
     // One row above the preview: the switch and the hotkey.
     check(f, 40, X0, y, 260.0, "Show overlay in games", true, true);
@@ -209,42 +203,6 @@ pub(super) fn overlay_page(f: &mut Frame, v: &View) {
     }
     let scales: Vec<Segment> = [100, 125, 150, 200].into_iter().enumerate().map(|(k, pct)| Segment::new(mock(80 + k as u8), format!("{pct} %"), k == 1)).collect();
     f.segments(Rect::new(c.x + 2.0 * CORNER + 9.0 + 16.0, c.y + 10.0, SCALE_CELL * 4.0, SEGMENT_H), &scales);
-}
-
-/// Overlay & widget › Desktop widget.
-pub(super) fn widget_page(f: &mut Frame, v: &View) {
-    const SHOWS: [(&str, bool, bool); 6] = [
-        ("Battery", true, true),
-        ("Distance today", true, true),
-        ("Clicks today", true, true),
-        ("DPI", false, false),
-        ("Polling rate", false, false),
-        ("Active profile", false, false),
-    ];
-    overlay_tabs(f, v.page);
-    let widget = SettingRow { title: "Widget", desc: "Small panel on the desktop.", control_h: 22.0 + 5.0 + 22.0 };
-    let size = SettingRow { title: "Size", desc: "Card, up to 3 values.", control_h: SEGMENT_H };
-    let shows = SettingRow { title: "Shows", desc: "3 of 3 selected.", control_h: 3.0 * 27.0 - 5.0 };
-    let panel = Rect::new(X0, BODY, CW, widget.height(CW) + size.height(CW) + shows.height(CW));
-    f.card(panel);
-
-    let mut y = BODY;
-    let c = f.row(panel.x, y, CW, &widget, RowPlace::First);
-    check(f, 90, c.x, c.y, 240.0, "Show on desktop", true, true);
-    check(f, 91, c.x, c.y + 27.0, 240.0, "Always on top", false, true);
-    y += widget.height(CW);
-
-    let c = f.row(panel.x, y, CW, &size, RowPlace::Next);
-    let sizes: Vec<Segment> = ["Small", "Medium"].into_iter().enumerate().map(|(k, name)| Segment::new(mock(100 + k as u8), name, k == 1)).collect();
-    f.segments(Rect::new(c.x, c.y, 2.0 * 62.0, SEGMENT_H), &sizes);
-    y += size.height(CW);
-
-    // At capacity: what is not chosen cannot be added.
-    let c = f.row(panel.x, y, CW, &shows, RowPlace::Next);
-    for (k, (name, on, live)) in SHOWS.into_iter().enumerate() {
-        let (col, row) = ((k % 2) as f32, (k / 2) as f32);
-        check(f, 110 + k as u8, c.x + col * (c.w / 2.0), c.y + row * 27.0, c.w / 2.0 - 10.0, name, on, live);
-    }
 }
 
 /// Overview: the profile switch of the PRO version, with "Manage".
