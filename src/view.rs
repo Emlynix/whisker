@@ -403,7 +403,7 @@ pub enum Act {
     MacroRecord,
     MacroClear,
     MacroDelay(DelayMode),
-    /// Makes the profile with this index the active one.
+    /// Makes this row of the chosen mouse's profiles the active one.
     Profile(usize),
     ProfileNew,
     /// A copy of the active profile.
@@ -412,6 +412,11 @@ pub enum Act {
     ProfileRename,
     /// Deletes the active profile.
     ProfileDelete,
+    /// Writes the active profile, or all profiles of all mice, to a file.
+    ProfileExport,
+    ProfileExportAll,
+    /// Adds the profiles of a file.
+    ProfileImport,
     ChangeMouse,
     /// Slider of a driver-based mouse's single DPI value.
     BasicDpi,
@@ -651,8 +656,9 @@ pub struct View {
     pub power: Power,
     pub buttons: [Action; BUTTON_COUNT],
     pub macros: Vec<Vec<MacroEvent>>,
+    /// Profiles of the chosen mouse.
     pub profiles: Vec<ProfileRow>,
-    /// Index of the active profile.
+    /// Row of the active profile.
     pub profile: usize,
     /// The active profile's new name while it is typed.
     pub rename: Option<String>,

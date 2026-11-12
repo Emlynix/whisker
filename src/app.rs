@@ -168,6 +168,8 @@ struct Controller {
     send_seq: u64,
     /// One report is on its way: no second one until it is answered.
     send_busy: bool,
+    /// A file dialog of the profiles is open: no second one over it.
+    asking_file: bool,
 }
 
 /// DPI and rate to put back after the checks, re-sent while a reading
@@ -273,7 +275,8 @@ pub fn run(mode: StartMode, last: crate::log::Last) {
         return;
     }
 
-    let cfg = store::load_config();
+    let mut cfg = store::load_config();
+    bind_profiles(&mut cfg);
     apply_look(&cfg);
     let first_run = !cfg.setup_asked && !install::is_installed_copy();
     let target = target_of(cfg.device.as_deref());
@@ -308,6 +311,7 @@ pub fn run(mode: StartMode, last: crate::log::Last) {
         started: Instant::now(),
         send_seq: 0,
         send_busy: false,
+        asking_file: false,
     };
     ctrl.stats.set_vendor(stats_vendor(ctrl.cfg.device.as_deref()));
     CTRL.with(|c| *c.borrow_mut() = Some(ctrl));
@@ -426,6 +430,15 @@ fn initial_view(cfg: &AppConfig, ask_setup: bool) -> View {
         report: None,
         update: UpdateView::new(cfg.update_check, updater::install_kind()),
     }
+}
+
+/// Makes the chosen mouse's active profile the working one. Only a model
+/// with button settings has profiles; for any other the layout stays.
+fn bind_profiles(cfg: &mut AppConfig) {
+    let Some(device) = cfg.device.clone().filter(|d| caps_of(Some(d)).buttons) else {
+        return;
+    };
+    cfg.use_device(&device);
 }
 
 /// Applies the configured theme and language to the UI.
@@ -1589,6 +1602,7 @@ impl Controller {
                 }
             }
             Act::Profile(_) | Act::ProfileNew | Act::ProfileDuplicate | Act::ProfileRename | Act::ProfileDelete => self.profile_act(a),
+            Act::ProfileExport | Act::ProfileExportAll | Act::ProfileImport => self.profile_act(a),
             Act::ChangeMouse => self.open_detect_scan(),
             Act::BannerSwitch => self.switch_to_offer(),
             Act::BannerDismiss => self.ignore_offer(),
@@ -2221,6 +2235,10 @@ impl Controller {
     fn apply_device(&mut self, choice: String, usb: Option<(u16, u16)>) {
         self.end_rename();
         switch_device(&mut self.cfg, &mut self.undo, choice, usb);
+        // The mouse has its own profiles; its active one was sent to it
+        // when it was last used, so nothing is sent now.
+        bind_profiles(&mut self.cfg);
+        (self.view.buttons, self.view.macros) = (self.cfg.buttons, self.cfg.macros.clone());
         self.hide_toast();
         store::save_config(&self.cfg);
 

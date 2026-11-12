@@ -189,6 +189,13 @@ pub fn set_tray_profiles(names: &[String], active: usize) {
     tray::set_profiles(names, active);
 }
 
+/// Shows a file dialog once the current message is handled, so the
+/// caller's state is free while the dialog runs its own message loop.
+pub fn ask_file(ask: crate::shell::FileAsk, title: &str, name: &str, ext: &str, done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
+    let (title, name, ext) = (title.to_string(), name.to_string(), ext.to_string());
+    post(move || done(super::dialog::ask(hwnd(), ask, &title, &name, &ext)));
+}
+
 /// System notification from the tray icon; a click on it opens the window.
 pub fn notify(title: &str, text: &str) {
     tray::notify(hwnd(), title, text);

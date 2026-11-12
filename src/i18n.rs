@@ -353,9 +353,23 @@ pub enum T {
     ToastProfileDeleted,
     /// `{}` = the remembered mouse that was connected.
     SwitchedTo,
+    /// Profiles page: the active profile, or all of them, to a file and back.
+    ProfileExport,
+    ProfileExportAll,
+    ProfileImport,
+    /// `{}` = name of the written file.
+    ToastExported,
+    ToastExportFailed,
+    /// `{}` = number of profiles taken from the file.
+    ToastImported,
+    ToastImportNone,
+    /// Parts of the import toast after "Profiles imported: N"; `{}` = a count.
+    ImportElsewhere,
+    ImportSame,
+    ImportSkipped,
 }
 
-const COUNT: usize = T::SwitchedTo as usize + 1;
+const COUNT: usize = T::ImportSkipped as usize + 1;
 type Table = [&'static str; COUNT];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -851,6 +865,16 @@ const EN: Table = [
     "Enter saves · Esc cancels",
     "{} deleted",
     "Switched to {}",
+    "Export",
+    "Export all",
+    "Import…",
+    "Saved: {}",
+    "The file could not be saved.",
+    "Profiles imported: {}",
+    "No profiles to import in this file.",
+    "for other mice: {}",
+    "already there: {}",
+    "skipped: {}",
 ];
 
 const SK: Table = [
@@ -1172,6 +1196,16 @@ const SK: Table = [
     "Enter uloží · Esc zruší",
     "Profil {} je zmazaný",
     "Prepnuté na {}",
+    "Exportovať",
+    "Exportovať všetky",
+    "Importovať…",
+    "Uložené: {}",
+    "Súbor sa nepodarilo uložiť.",
+    "Importované profily: {}",
+    "V súbore nie sú profily na import.",
+    "pre iné myši: {}",
+    "už existujú: {}",
+    "vynechané: {}",
 ];
 
 const CS: Table = [
@@ -1493,6 +1527,16 @@ const CS: Table = [
     "Enter uloží · Esc zruší",
     "Profil {} je smazán",
     "Přepnuto na {}",
+    "Exportovat",
+    "Exportovat vše",
+    "Importovat…",
+    "Uloženo: {}",
+    "Soubor se nepodařilo uložit.",
+    "Importované profily: {}",
+    "V souboru nejsou profily k importu.",
+    "pro jiné myši: {}",
+    "už existují: {}",
+    "vynechané: {}",
 ];
 
 const PL: Table = [
@@ -1814,6 +1858,16 @@ const PL: Table = [
     "Enter zapisuje · Esc anuluje",
     "Usunięto: {}",
     "Przełączono na {}",
+    "Eksportuj",
+    "Eksportuj wszystkie",
+    "Importuj…",
+    "Zapisano: {}",
+    "Nie udało się zapisać pliku.",
+    "Zaimportowane profile: {}",
+    "W pliku nie ma profili do importu.",
+    "dla innych myszy: {}",
+    "już istnieją: {}",
+    "pominięte: {}",
 ];
 
 const DE: Table = [
@@ -2135,6 +2189,16 @@ const DE: Table = [
     "Enter speichert · Esc bricht ab",
     "{} gelöscht",
     "Gewechselt zu {}",
+    "Exportieren",
+    "Alle exportieren",
+    "Importieren…",
+    "Gespeichert: {}",
+    "Die Datei konnte nicht gespeichert werden.",
+    "Importierte Profile: {}",
+    "Die Datei enthält keine Profile zum Importieren.",
+    "für andere Mäuse: {}",
+    "bereits vorhanden: {}",
+    "übersprungen: {}",
 ];
 
 const FR: Table = [
@@ -2456,6 +2520,16 @@ const FR: Table = [
     "Entrée enregistre · Échap annule",
     "{} supprimé",
     "Passage à {}",
+    "Exporter",
+    "Tout exporter",
+    "Importer…",
+    "Enregistré : {}",
+    "Le fichier n’a pas pu être enregistré.",
+    "Profils importés : {}",
+    "Aucun profil à importer dans ce fichier.",
+    "pour d’autres souris : {}",
+    "déjà présents : {}",
+    "ignorés : {}",
 ];
 
 const ES: Table = [
@@ -2777,6 +2851,16 @@ const ES: Table = [
     "Intro guarda · Esc cancela",
     "{} eliminado",
     "Cambiado a {}",
+    "Exportar",
+    "Exportar todos",
+    "Importar…",
+    "Guardado: {}",
+    "No se pudo guardar el archivo.",
+    "Perfiles importados: {}",
+    "No hay perfiles para importar en este archivo.",
+    "para otros ratones: {}",
+    "ya existentes: {}",
+    "omitidos: {}",
 ];
 
 const PT: Table = [
@@ -3098,6 +3182,16 @@ const PT: Table = [
     "Enter guarda · Esc cancela",
     "{} eliminado",
     "Mudou para {}",
+    "Exportar",
+    "Exportar todos",
+    "Importar…",
+    "Guardado: {}",
+    "Não foi possível guardar o ficheiro.",
+    "Perfis importados: {}",
+    "Não há perfis para importar neste ficheiro.",
+    "para outros ratos: {}",
+    "já existentes: {}",
+    "ignorados: {}",
 ];
 
 const IT: Table = [
@@ -3419,6 +3513,16 @@ const IT: Table = [
     "Invio salva · Esc annulla",
     "{} eliminato",
     "Passato a {}",
+    "Esporta",
+    "Esporta tutti",
+    "Importa…",
+    "Salvato: {}",
+    "Impossibile salvare il file.",
+    "Profili importati: {}",
+    "Nessun profilo da importare in questo file.",
+    "per altri mouse: {}",
+    "già presenti: {}",
+    "saltati: {}",
 ];
 
 const JA: Table = [
@@ -3740,6 +3844,16 @@ const JA: Table = [
     "Enter で保存 · Esc でキャンセル",
     "{} を削除しました",
     "{} に切り替えました",
+    "エクスポート",
+    "すべてエクスポート",
+    "インポート…",
+    "保存しました: {}",
+    "ファイルを保存できませんでした。",
+    "インポートしたプロファイル: {}",
+    "このファイルにインポートできるプロファイルはありません。",
+    "他のマウス用: {}",
+    "既にあります: {}",
+    "スキップ: {}",
 ];
 
 const KO: Table = [
@@ -4061,6 +4175,16 @@ const KO: Table = [
     "Enter 저장 · Esc 취소",
     "{} 삭제됨",
     "{}(으)로 전환됨",
+    "내보내기",
+    "모두 내보내기",
+    "가져오기…",
+    "저장됨: {}",
+    "파일을 저장할 수 없습니다.",
+    "가져온 프로필: {}",
+    "이 파일에는 가져올 프로필이 없습니다.",
+    "다른 마우스용: {}",
+    "이미 있음: {}",
+    "건너뜀: {}",
 ];
 
 const ZH_HANS: Table = [
@@ -4382,6 +4506,16 @@ const ZH_HANS: Table = [
     "Enter 保存 · Esc 取消",
     "已删除 {}",
     "已切换到 {}",
+    "导出",
+    "全部导出",
+    "导入…",
+    "已保存：{}",
+    "无法保存文件。",
+    "已导入配置文件：{}",
+    "此文件中没有可导入的配置文件。",
+    "其他鼠标：{}",
+    "已存在：{}",
+    "已跳过：{}",
 ];
 
 const ZH_HANT: Table = [
@@ -4703,6 +4837,16 @@ const ZH_HANT: Table = [
     "Enter 儲存 · Esc 取消",
     "已刪除 {}",
     "已切換至 {}",
+    "匯出",
+    "全部匯出",
+    "匯入…",
+    "已儲存：{}",
+    "無法儲存檔案。",
+    "已匯入設定檔：{}",
+    "此檔案中沒有可匯入的設定檔。",
+    "其他滑鼠：{}",
+    "已存在：{}",
+    "已略過：{}",
 ];
 
 #[cfg(test)]

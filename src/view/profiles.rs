@@ -7,9 +7,11 @@
 //!  | Name              Buttons    Macros                 |
 //!  |▌Default           2          1               Active |
 //!  | FPS               —          —                      |
+//!  | White Shark Lionel      [Export][Export all][Import…] |
 //!  +- Automatic switching [PRO] ------------------------+
 //! ```
-//! A press on a row makes its profile the active one. "Rename" turns the
+//! The list is the chosen mouse's own: the foot names the mouse and holds
+//! the file buttons. A press on a row makes its profile the active one. "Rename" turns the
 //! active row's name into a field; the controller feeds it the keys.
 
 use super::{Act, CW, Frame, PANEL_GAP, PANEL_HEAD, PANEL_PAD, Page, ProfileRow, SEGMENT_H, Segment, TOP, View, X0, pro, text_w, th};
@@ -19,6 +21,8 @@ use crate::store::PROFILE_MAX;
 
 const BTN_H: f32 = 28.0;
 const TABLE_ROW: f32 = 30.0;
+/// Row under the list: the mouse's name and the file buttons.
+const FOOT_H: f32 = 40.0;
 /// Two lines of the note under the page title.
 const NOTE_H: f32 = 40.0;
 /// Left edge of the name, buttons and macros columns, as parts of the width.
@@ -89,10 +93,11 @@ fn row(f: &mut Frame, v: &View, i: usize, p: &ProfileRow, r: Rect, col_x: impl F
 
 /// The Profiles page.
 pub(super) fn page(f: &mut Frame, v: &View) {
-    f.g.text(tr(T::ProfileNote), Rect::new(X0, TOP - 4.0, CW, NOTE_H - 6.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
+    f.g.text(tr(T::ProfileNote), Rect::new(X0, TOP - 4.0, CW, NOTE_H - 6.0), Size::Caption, Weight::Normal, Align::Wrap, th().muted);
     let y = TOP + NOTE_H;
 
-    let panel = Rect::new(X0, y, CW, PANEL_HEAD + TABLE_ROW * (v.profiles.len() + 1) as f32);
+    let table_h = TABLE_ROW * (v.profiles.len() + 1) as f32;
+    let panel = Rect::new(X0, y, CW, PANEL_HEAD + table_h + FOOT_H);
     let body = f.panel(panel, tr(T::PageProfiles));
     // Header buttons, right to left; "New" is the panel's primary one.
     let room = v.profiles.len() < PROFILE_MAX;
@@ -118,6 +123,19 @@ pub(super) fn page(f: &mut Frame, v: &View) {
         let r = Rect::new(body.x, body.y + (i + 1) as f32 * TABLE_ROW, body.w, TABLE_ROW);
         row(f, v, i, p, r, col_x);
     }
+
+    // Foot: whose profiles these are, and the file buttons from the right.
+    let foot = Rect::new(body.x, body.y + table_h, body.w, FOOT_H);
+    f.g.fill(Rect::new(foot.x + 1.0, foot.y, foot.w - 2.0, 1.0), 0.0, th().line);
+    let mut right = foot.x + foot.w - PANEL_PAD;
+    for (label, act) in [(T::ProfileImport, Act::ProfileImport), (T::ProfileExportAll, Act::ProfileExportAll), (T::ProfileExport, Act::ProfileExport)] {
+        let w = text_w(tr(label), Size::Body) + 26.0;
+        right -= w;
+        f.push_button(act, Rect::new(right, foot.y + (FOOT_H - BTN_H) / 2.0, w, BTN_H), tr(label), false);
+        right -= 6.0;
+    }
+    let mouse = Rect::new(foot.x + PANEL_PAD, foot.y, right - foot.x - PANEL_PAD, FOOT_H);
+    f.g.text(&v.device_name, mouse, Size::Body, Weight::Normal, Align::Left, th().text);
     pro::auto_switch(f, panel.y + panel.h + PANEL_GAP);
 }
 

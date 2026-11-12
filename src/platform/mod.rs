@@ -49,6 +49,10 @@
 //! - `set_tray_profiles(names, active)`: the menu's "Profile" list, the
 //!   active one marked; a pick arrives as `TrayAction::Profile`. No names,
 //!   no list.
+//! - `ask_file(shell::FileAsk, title, name, ext, done)`: the system's
+//!   "Open" or "Save as" dialog for files `*.ext`, `name` proposed. It
+//!   opens after the current event is handled; `done` gets the chosen
+//!   path, or `None` if it was cancelled, on the UI thread.
 //! - `notify(title, text)`: system notification from the tray icon; a click
 //!   on it arrives as `TrayAction::Open`. Windows: tray balloon (`NIF_INFO`,
 //!   shown as a toast). Linux: `org.freedesktop.Notifications`.

@@ -19,6 +19,13 @@ pub struct KeyEvent {
     pub repeat: bool,
 }
 
+/// Which file dialog `window::ask_file` shows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FileAsk {
+    Open,
+    Save,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
     Move,

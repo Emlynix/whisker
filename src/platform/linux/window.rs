@@ -202,6 +202,36 @@ pub fn set_tray_profiles(names: &[String], active: usize) {
     tray::set_profiles(names, active);
 }
 
+/// Shows a file dialog from the main loop's next idle turn, so the
+/// caller's state is free while the dialog runs its own loop.
+pub fn ask_file(ask: crate::shell::FileAsk, title: &str, name: &str, ext: &str, done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
+    let (title, name, ext) = (title.to_string(), name.to_string(), ext.to_string());
+    glib::idle_add_local_once(move || done(file_dialog(ask, &title, &name, &ext)));
+}
+
+/// The GTK (or desktop portal) file chooser; `None` if it was cancelled.
+fn file_dialog(ask: crate::shell::FileAsk, title: &str, name: &str, ext: &str) -> Option<std::path::PathBuf> {
+    use crate::shell::FileAsk;
+    let window = with_ui(|u| u.window.clone())?;
+    let action = match ask {
+        FileAsk::Open => gtk::FileChooserAction::Open,
+        FileAsk::Save => gtk::FileChooserAction::Save,
+    };
+    let dialog = gtk::FileChooserNative::new(Some(title), Some(&window), action, None, None);
+    let filter = gtk::FileFilter::new();
+    filter.add_pattern(&format!("*.{ext}"));
+    filter.set_name(Some(&format!("{} (*.{ext})", crate::APP_NAME)));
+    dialog.add_filter(filter);
+    if ask == FileAsk::Save {
+        dialog.set_do_overwrite_confirmation(true);
+        dialog.set_current_name(name);
+    }
+    let chosen = dialog.run() == gtk::ResponseType::Accept;
+    let path = dialog.filename().filter(|_| chosen);
+    dialog.destroy();
+    path
+}
+
 /// Desktop notification; a click on it opens the window.
 pub fn notify(title: &str, text: &str) {
     bus::notify(title, text, crate::i18n::tr(crate::i18n::T::TrayOpen));

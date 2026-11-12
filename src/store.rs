@@ -14,7 +14,9 @@
 //! debounce=12
 //! buttons=100100,…          the active profile's layout (and `macroN=`)
 //! profile=1                 index of the active profile
-//! profile0.name=Desktop     every profile: name, buttons, macros
+//! profile0.name=Desktop     every profile: name, its mouse, buttons, macros
+//! profile0.device=whiteshark/lionel
+//! profile0.current=1        the active one among its mouse's profiles
 //! profile0.buttons=100100,…
 //! profile0.macro2=…
 //! known_mice=046D:C52B|logitech/m705,…    mice the user has chosen
@@ -23,6 +25,11 @@
 //! `buttons` and `macros` of `AppConfig` are the working copy of the active
 //! profile; `profiles[profile]` takes them over when the config is written
 //! or another profile is activated.
+//!
+//! A profile belongs to the mouse model it was made for: mice differ in
+//! the number and place of their buttons. Each mouse has its own active
+//! profile. An exported file holds profiles in the same lines under the
+//! head line `whisker-profiles=1`.
 
 use crate::i18n::Lang;
 use crate::protocol::{
@@ -43,7 +50,19 @@ pub const DEBOUNCE_DEFAULT: u8 = 12;
 /// `device=` value for a mouse without a driver (statistics only).
 pub const GENERIC_DEVICE: &str = "generic";
 pub const SLEEP_DEFAULT: u8 = 6;
+/// Profiles of one mouse.
 pub const PROFILE_MAX: usize = 8;
+/// Profiles of all mice together that the user may make or import.
+pub const PROFILE_TOTAL: usize = 64;
+/// Profiles a file may hold: above `PROFILE_TOTAL`, since a mouse chosen
+/// for the first time always gets a profile of its own.
+const PROFILE_STORED: usize = 256;
+/// First line of an exported file.
+const EXPORT_HEAD: &str = "whisker-profiles=1";
+/// The most an imported file is read; a full export is a few kilobytes.
+const IMPORT_MAX_BYTES: u64 = 256 * 1024;
+/// Characters of a model id, e.g. "whiteshark/lionel".
+const DEVICE_ID_MAX: usize = 64;
 /// Characters of a profile name.
 pub const PROFILE_NAME_MAX: usize = 20;
 /// Mice remembered for the automatic switch.
@@ -54,13 +73,18 @@ const KNOWN_MAX: usize = 16;
 pub struct Profile {
     /// Empty = never named: shown as "Default".
     pub name: String,
+    /// Model id of the mouse it was made for; empty until a mouse with
+    /// button settings takes it over (profiles of an older config).
+    pub device: String,
+    /// The active one among its mouse's profiles.
+    pub current: bool,
     pub buttons: [Action; BUTTON_COUNT],
     pub macros: Vec<Vec<MacroEvent>>,
 }
 
 impl Default for Profile {
     fn default() -> Self {
-        Self { name: String::new(), buttons: DEFAULT_ACTIONS, macros: vec![Vec::new(); MACRO_COUNT] }
+        Self { name: String::new(), device: String::new(), current: false, buttons: DEFAULT_ACTIONS, macros: vec![Vec::new(); MACRO_COUNT] }
     }
 }
 
@@ -169,9 +193,46 @@ impl AppConfig {
             return false;
         }
         self.keep_active();
+        self.set_active(i);
+        true
+    }
+
+    /// Loads profile `i` as the working one, without keeping the layout
+    /// worked on, and marks it as its mouse's active profile.
+    pub fn set_active(&mut self, i: usize) {
+        let Some(device) = self.profiles.get(i).map(|p| p.device.clone()) else {
+            return;
+        };
+        for (k, p) in self.profiles.iter_mut().enumerate().filter(|(_, p)| p.device == device) {
+            p.current = k == i;
+        }
         self.profile = i;
         (self.buttons, self.macros) = (self.profiles[i].buttons, self.profiles[i].macros.clone());
-        true
+    }
+
+    /// The mouse `device` (a model with button settings) is the chosen one:
+    /// its active profile becomes the working one. Profiles bound to no
+    /// mouse yet become its own; a mouse without any gets a default one.
+    pub fn use_device(&mut self, device: &str) {
+        for p in self.profiles.iter_mut().filter(|p| p.device.is_empty()) {
+            p.device = device.to_string();
+        }
+        let own = |p: &Profile| p.device == device;
+        // Its marked profile; the working one if it is its own (profiles
+        // of an older config carry no mark); else its first.
+        let marked = self.profiles.iter().position(|p| own(p) && p.current);
+        let working = Some(self.profile).filter(|&i| self.profiles.get(i).is_some_and(own));
+        let found = marked.or(working).or_else(|| self.profiles.iter().position(own));
+        let i = match found {
+            Some(i) => i,
+            // Always: the working layout must be this mouse's own.
+            None => {
+                self.profiles.push(Profile { device: device.to_string(), ..Profile::default() });
+                self.profiles.len() - 1
+            }
+        };
+        self.keep_active();
+        self.set_active(i);
     }
 
     /// The mouse was chosen: it leads the remembered ones.
@@ -190,6 +251,57 @@ pub fn clean_name(name: &str) -> String {
     let allowed = |c: &char| c.is_alphanumeric() || matches!(c, ' ' | '-' | '.');
     let kept: String = name.chars().filter(allowed).take(PROFILE_NAME_MAX).collect();
     kept.trim().to_string()
+}
+
+/// A model id as stored: its own letters only, e.g. "whiteshark/lionel".
+fn clean_device(id: &str) -> String {
+    let allowed = |c: &char| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_');
+    id.trim().chars().filter(allowed).take(DEVICE_ID_MAX).collect()
+}
+
+/// Profiles as the text of an export file.
+pub fn export_profiles(profiles: &[&Profile]) -> String {
+    let mut text = format!("{EXPORT_HEAD}\n");
+    for (k, p) in profiles.iter().enumerate() {
+        text += &profile_lines(k, p, &p.buttons, &p.macros);
+    }
+    text
+}
+
+/// Profiles of an export file, each safe to send to a mouse; none if the
+/// text is not such a file.
+pub fn import_profiles(text: &str) -> Vec<Profile> {
+    let mut lines = text.trim_start_matches('\u{feff}').lines().map(str::trim).filter(|l| !l.is_empty());
+    if lines.next() != Some(EXPORT_HEAD) {
+        return Vec::new();
+    }
+    let mut profiles = Vec::new();
+    for (k, v) in pairs(text) {
+        if k.starts_with("profile") {
+            parse_profile(k, v, &mut profiles);
+        }
+    }
+    // An index far up fills the list below it with profiles no line set.
+    let unset = Profile::default();
+    profiles.into_iter().filter(|p| *p != unset).take(PROFILE_TOTAL).map(safe_profile).collect()
+}
+
+/// Reads a file the user picked for import; `None` if it cannot be read
+/// or is larger than any export.
+pub fn read_import(path: &std::path::Path) -> Option<String> {
+    use std::io::Read;
+    // A pipe or device would never end.
+    if !std::fs::metadata(path).ok()?.is_file() {
+        return None;
+    }
+    let mut text = String::new();
+    std::fs::File::open(path).ok()?.take(IMPORT_MAX_BYTES + 1).read_to_string(&mut text).ok()?;
+    (text.len() as u64 <= IMPORT_MAX_BYTES).then_some(text)
+}
+
+/// Writes an export where the user chose; `false` if it failed.
+pub fn write_export(path: &std::path::Path, text: &str) -> bool {
+    std::fs::write(path, text).is_ok()
 }
 
 /// `%APPDATA%\Whisker`, resolved by the shell; `None` disables saving.
@@ -317,7 +429,7 @@ fn parse_profile(key: &str, v: &str, profiles: &mut Vec<Profile>) {
     let Some((head, field)) = key.split_once('.') else {
         return;
     };
-    let Some(k) = index_of(head, "profile", PROFILE_MAX) else {
+    let Some(k) = index_of(head, "profile", PROFILE_STORED) else {
         return;
     };
     if profiles.len() <= k {
@@ -326,6 +438,8 @@ fn parse_profile(key: &str, v: &str, profiles: &mut Vec<Profile>) {
     let p = &mut profiles[k];
     match field {
         "name" => p.name = clean_name(v),
+        "device" => p.device = clean_device(v),
+        "current" => p.current = v == "1",
         "buttons" => parse_buttons(v, &mut p.buttons),
         _ => {
             if let Some(i) = index_of(field, "macro", MACRO_COUNT) {
@@ -356,6 +470,14 @@ fn macro_lines(prefix: &str, macros: &[Vec<MacroEvent>]) -> String {
         let events: Vec<String> = m.iter().map(|e| triple_hex(e.encode())).collect();
         text += &format!("{prefix}macro{i}={}\n", events.join(","));
     }
+    text
+}
+
+/// The lines of profile `k`, with the given layout and macros.
+fn profile_lines(k: usize, p: &Profile, buttons: &[Action; BUTTON_COUNT], macros: &[Vec<MacroEvent>]) -> String {
+    let head = format!("profile{k}.");
+    let mut text = format!("{head}name={}\n{head}device={}\n{head}current={}\n{head}buttons={}\n", p.name, p.device, p.current as u8, button_text(buttons));
+    text += &macro_lines(&head, macros);
     text
 }
 
@@ -471,8 +593,7 @@ fn format_config(c: &AppConfig) -> String {
     for (k, p) in c.profiles.iter().enumerate() {
         // The active profile is written as it is being worked on.
         let (buttons, macros) = if k == c.profile { (&c.buttons, &c.macros) } else { (&p.buttons, &p.macros) };
-        text += &format!("profile{k}.name={}\nprofile{k}.buttons={}\n", p.name, button_text(buttons));
-        text += &macro_lines(&format!("profile{k}."), macros);
+        text += &profile_lines(k, p, buttons, macros);
     }
     text
 }
@@ -521,14 +642,22 @@ fn sanitize(mut c: AppConfig) -> AppConfig {
     // Buttons and macros go to the mouse as-is: keep them safe to replay,
     // and never leave the user without a left click.
     (c.buttons, c.macros) = safe_layout(c.buttons, std::mem::take(&mut c.macros));
-    c.profiles.truncate(PROFILE_MAX);
+    c.profiles.truncate(PROFILE_STORED);
+    // An index far up fills the list below it with profiles no line set:
+    // they go, and the active index moves down with the list.
+    let (unset, active) = (Profile::default(), c.profile);
+    let (mut at, mut gone_before) = (0, 0);
+    c.profiles.retain(|p| {
+        let keep = at == active || *p != unset;
+        gone_before += (!keep && at < active) as usize;
+        at += 1;
+        keep
+    });
+    c.profile = active.saturating_sub(gone_before);
     if c.profiles.is_empty() {
         c.profiles.push(Profile::default());
     }
-    for p in c.profiles.iter_mut() {
-        p.name = clean_name(&p.name);
-        (p.buttons, p.macros) = safe_layout(p.buttons, std::mem::take(&mut p.macros));
-    }
+    c.profiles = std::mem::take(&mut c.profiles).into_iter().map(safe_profile).collect();
     c.profile = c.profile.min(c.profiles.len() - 1);
     c.keep_active();
 
@@ -539,6 +668,14 @@ fn sanitize(mut c: AppConfig) -> AppConfig {
         }
     }
     c
+}
+
+/// A profile from a file, safe to keep and to send to a mouse.
+fn safe_profile(mut p: Profile) -> Profile {
+    p.name = clean_name(&p.name);
+    p.device = clean_device(&p.device);
+    (p.buttons, p.macros) = safe_layout(p.buttons, std::mem::take(&mut p.macros));
+    p
 }
 
 /// A layout and its macros as they may go to the mouse.
@@ -774,10 +911,11 @@ mod tests {
 
     #[test]
     fn a_broken_profile_list_stays_usable() {
-        let text = "profile=7\nprofile1.name=  A\t_&\u{202E}B  \nprofile1.buttons=000000,000000,000000,000000,000000,000000\nprofile99.name=x\n";
+        let text = "profile=7\nprofile1.name=  A\t_&\u{202E}B  \nprofile1.buttons=000000,000000,000000,000000,000000,000000\nprofile99.name=x\nprofile999.name=y\n";
         let c = sanitize(parse_config(text, AppConfig::default()));
-        assert_eq!((c.profiles.len(), c.profile), (2, 1));
-        assert_eq!(c.profiles[1].name, "AB");
+        // Only the profiles a line set stay, and the active one.
+        assert_eq!(c.profiles.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["AB", "", "x"]);
+        assert_eq!(c.profile, 1);
         assert!(c.buttons.contains(&Action::Mouse(crate::protocol::MB_LEFT)));
         assert!(c.profiles[0].buttons.contains(&Action::Mouse(crate::protocol::MB_LEFT)));
     }
@@ -793,6 +931,60 @@ mod tests {
         assert_eq!(c.buttons[4], Action::Disable);
         assert!(!c.activate(5));
         assert_eq!(c.profile, 0);
+    }
+
+    const LIONEL: &str = "whiteshark/lionel";
+    const OTHER: &str = "eternico/aet-ms480b";
+
+    #[test]
+    fn each_mouse_has_its_own_active_profile() {
+        let mut c = AppConfig::default();
+        // An older config: its profiles belong to the first mouse with buttons.
+        c.profiles.push(Profile { name: "FPS".into(), ..Profile::default() });
+        c.profile = 1;
+        c.use_device(LIONEL);
+        assert!(c.profiles.iter().all(|p| p.device == LIONEL));
+        assert_eq!((c.profile, c.profiles[1].current), (1, true), "the profile that was active stays");
+        c.buttons[4] = Action::Disable;
+
+        // Another mouse starts with a default profile of its own.
+        c.use_device(OTHER);
+        assert_eq!((c.profiles.len(), c.profile), (3, 2));
+        assert_eq!((c.profiles[2].device.as_str(), c.buttons), (OTHER, DEFAULT_ACTIONS));
+
+        // Back on the first one: the profile that was active there, as edited.
+        c.use_device(LIONEL);
+        assert_eq!((c.profile, c.buttons[4]), (1, Action::Disable));
+        let back = sanitize(parse_config(&format_config(&c), AppConfig::default()));
+        assert_eq!(back.profiles, c.profiles);
+    }
+
+    #[test]
+    fn export_and_import_roundtrip() {
+        use crate::protocol::{Edge, Ev};
+        let mut fps = Profile { name: "FPS".into(), device: LIONEL.into(), current: true, ..Profile::default() };
+        fps.buttons[5] = Action::Key { mods: 0x01, usage: 0x06 };
+        fps.macros[1] = vec![MacroEvent { ev: Ev::Key(0x04, Edge::Down), delay_ms: 30 }, MacroEvent { ev: Ev::Key(0x04, Edge::Up), delay_ms: 30 }];
+        let desk = Profile { name: "Desktop".into(), device: OTHER.into(), ..Profile::default() };
+
+        let text = export_profiles(&[&fps, &desk]);
+        assert_eq!(import_profiles(&text), [fps.clone(), desk]);
+        // With a byte-order mark and Windows line ends, as an editor saves it.
+        let edited = format!("\u{feff}{}", text.replace('\n', "\r\n"));
+        assert_eq!(import_profiles(&edited).len(), 2);
+    }
+
+    #[test]
+    fn import_takes_only_export_files_and_makes_them_safe() {
+        assert_eq!(import_profiles("profile0.name=x\n"), []);
+        assert_eq!(import_profiles("stages=1,2,3\n"), []);
+        assert_eq!(import_profiles(""), []);
+
+        let text = "whisker-profiles=1\nprofile0.name=A\u{202E}_B\nprofile0.device=../x y\nprofile0.buttons=000000,000000,000000,000000,000000,000000\nprofile99.name=far\n";
+        let got = import_profiles(text);
+        assert_eq!(got.len(), 2, "only the profiles the file sets");
+        assert_eq!((got[0].name.as_str(), got[0].device.as_str()), ("AB", "/xy"));
+        assert!(got[0].buttons.contains(&Action::Mouse(crate::protocol::MB_LEFT)));
     }
 
     #[test]

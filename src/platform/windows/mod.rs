@@ -4,6 +4,7 @@
 pub mod autostart;
 pub mod bluetooth;
 pub mod crash;
+mod dialog;
 pub mod gfx;
 pub mod hid;
 pub mod input;

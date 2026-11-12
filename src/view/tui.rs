@@ -808,8 +808,8 @@ fn profiles(g: &mut Grid, v: &View) {
     let count = v.profiles.len() as i32;
     let count_text = |n: usize| if n == 0 { "—".to_string() } else { n.to_string() };
 
-    // Border, header, rows, a gap, the buttons, border.
-    let list_h = count + 5;
+    // Border, header, rows, a gap, two rows of buttons, border.
+    let list_h = count + 6;
     g.frame(r, 1, PAGE_W, list_h, tr(T::PageProfiles), Lead::Focused, None);
     g.put_in(r + NAME_X, 2, NAME_W, &tr(T::ColName).to_uppercase(), Style::Dim);
     g.put_in(r + BUTTONS_X, 2, MACROS_X - BUTTONS_X - 1, &tr(T::PageButtons).to_uppercase(), Style::Dim);
@@ -852,10 +852,17 @@ fn profiles(g: &mut Grid, v: &View) {
     for (label, act) in buttons {
         let text = format!("[ {} ]", tr(label));
         x = match act {
-            Some(act) => g.link(x, list_h - 1, &text, Style::Accent, act),
-            None => g.put(x, list_h - 1, &text, Style::Faint),
+            Some(act) => g.link(x, list_h - 2, &text, Style::Accent, act),
+            None => g.put(x, list_h - 2, &text, Style::Faint),
         } + 2;
     }
+    // The file buttons, and whose profiles these are.
+    let mut x = r + 2;
+    for (label, act) in [(T::ProfileExport, Act::ProfileExport), (T::ProfileExportAll, Act::ProfileExportAll), (T::ProfileImport, Act::ProfileImport)] {
+        x = g.link(x, list_h - 1, &format!("[ {} ]", tr(label)), Style::Accent, act) + 2;
+    }
+    let mouse = fit(&v.device_name, r + PAGE_W - 2 - x);
+    g.put(r + PAGE_W - 2 - cells(&mouse), list_h - 1, &mouse, Style::Dim);
 
     let y = 1 + list_h;
     g.frame(r, y, PAGE_W, 4, "Automatic switching", Lead::Plain, Some("PRO"));
