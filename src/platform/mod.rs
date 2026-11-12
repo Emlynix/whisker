@@ -46,6 +46,9 @@
 //!   (the window owns it on Windows).
 //! - `set_tray(tray::Level, tip)`: battery glyph (`tray::glyph`) and tooltip.
 //!   Tray clicks arrive as `Hooks::tray` (double click = open, menu = open/about/quit).
+//! - `set_tray_profiles(names, active)`: the menu's "Profile" list, the
+//!   active one marked; a pick arrives as `TrayAction::Profile`. No names,
+//!   no list.
 //! - `notify(title, text)`: system notification from the tray icon; a click
 //!   on it arrives as `TrayAction::Open`. Windows: tray balloon (`NIF_INFO`,
 //!   shown as a toast). Linux: `org.freedesktop.Notifications`.

@@ -332,9 +332,30 @@ pub enum T {
     FxMotion,
     FxTexture,
     FxNote,
+    /// Profiles page: buttons of the list.
+    ProfileNew,
+    ProfileDuplicate,
+    ProfileRename,
+    ProfileDelete,
+    /// Overview panel and the tray menu: the active profile.
+    Profile,
+    ProfileManage,
+    /// Name shown for a profile that was never named.
+    ProfileDefault,
+    /// `{}` = number of a new profile.
+    ProfileN,
+    ColName,
+    ProfileActive,
+    ProfileNote,
+    /// While a profile name is typed.
+    RenameHint,
+    /// `{}` = name of the deleted profile.
+    ToastProfileDeleted,
+    /// `{}` = the remembered mouse that was connected.
+    SwitchedTo,
 }
 
-const COUNT: usize = T::FxNote as usize + 1;
+const COUNT: usize = T::SwitchedTo as usize + 1;
 type Table = [&'static str; COUNT];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -816,6 +837,20 @@ const EN: Table = [
     "Subtle animations",
     "Background grid and texture",
     "Everything stops while minimized.",
+    "New",
+    "Duplicate",
+    "Rename",
+    "Delete",
+    "Profile",
+    "Manage",
+    "Default",
+    "Profile {}",
+    "Name",
+    "Active",
+    "A profile holds the button layout and the macros. Switch profiles here, on Overview or from the tray icon.",
+    "Enter saves · Esc cancels",
+    "{} deleted",
+    "Switched to {}",
 ];
 
 const SK: Table = [
@@ -1123,6 +1158,20 @@ const SK: Table = [
     "Jemné animácie",
     "Mriežka a textúra pozadia",
     "Pri minimalizácii sa všetko zastaví.",
+    "Nový",
+    "Duplikovať",
+    "Premenovať",
+    "Zmazať",
+    "Profil",
+    "Spravovať",
+    "Predvolený",
+    "Profil {}",
+    "Názov",
+    "Aktívny",
+    "Profil obsahuje rozloženie tlačidiel a makrá. Prepnete ho tu, na Prehľade alebo cez ikonu v oznamovacej oblasti.",
+    "Enter uloží · Esc zruší",
+    "Profil {} je zmazaný",
+    "Prepnuté na {}",
 ];
 
 const CS: Table = [
@@ -1430,6 +1479,20 @@ const CS: Table = [
     "Jemné animace",
     "Mřížka a textura pozadí",
     "Při minimalizaci se vše zastaví.",
+    "Nový",
+    "Duplikovat",
+    "Přejmenovat",
+    "Smazat",
+    "Profil",
+    "Spravovat",
+    "Výchozí",
+    "Profil {}",
+    "Název",
+    "Aktivní",
+    "Profil obsahuje rozložení tlačítek a makra. Přepnete ho zde, na Přehledu nebo přes ikonu v oznamovací oblasti.",
+    "Enter uloží · Esc zruší",
+    "Profil {} je smazán",
+    "Přepnuto na {}",
 ];
 
 const PL: Table = [
@@ -1737,6 +1800,20 @@ const PL: Table = [
     "Subtelne animacje",
     "Siatka i tekstura tła",
     "Po zminimalizowaniu wszystko się zatrzymuje.",
+    "Nowy",
+    "Duplikuj",
+    "Zmień nazwę",
+    "Usuń",
+    "Profil",
+    "Zarządzaj",
+    "Domyślny",
+    "Profil {}",
+    "Nazwa",
+    "Aktywny",
+    "Profil zawiera układ przycisków i makra. Przełączysz go tutaj, w Przeglądzie lub z ikony w zasobniku.",
+    "Enter zapisuje · Esc anuluje",
+    "Usunięto: {}",
+    "Przełączono na {}",
 ];
 
 const DE: Table = [
@@ -2044,6 +2121,20 @@ const DE: Table = [
     "Dezente Animationen",
     "Hintergrundraster und Textur",
     "Minimiert steht alles still.",
+    "Neu",
+    "Duplizieren",
+    "Umbenennen",
+    "Löschen",
+    "Profil",
+    "Verwalten",
+    "Standard",
+    "Profil {}",
+    "Name",
+    "Aktiv",
+    "Ein Profil enthält die Tastenbelegung und die Makros. Wechseln Sie es hier, in der Übersicht oder über das Symbol im Infobereich.",
+    "Enter speichert · Esc bricht ab",
+    "{} gelöscht",
+    "Gewechselt zu {}",
 ];
 
 const FR: Table = [
@@ -2351,6 +2442,20 @@ const FR: Table = [
     "Animations discrètes",
     "Grille et texture d'arrière-plan",
     "Tout s'arrête quand la fenêtre est réduite.",
+    "Nouveau",
+    "Dupliquer",
+    "Renommer",
+    "Supprimer",
+    "Profil",
+    "Gérer",
+    "Par défaut",
+    "Profil {}",
+    "Nom",
+    "Actif",
+    "Un profil contient l’affectation des boutons et les macros. Changez-le ici, dans l’aperçu ou depuis l’icône de la zone de notification.",
+    "Entrée enregistre · Échap annule",
+    "{} supprimé",
+    "Passage à {}",
 ];
 
 const ES: Table = [
@@ -2658,6 +2763,20 @@ const ES: Table = [
     "Animaciones sutiles",
     "Cuadrícula y textura de fondo",
     "Todo se detiene al minimizar.",
+    "Nuevo",
+    "Duplicar",
+    "Renombrar",
+    "Eliminar",
+    "Perfil",
+    "Gestionar",
+    "Predeterminado",
+    "Perfil {}",
+    "Nombre",
+    "Activo",
+    "Un perfil contiene la asignación de botones y las macros. Cámbielo aquí, en Resumen o desde el icono de la bandeja.",
+    "Intro guarda · Esc cancela",
+    "{} eliminado",
+    "Cambiado a {}",
 ];
 
 const PT: Table = [
@@ -2965,6 +3084,20 @@ const PT: Table = [
     "Animações subtis",
     "Grelha e textura de fundo",
     "Tudo para quando minimizado.",
+    "Novo",
+    "Duplicar",
+    "Renomear",
+    "Eliminar",
+    "Perfil",
+    "Gerir",
+    "Predefinido",
+    "Perfil {}",
+    "Nome",
+    "Ativo",
+    "Um perfil contém a atribuição dos botões e as macros. Mude-o aqui, na Vista geral ou no ícone da área de notificação.",
+    "Enter guarda · Esc cancela",
+    "{} eliminado",
+    "Mudou para {}",
 ];
 
 const IT: Table = [
@@ -3272,6 +3405,20 @@ const IT: Table = [
     "Animazioni leggere",
     "Griglia e texture di sfondo",
     "Tutto si ferma quando è ridotto a icona.",
+    "Nuovo",
+    "Duplica",
+    "Rinomina",
+    "Elimina",
+    "Profilo",
+    "Gestisci",
+    "Predefinito",
+    "Profilo {}",
+    "Nome",
+    "Attivo",
+    "Un profilo contiene l’assegnazione dei pulsanti e le macro. Cambialo qui, nella Panoramica o dall’icona nell’area di notifica.",
+    "Invio salva · Esc annulla",
+    "{} eliminato",
+    "Passato a {}",
 ];
 
 const JA: Table = [
@@ -3579,6 +3726,20 @@ const JA: Table = [
     "控えめなアニメーション",
     "背景のグリッドとテクスチャ",
     "最小化中はすべて停止します。",
+    "新規",
+    "複製",
+    "名前を変更",
+    "削除",
+    "プロファイル",
+    "管理",
+    "既定",
+    "プロファイル {}",
+    "名前",
+    "使用中",
+    "プロファイルにはボタンの割り当てとマクロが入ります。ここ、概要、またはトレイアイコンから切り替えられます。",
+    "Enter で保存 · Esc でキャンセル",
+    "{} を削除しました",
+    "{} に切り替えました",
 ];
 
 const KO: Table = [
@@ -3886,6 +4047,20 @@ const KO: Table = [
     "은은한 애니메이션",
     "배경 격자와 질감",
     "최소화하면 모두 멈춥니다.",
+    "새로 만들기",
+    "복제",
+    "이름 바꾸기",
+    "삭제",
+    "프로필",
+    "관리",
+    "기본",
+    "프로필 {}",
+    "이름",
+    "사용 중",
+    "프로필에는 버튼 배치와 매크로가 들어 있습니다. 여기, 개요 또는 트레이 아이콘에서 전환할 수 있습니다.",
+    "Enter 저장 · Esc 취소",
+    "{} 삭제됨",
+    "{}(으)로 전환됨",
 ];
 
 const ZH_HANS: Table = [
@@ -4193,6 +4368,20 @@ const ZH_HANS: Table = [
     "细微动画",
     "背景网格和纹理",
     "最小化时全部停止。",
+    "新建",
+    "复制",
+    "重命名",
+    "删除",
+    "配置文件",
+    "管理",
+    "默认",
+    "配置文件 {}",
+    "名称",
+    "使用中",
+    "配置文件包含按键布局和宏。可在此处、概览或托盘图标中切换。",
+    "Enter 保存 · Esc 取消",
+    "已删除 {}",
+    "已切换到 {}",
 ];
 
 const ZH_HANT: Table = [
@@ -4500,6 +4689,20 @@ const ZH_HANT: Table = [
     "細微動畫",
     "背景格線和紋理",
     "最小化時全部停止。",
+    "新增",
+    "複製",
+    "重新命名",
+    "刪除",
+    "設定檔",
+    "管理",
+    "預設",
+    "設定檔 {}",
+    "名稱",
+    "使用中",
+    "設定檔包含按鍵配置和巨集。可在此處、總覽或系統匣圖示中切換。",
+    "Enter 儲存 · Esc 取消",
+    "已刪除 {}",
+    "已切換至 {}",
 ];
 
 #[cfg(test)]

@@ -27,7 +27,7 @@ use super::{Act, DpiUi, EFFECT_NAMES, Frame, HEIGHT, Hit, Kind, PALETTE, Page, R
 use crate::gfx::{Align, Color, Rect, Seg, Size, Weight};
 use crate::i18n::{Lang, T, fill, tr};
 use crate::protocol::{BRIGHTNESS_MAX, Direction, Effect, Lod, SPEED_MAX};
-use crate::store::{DEBOUNCE_CHOICES, SLEEP_CHOICES};
+use crate::store::{DEBOUNCE_CHOICES, PROFILE_MAX, SLEEP_CHOICES};
 use crate::theme::THEMES;
 
 /// The grid fills the window under the title bar: 94 x 8.4 = 790 px of
@@ -288,7 +288,7 @@ fn build(v: &View) -> Grid {
         Page::Lighting => lighting(&mut g, v),
         Page::Buttons => buttons(&mut g, v),
         Page::Stats => statistics(&mut g, v),
-        Page::Profiles => profiles(&mut g),
+        Page::Profiles => profiles(&mut g, v),
         Page::Overlay => overlay(&mut g),
         _ => settings(&mut g, v),
     }
@@ -296,10 +296,10 @@ fn build(v: &View) -> Grid {
 }
 
 /// Pages in menu order with their numbers: the mouse's own pages, the
-/// two of the PRO version, Settings.
+/// one of the PRO version, Settings.
 fn menu_pages(v: &View) -> Vec<(usize, Page)> {
     let mut pages = nav_pages(&v.caps);
-    pages.extend([Page::Profiles, Page::Overlay, Page::General]);
+    pages.extend([Page::Overlay, Page::General]);
     pages.into_iter().enumerate().map(|(i, p)| (i + 1, p)).collect()
 }
 
@@ -317,7 +317,7 @@ fn menu(g: &mut Grid, v: &View) {
     let current = text_page(v.page);
     let mut y = 3;
     for (number, page) in menu_pages(v) {
-        if page == Page::Profiles {
+        if page == Page::Overlay {
             g.put(0, y, &rule, Style::Border);
             g.put(2, y, " PRO ", Style::Tag);
             y += 1;
@@ -364,7 +364,7 @@ fn status(g: &mut Grid, v: &View) {
 }
 
 /// Overview: the numbers of the graphical Overview, the quick DPI switch
-/// for a mouse with stages, the profile switch of the PRO version.
+/// for a mouse with stages, the profiles for one with button settings.
 fn overview(g: &mut Grid, v: &View) {
     const STRIP_H: i32 = 9;
     const PANEL_H: i32 = 5;
@@ -390,13 +390,24 @@ fn overview(g: &mut Grid, v: &View) {
         y += PANEL_H;
     }
 
-    g.frame(r, y, PAGE_W, PANEL_H, "Profile", Lead::Plain, Some("PRO"));
-    let mut x = r + 2;
-    for (k, name) in ["Default", "FPS", "Desktop"].into_iter().enumerate() {
-        x = g.radio(x, y + 2, name, k == 0, Act::Mock(120 + k as u8)) + 3;
+    if !v.caps.buttons {
+        return;
     }
-    let note = fit(tr(T::ProOnly), r + PAGE_W - 3 - x);
-    g.put(r + PAGE_W - 2 - cells(&note), y + 2, &note, Style::Faint);
+    // One radio per profile, on as many rows as the panel has.
+    const NAME_W: i32 = 12;
+    const RADIO_W: i32 = 4;
+    const GAP: i32 = 3;
+    g.frame(r, y, PAGE_W, PANEL_H, tr(T::Profile), Lead::Plain, None);
+    let manage = format!(" {} ", tr(T::ProfileManage));
+    g.link(r + PAGE_W - 3 - cells(&manage), y, &manage, Style::Accent, Act::Nav(Page::Profiles));
+    let (mut x, mut row) = (r + 2, y + 1);
+    for (i, p) in v.profiles.iter().enumerate() {
+        let name = fit(&p.name, NAME_W);
+        if x + RADIO_W + cells(&name) > r + PAGE_W - 2 {
+            (x, row) = (r + 2, row + 1);
+        }
+        x = g.radio(x, row, &name, i == v.profile, Act::Profile(i)) + GAP;
+    }
 }
 
 /// One number of the Overview in `w` cells: caption, the value in big
@@ -787,38 +798,73 @@ fn statistics(g: &mut Grid, v: &View) {
     }
 }
 
-/// Profiles of the PRO version: a mock-up, as in the graphical mode.
-fn profiles(g: &mut Grid) {
-    const PROFILES: [(&str, &str, &str); 3] = [("Default", "—", "Mouse"), ("FPS", "game.exe", "Mouse"), ("Desktop", "explorer.exe", "This PC")];
+/// Profiles: the list, its buttons, and the PRO version's switching by app.
+fn profiles(g: &mut Grid, v: &View) {
+    const NAME_X: i32 = 5;
+    const NAME_W: i32 = 24;
+    const BUTTONS_X: i32 = 32;
+    const MACROS_X: i32 = 46;
     let r = PAGE_X;
-    g.frame(r, 1, PAGE_W, 10, "Profiles", Lead::Focused, Some("PRO"));
-    g.put(r + 2, 2, "   NAME          SWITCH ON APP        SAVED IN", Style::Dim);
-    for (i, (name, app, place)) in PROFILES.into_iter().enumerate() {
+    let count = v.profiles.len() as i32;
+    let count_text = |n: usize| if n == 0 { "—".to_string() } else { n.to_string() };
+
+    // Border, header, rows, a gap, the buttons, border.
+    let list_h = count + 5;
+    g.frame(r, 1, PAGE_W, list_h, tr(T::PageProfiles), Lead::Focused, None);
+    g.put_in(r + NAME_X, 2, NAME_W, &tr(T::ColName).to_uppercase(), Style::Dim);
+    g.put_in(r + BUTTONS_X, 2, MACROS_X - BUTTONS_X - 1, &tr(T::PageButtons).to_uppercase(), Style::Dim);
+    g.put_in(r + MACROS_X, 2, 12, &tr(T::PageMacros).to_uppercase(), Style::Dim);
+    for (i, p) in v.profiles.iter().enumerate() {
         let y = 3 + i as i32;
-        let act = Act::Mock(20 + i as u8);
-        if i == 0 {
+        let act = Act::Profile(i);
+        let active = i == v.profile;
+        let style = if active { Style::Selected } else { Style::Text };
+        if active {
             g.selected_row(r + 1, y, PAGE_W - 2, Some(act));
+        } else {
+            // The whole row answers a press, not only its letters.
+            g.paint(r + 1, y, &" ".repeat((PAGE_W - 2) as usize), Style::Text, Some(act), None);
         }
-        let mark = if i == 0 { "▸" } else { " " };
-        g.link(r + 2, y, &format!("{mark}  {name:<13}{app:<21}{place}"), if i == 0 { Style::Selected } else { Style::Text }, act);
+        g.link(r + 2, y, if active { "▸" } else { " " }, style, act);
+        // The active row while it is renamed: what was typed, and how to end.
+        if let Some(typed) = v.rename.as_deref().filter(|_| active) {
+            let shown = if typed.is_empty() { format!("▏{}", fit(&p.name, NAME_W - 1)) } else { format!("{}▏", fit(typed, NAME_W - 1)) };
+            g.link(r + NAME_X, y, &shown, style, act);
+            g.link(r + BUTTONS_X, y, &fit(tr(T::RenameHint), PAGE_W - BUTTONS_X - 2), style, act);
+            continue;
+        }
+        g.link(r + NAME_X, y, &fit(&p.name, NAME_W), style, act);
+        g.link(r + BUTTONS_X, y, &count_text(p.remapped), style, act);
+        g.link(r + MACROS_X, y, &count_text(p.macros), style, act);
+        if active {
+            let tag = fit(tr(T::ProfileActive), 14);
+            g.link(r + PAGE_W - 2 - cells(&tag), y, &tag, style, act);
+        }
     }
+    let room = v.profiles.len() < PROFILE_MAX;
+    let buttons = [
+        (T::ProfileNew, room.then_some(Act::ProfileNew)),
+        (T::ProfileDuplicate, room.then_some(Act::ProfileDuplicate)),
+        (T::ProfileRename, Some(Act::ProfileRename)),
+        (T::ProfileDelete, (v.profiles.len() > 1).then_some(Act::ProfileDelete)),
+    ];
     let mut x = r + 2;
-    for (k, label) in ["[n]ew", "[d]uplicate", "[r]ename", "[del]ete"].into_iter().enumerate() {
-        x = g.link(x, 8, label, Style::Accent, Act::Mock(10 + k as u8)) + 3;
+    for (label, act) in buttons {
+        let text = format!("[ {} ]", tr(label));
+        x = match act {
+            Some(act) => g.link(x, list_h - 1, &text, Style::Accent, act),
+            None => g.put(x, list_h - 1, &text, Style::Faint),
+        } + 2;
     }
 
-    g.frame(r, 11, PAGE_W, 7, "Automatic switching", Lead::Plain, None);
-    g.check(r + 2, 13, "Switch by active app", true, Some(Act::Mock(30)));
-    g.put(r + 2, 15, "otherwise use", Style::Dim);
-    let x = g.radio(r + 17, 15, "Default", true, Act::Mock(31));
-    g.radio(x + 3, 15, "Last used", false, Act::Mock(32));
+    let y = 1 + list_h;
+    g.frame(r, y, PAGE_W, 4, "Automatic switching", Lead::Plain, Some("PRO"));
+    let x = g.check(r + 2, y + 1, "Switch by active app", false, Some(Act::Mock(30)));
+    let x = g.put(x + 4, y + 1, "otherwise use", Style::Dim);
+    g.radio(x + 2, y + 1, "Default", true, Act::Mock(31));
+    g.put_in(r + 2, y + 2, PAGE_W - 4, tr(T::ProOnly), Style::Faint);
 
-    g.frame(r, 18, PAGE_W, 12, "Rules", Lead::Plain, None);
-    g.put(r + 2, 19, "APP                         PROFILE", Style::Dim);
-    g.put(r + 2, 20, &format!("{:<28}FPS", "game.exe"), Style::Text);
-    g.put(r + 2, 21, &format!("{:<28}Desktop", "explorer.exe"), Style::Text);
-    g.link(r + 2, 23, "+ add rule", Style::Accent, Act::Mock(33));
-    g.put_in(r + 2, 27, PAGE_W - 4, tr(T::ProOnly), Style::Faint);
+    g.wrap(r + 1, y + 5, PAGE_W - 2, tr(T::ProfileNote), Style::Faint);
 }
 
 /// The in-game overlay of the PRO version: a mock-up.

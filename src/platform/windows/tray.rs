@@ -4,7 +4,7 @@
 use super::win::wide;
 use crate::i18n::{T, tr};
 use crate::tray::{ICON_SIZE, Level, TrayAction, glyph};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use windows_sys::Win32::Foundation::{HWND, POINT};
 use windows_sys::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
 use windows_sys::Win32::UI::Shell::*;
@@ -17,10 +17,19 @@ const ICON_ID: u32 = 1;
 const MENU_OPEN: usize = 1;
 const MENU_QUIT: usize = 2;
 const MENU_ABOUT: usize = 3;
+/// Id of the first profile in the menu; the others follow.
+const MENU_PROFILE: usize = 100;
 
 thread_local! {
     static ICON: Cell<HICON> = const { Cell::new(std::ptr::null_mut()) };
     static LEVEL: Cell<Level> = const { Cell::new(Level::Offline) };
+    /// Profile names for the menu and the active one's index.
+    static PROFILES: RefCell<(Vec<String>, usize)> = const { RefCell::new((Vec::new(), 0)) };
+}
+
+/// The menu's profile list; none hides it.
+pub fn set_profiles(names: &[String], active: usize) {
+    PROFILES.set((names.to_vec(), active));
 }
 
 fn data(hwnd: HWND) -> NOTIFYICONDATAW {
@@ -110,6 +119,7 @@ fn menu(hwnd: HWND) -> Option<TrayAction> {
         let m = CreatePopupMenu();
         AppendMenuW(m, MF_STRING, MENU_OPEN, open.as_ptr());
         AppendMenuW(m, MF_STRING, MENU_ABOUT, about.as_ptr());
+        let count = profile_menu(m);
         AppendMenuW(m, MF_SEPARATOR, 0, std::ptr::null());
         AppendMenuW(m, MF_STRING, MENU_QUIT, quit.as_ptr());
 
@@ -125,9 +135,37 @@ fn menu(hwnd: HWND) -> Option<TrayAction> {
             MENU_OPEN => Some(TrayAction::Open),
             MENU_ABOUT => Some(TrayAction::About),
             MENU_QUIT => Some(TrayAction::Quit),
+            id if (MENU_PROFILE..MENU_PROFILE + count).contains(&id) => Some(TrayAction::Profile(id - MENU_PROFILE)),
             _ => None,
         }
     }
+}
+
+/// Appends "Profile ▸" with the profiles, the active one marked. Returns
+/// how many it lists.
+fn profile_menu(m: HMENU) -> usize {
+    let (names, active) = PROFILES.with_borrow(|p| p.clone());
+    if names.is_empty() {
+        return 0;
+    }
+    let title = wide(tr(T::Profile));
+    unsafe {
+        let sub = CreatePopupMenu();
+        for (i, name) in names.iter().enumerate() {
+            let label = wide(&plain_label(name));
+            AppendMenuW(sub, MF_STRING, MENU_PROFILE + i, label.as_ptr());
+        }
+        let (first, last) = (MENU_PROFILE as u32, (MENU_PROFILE + names.len() - 1) as u32);
+        CheckMenuRadioItem(sub, first, last, (MENU_PROFILE + active) as u32, MF_BYCOMMAND);
+        // The parent menu owns the list: destroyed with it.
+        AppendMenuW(m, MF_POPUP, sub as usize, title.as_ptr());
+    }
+    names.len()
+}
+
+/// A name as menu text: `&` would underline the next letter.
+fn plain_label(name: &str) -> String {
+    name.replace('&', "&&")
 }
 
 /// Turns the battery glyph into an icon.
@@ -151,6 +189,12 @@ fn draw(level: Level) -> HICON {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_profile_name_is_no_menu_mnemonic() {
+        assert_eq!(plain_label("R&D"), "R&&D");
+        assert_eq!(plain_label("FPS"), "FPS");
+    }
 
     #[test]
     fn the_window_opens_on_a_double_click_only() {

@@ -185,6 +185,10 @@ pub fn set_tray(level: Level, tip: &str) {
     tray::update(hwnd(), level, tip);
 }
 
+pub fn set_tray_profiles(names: &[String], active: usize) {
+    tray::set_profiles(names, active);
+}
+
 /// System notification from the tray icon; a click on it opens the window.
 pub fn notify(title: &str, text: &str) {
     tray::notify(hwnd(), title, text);

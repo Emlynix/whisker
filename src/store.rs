@@ -12,7 +12,17 @@
 //! lighting=1,2,2,1          effect id, brightness, speed, direction
 //! breathing=FF0000,0000FF
 //! debounce=12
+//! buttons=100100,…          the active profile's layout (and `macroN=`)
+//! profile=1                 index of the active profile
+//! profile0.name=Desktop     every profile: name, buttons, macros
+//! profile0.buttons=100100,…
+//! profile0.macro2=…
+//! known_mice=046D:C52B|logitech/m705,…    mice the user has chosen
 //! ```
+//!
+//! `buttons` and `macros` of `AppConfig` are the working copy of the active
+//! profile; `profiles[profile]` takes them over when the config is written
+//! or another profile is activated.
 
 use crate::i18n::Lang;
 use crate::protocol::{
@@ -33,6 +43,33 @@ pub const DEBOUNCE_DEFAULT: u8 = 12;
 /// `device=` value for a mouse without a driver (statistics only).
 pub const GENERIC_DEVICE: &str = "generic";
 pub const SLEEP_DEFAULT: u8 = 6;
+pub const PROFILE_MAX: usize = 8;
+/// Characters of a profile name.
+pub const PROFILE_NAME_MAX: usize = 20;
+/// Mice remembered for the automatic switch.
+const KNOWN_MAX: usize = 16;
+
+/// A named button layout with its macros.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Profile {
+    /// Empty = never named: shown as "Default".
+    pub name: String,
+    pub buttons: [Action; BUTTON_COUNT],
+    pub macros: Vec<Vec<MacroEvent>>,
+}
+
+impl Default for Profile {
+    fn default() -> Self {
+        Self { name: String::new(), buttons: DEFAULT_ACTIONS, macros: vec![Vec::new(); MACRO_COUNT] }
+    }
+}
+
+/// A mouse the user has chosen: its model id and VID:PID.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KnownMouse {
+    pub device: String,
+    pub usb: (u16, u16),
+}
 
 #[derive(Clone)]
 pub struct AppConfig {
@@ -46,6 +83,14 @@ pub struct AppConfig {
     /// Button actions in device order: L, R, M, Back, Forward, DPI.
     pub buttons: [Action; BUTTON_COUNT],
     pub macros: Vec<Vec<MacroEvent>>,
+    /// All profiles, never empty. The active one's entry may be behind
+    /// `buttons` and `macros`: see `keep_active`.
+    pub profiles: Vec<Profile>,
+    /// Index of the active profile.
+    pub profile: usize,
+    /// Mice chosen so far, the last used first: one of them is switched to
+    /// when it is connected.
+    pub known_mice: Vec<KnownMouse>,
     /// Chosen mouse model id, `GENERIC_DEVICE` for statistics only, `None`
     /// until the user confirmed one.
     pub device: Option<String>,
@@ -89,6 +134,9 @@ impl Default for AppConfig {
             power: Power { sleep_min: SLEEP_DEFAULT, dark_while_moving: true },
             buttons: DEFAULT_ACTIONS,
             macros: vec![Vec::new(); MACRO_COUNT],
+            profiles: vec![Profile::default()],
+            profile: 0,
+            known_mice: Vec::new(),
             device: None,
             device_usb: None,
             last_stage: None,
@@ -105,6 +153,43 @@ impl Default for AppConfig {
             update_notified: None,
         }
     }
+}
+
+impl AppConfig {
+    /// Puts the working layout and macros into the active profile.
+    pub fn keep_active(&mut self) {
+        if let Some(p) = self.profiles.get_mut(self.profile) {
+            (p.buttons, p.macros) = (self.buttons, self.macros.clone());
+        }
+    }
+
+    /// Makes profile `i` the working one; `false` if there is none.
+    pub fn activate(&mut self, i: usize) -> bool {
+        if i >= self.profiles.len() {
+            return false;
+        }
+        self.keep_active();
+        self.profile = i;
+        (self.buttons, self.macros) = (self.profiles[i].buttons, self.profiles[i].macros.clone());
+        true
+    }
+
+    /// The mouse was chosen: it leads the remembered ones.
+    pub fn remember_mouse(&mut self, device: &str, usb: (u16, u16)) {
+        self.known_mice.retain(|k| k.usb != usb);
+        self.known_mice.insert(0, KnownMouse { device: device.to_string(), usb });
+        self.known_mice.truncate(KNOWN_MAX);
+    }
+}
+
+/// A profile name as stored: letters, digits, spaces, `-` and `.` only,
+/// no leading or trailing blanks, at most `PROFILE_NAME_MAX` characters.
+/// Names go into menus: `_` and `&` mark shortcut letters there, and
+/// invisible or direction-changing characters would mislead.
+pub fn clean_name(name: &str) -> String {
+    let allowed = |c: &char| c.is_alphanumeric() || matches!(c, ' ' | '-' | '.');
+    let kept: String = name.chars().filter(allowed).take(PROFILE_NAME_MAX).collect();
+    kept.trim().to_string()
 }
 
 /// `%APPDATA%\Whisker`, resolved by the shell; `None` disables saving.
@@ -209,6 +294,71 @@ fn usb_ids(v: &str) -> Option<(u16, u16)> {
     Some((u16::from_str_radix(vid, 16).ok()?, u16::from_str_radix(pid, 16).ok()?))
 }
 
+/// `"100100,100200"` over the layout; a bad entry keeps its button.
+fn parse_buttons(v: &str, buttons: &mut [Action; BUTTON_COUNT]) {
+    for (i, t) in v.split(',').take(BUTTON_COUNT).enumerate() {
+        if let Some(a) = triple(t).and_then(Action::from_triple) {
+            buttons[i] = a;
+        }
+    }
+}
+
+fn parse_macro(v: &str) -> Vec<MacroEvent> {
+    v.split(',').filter_map(triple).filter_map(MacroEvent::decode).take(MACRO_MAX_EVENTS).collect()
+}
+
+/// Index after `prefix` in a key, e.g. `("macro3", "macro")` -> 3.
+fn index_of(key: &str, prefix: &str, count: usize) -> Option<usize> {
+    key.strip_prefix(prefix)?.parse::<usize>().ok().filter(|&i| i < count)
+}
+
+/// One `profileK.field=value` line, e.g. `profile1.macro3=…`.
+fn parse_profile(key: &str, v: &str, profiles: &mut Vec<Profile>) {
+    let Some((head, field)) = key.split_once('.') else {
+        return;
+    };
+    let Some(k) = index_of(head, "profile", PROFILE_MAX) else {
+        return;
+    };
+    if profiles.len() <= k {
+        profiles.resize(k + 1, Profile::default());
+    }
+    let p = &mut profiles[k];
+    match field {
+        "name" => p.name = clean_name(v),
+        "buttons" => parse_buttons(v, &mut p.buttons),
+        _ => {
+            if let Some(i) = index_of(field, "macro", MACRO_COUNT) {
+                p.macros[i] = parse_macro(v);
+            }
+        }
+    }
+}
+
+/// `"046D:C52B|logitech/m705"`.
+fn known_mouse(v: &str) -> Option<KnownMouse> {
+    let (usb, device) = v.split_once('|')?;
+    let device = device.trim();
+    if device.is_empty() {
+        return None;
+    }
+    Some(KnownMouse { device: crate::devices::migrate_id(device).to_string(), usb: usb_ids(usb.trim())? })
+}
+
+fn button_text(buttons: &[Action; BUTTON_COUNT]) -> String {
+    buttons.iter().map(|a| triple_hex(a.to_stored())).collect::<Vec<_>>().join(",")
+}
+
+/// `macroN=` lines of the recorded macros, each key behind `prefix`.
+fn macro_lines(prefix: &str, macros: &[Vec<MacroEvent>]) -> String {
+    let mut text = String::new();
+    for (i, m) in macros.iter().enumerate().filter(|(_, m)| !m.is_empty()) {
+        let events: Vec<String> = m.iter().map(|e| triple_hex(e.encode())).collect();
+        text += &format!("{prefix}macro{i}={}\n", events.join(","));
+    }
+    text
+}
+
 fn nums(v: &str) -> Vec<u32> {
     v.split(',').filter_map(|x| x.trim().parse().ok()).collect()
 }
@@ -251,19 +401,16 @@ fn parse_config(text: &str, mut c: AppConfig) -> AppConfig {
             ("lod", Some(x)) => c.lod = if x == 1 { Lod::Mm1 } else { Lod::Mm2 },
             ("sleep", Some(x)) => c.power.sleep_min = x as u8,
             ("dark_moving", _) => c.power.dark_while_moving = v == "1",
-            ("buttons", _) => {
-                for (i, t) in v.split(',').take(BUTTON_COUNT).enumerate() {
-                    if let Some(a) = triple(t).and_then(Action::from_triple) {
-                        c.buttons[i] = a;
-                    }
-                }
-            }
+            ("buttons", _) => parse_buttons(v, &mut c.buttons),
             (k, _) if k.starts_with("macro") => {
-                let Some(i) = k[5..].parse::<usize>().ok().filter(|&i| i < MACRO_COUNT) else {
+                let Some(i) = index_of(k, "macro", MACRO_COUNT) else {
                     continue;
                 };
-                c.macros[i] = v.split(',').filter_map(triple).filter_map(MacroEvent::decode).take(MACRO_MAX_EVENTS).collect();
+                c.macros[i] = parse_macro(v);
             }
+            ("profile", Some(x)) => c.profile = x as usize,
+            ("known_mice", _) => c.known_mice = v.split(',').filter_map(known_mouse).take(KNOWN_MAX).collect(),
+            (k, _) if k.starts_with("profile") => parse_profile(k, v, &mut c.profiles),
             // Ids of the flat catalogue are renamed to brand/model ids.
             ("device", _) if !v.is_empty() => c.device = Some(crate::devices::migrate_id(v).to_string()),
             ("device_usb", _) => c.device_usb = usb_ids(v),
@@ -302,7 +449,9 @@ fn format_config(c: &AppConfig) -> String {
         format!("lod={}", c.lod as u8),
         format!("sleep={}", c.power.sleep_min),
         format!("dark_moving={}", c.power.dark_while_moving as u8),
-        format!("buttons={}", c.buttons.iter().map(|a| triple_hex(a.to_stored())).collect::<Vec<_>>().join(",")),
+        format!("buttons={}", button_text(&c.buttons)),
+        format!("profile={}", c.profile),
+        format!("known_mice={}", c.known_mice.iter().map(|k| format!("{:04X}:{:04X}|{}", k.usb.0, k.usb.1, k.device)).collect::<Vec<_>>().join(",")),
         format!("device={}", c.device.as_deref().unwrap_or("")),
         format!("device_usb={}", c.device_usb.map(|(v, p)| format!("{v:04X}:{p:04X}")).unwrap_or_default()),
         format!("stage={}", c.last_stage.unwrap_or(0)),
@@ -318,10 +467,12 @@ fn format_config(c: &AppConfig) -> String {
         format!("update_skip={}", c.update_skip.as_deref().unwrap_or("")),
         format!("update_notified={}", c.update_notified.as_deref().unwrap_or("")),
     ];
-    let mut text = lines.join("\n") + "\n";
-    for (i, m) in c.macros.iter().enumerate().filter(|(_, m)| !m.is_empty()) {
-        let events: Vec<String> = m.iter().map(|e| triple_hex(e.encode())).collect();
-        text += &format!("macro{i}={}\n", events.join(","));
+    let mut text = lines.join("\n") + "\n" + &macro_lines("", &c.macros);
+    for (k, p) in c.profiles.iter().enumerate() {
+        // The active profile is written as it is being worked on.
+        let (buttons, macros) = if k == c.profile { (&c.buttons, &c.macros) } else { (&p.buttons, &p.macros) };
+        text += &format!("profile{k}.name={}\nprofile{k}.buttons={}\n", p.name, button_text(buttons));
+        text += &macro_lines(&format!("profile{k}."), macros);
     }
     text
 }
@@ -369,12 +520,35 @@ fn sanitize(mut c: AppConfig) -> AppConfig {
 
     // Buttons and macros go to the mouse as-is: keep them safe to replay,
     // and never leave the user without a left click.
-    c.buttons = c.buttons.map(Action::sanitized);
-    if !c.buttons.contains(&Action::Mouse(crate::protocol::MB_LEFT)) {
-        c.buttons[0] = DEFAULT_ACTIONS[0];
+    (c.buttons, c.macros) = safe_layout(c.buttons, std::mem::take(&mut c.macros));
+    c.profiles.truncate(PROFILE_MAX);
+    if c.profiles.is_empty() {
+        c.profiles.push(Profile::default());
     }
-    c.macros = std::mem::take(&mut c.macros).into_iter().map(crate::protocol::balance).collect();
+    for p in c.profiles.iter_mut() {
+        p.name = clean_name(&p.name);
+        (p.buttons, p.macros) = safe_layout(p.buttons, std::mem::take(&mut p.macros));
+    }
+    c.profile = c.profile.min(c.profiles.len() - 1);
+    c.keep_active();
+
+    // A mouse chosen before mice were remembered is one of them.
+    if let (Some(device), Some(usb)) = (c.device.clone(), c.device_usb) {
+        if !c.known_mice.iter().any(|k| k.usb == usb) {
+            c.remember_mouse(&device, usb);
+        }
+    }
     c
+}
+
+/// A layout and its macros as they may go to the mouse.
+fn safe_layout(buttons: [Action; BUTTON_COUNT], mut macros: Vec<Vec<MacroEvent>>) -> ([Action; BUTTON_COUNT], Vec<Vec<MacroEvent>>) {
+    let mut buttons = buttons.map(Action::sanitized);
+    if !buttons.contains(&Action::Mouse(crate::protocol::MB_LEFT)) {
+        buttons[0] = DEFAULT_ACTIONS[0];
+    }
+    macros.resize(MACRO_COUNT, Vec::new());
+    (buttons, macros.into_iter().map(crate::protocol::balance).collect())
 }
 
 // ---- vendor import -------------------------------------------------------
@@ -569,6 +743,74 @@ mod tests {
         let back = parse_config(&format_config(&c), AppConfig::default());
         assert_eq!(back.buttons, c.buttons);
         assert_eq!(back.macros, c.macros);
+    }
+
+    #[test]
+    fn profiles_roundtrip() {
+        use crate::protocol::{Edge, Ev};
+        let mut c = AppConfig::default();
+        c.profiles[0].name = "Desktop".into();
+        c.profiles.push(Profile { name: "Hry 2.0".into(), ..Profile::default() });
+        assert!(c.activate(1));
+        // Edits go to the working copy; the file carries them for the active profile.
+        c.buttons[5] = Action::Key { mods: 0x01, usage: 0x06 };
+        c.macros[2] = vec![MacroEvent { ev: Ev::Key(0x04, Edge::Down), delay_ms: 30 }, MacroEvent { ev: Ev::Key(0x04, Edge::Up), delay_ms: 30 }];
+
+        let back = sanitize(parse_config(&format_config(&c), AppConfig::default()));
+        assert_eq!(back.profile, 1);
+        assert_eq!(back.profiles.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["Desktop", "Hry 2.0"]);
+        assert_eq!((back.buttons, &back.macros), (c.buttons, &c.macros));
+        assert_eq!((back.profiles[1].buttons, &back.profiles[1].macros), (c.buttons, &c.macros));
+        assert_eq!(back.profiles[0].buttons, DEFAULT_ACTIONS);
+    }
+
+    #[test]
+    fn a_config_without_profiles_gets_one_from_its_layout() {
+        let c = sanitize(parse_config("buttons=100100,100200,100400,100800,101000,400100\n", AppConfig::default()));
+        assert_eq!((c.profiles.len(), c.profile), (1, 0));
+        assert_eq!(c.profiles[0].buttons, c.buttons);
+        assert_eq!(c.profiles[0].name, "");
+    }
+
+    #[test]
+    fn a_broken_profile_list_stays_usable() {
+        let text = "profile=7\nprofile1.name=  A\t_&\u{202E}B  \nprofile1.buttons=000000,000000,000000,000000,000000,000000\nprofile99.name=x\n";
+        let c = sanitize(parse_config(text, AppConfig::default()));
+        assert_eq!((c.profiles.len(), c.profile), (2, 1));
+        assert_eq!(c.profiles[1].name, "AB");
+        assert!(c.buttons.contains(&Action::Mouse(crate::protocol::MB_LEFT)));
+        assert!(c.profiles[0].buttons.contains(&Action::Mouse(crate::protocol::MB_LEFT)));
+    }
+
+    #[test]
+    fn switching_profiles_keeps_each_layout() {
+        let mut c = AppConfig::default();
+        c.profiles.push(Profile::default());
+        c.buttons[4] = Action::Disable;
+        assert!(c.activate(1));
+        assert_eq!(c.buttons, DEFAULT_ACTIONS);
+        assert!(c.activate(0));
+        assert_eq!(c.buttons[4], Action::Disable);
+        assert!(!c.activate(5));
+        assert_eq!(c.profile, 0);
+    }
+
+    #[test]
+    fn known_mice_roundtrip_last_used_first() {
+        let mut c = AppConfig::default();
+        c.remember_mouse("whiteshark/lionel", (0x248A, 0x5B2F));
+        c.remember_mouse("logitech/auto", (0x046D, 0xC52B));
+        c.remember_mouse("whiteshark/lionel", (0x248A, 0x5B2F));
+        assert_eq!(c.known_mice.iter().map(|k| k.usb.0).collect::<Vec<_>>(), [0x248A, 0x046D]);
+        let back = parse_config(&format_config(&c), AppConfig::default());
+        assert_eq!(back.known_mice, c.known_mice);
+        assert_eq!(parse_config("known_mice=zz|x,046D:C52B|,\n", AppConfig::default()).known_mice, []);
+    }
+
+    #[test]
+    fn the_mouse_of_an_older_config_is_remembered() {
+        let c = sanitize(parse_config("device=logitech/auto\ndevice_usb=046D:C52B\n", AppConfig::default()));
+        assert_eq!(c.known_mice, [KnownMouse { device: "logitech/auto".into(), usb: (0x046D, 0xC52B) }]);
     }
 
     #[test]

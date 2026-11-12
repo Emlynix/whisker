@@ -31,6 +31,7 @@ mod buttons;
 mod device;
 mod mesh;
 mod pro;
+mod profiles;
 mod report;
 mod tui;
 mod update;
@@ -266,13 +267,13 @@ pub enum Page {
     Appearance,
     Mouse,
     About,
-    /// Pages of the PRO version: mock-ups here (`view::pro`).
     Profiles,
+    /// Page of the PRO version: a mock-up here (`view::pro`).
     Overlay,
 }
 
 /// Sidebar order; Settings (`General`) is pinned at the bottom.
-const NAV: [Page; 6] = [Page::Overview, Page::Dpi, Page::Polling, Page::Lighting, Page::Buttons, Page::Stats];
+const NAV: [Page; 7] = [Page::Overview, Page::Dpi, Page::Polling, Page::Lighting, Page::Buttons, Page::Profiles, Page::Stats];
 const BUTTON_TABS: [(Page, T); 2] = [(Page::Buttons, T::PageButtons), (Page::Macros, T::PageMacros)];
 const SETTING_TABS: [(Page, T); 4] =
     [(Page::General, T::TabGeneral), (Page::Appearance, T::PageAppearance), (Page::Mouse, T::TabMouse), (Page::About, T::About)];
@@ -303,7 +304,7 @@ impl Page {
 
     /// The page sends settings to the mouse (offline banner, sync chip).
     fn configures(self) -> bool {
-        matches!(self, Page::Dpi | Page::Polling | Page::Lighting | Page::Buttons | Page::Macros)
+        matches!(self, Page::Dpi | Page::Polling | Page::Lighting | Page::Buttons | Page::Macros | Page::Profiles)
     }
 }
 
@@ -324,12 +325,13 @@ pub fn page_visible(page: Page, caps: &Caps) -> bool {
         Page::Dpi => caps.dpi != DpiUi::None,
         Page::Polling => caps.polling,
         Page::Lighting => caps.lighting,
-        Page::Buttons => caps.buttons,
+        // Profiles hold button layouts.
+        Page::Buttons | Page::Profiles => caps.buttons,
         _ => true,
     }
 }
 
-/// Sidebar pages shown for a mouse, in order (also Ctrl+1..6).
+/// Sidebar pages shown for a mouse, in order (also Ctrl+1..7).
 pub fn nav_pages(caps: &Caps) -> Vec<Page> {
     NAV.into_iter().filter(|p| page_visible(*p, caps)).collect()
 }
@@ -401,6 +403,15 @@ pub enum Act {
     MacroRecord,
     MacroClear,
     MacroDelay(DelayMode),
+    /// Makes the profile with this index the active one.
+    Profile(usize),
+    ProfileNew,
+    /// A copy of the active profile.
+    ProfileDuplicate,
+    /// Starts (or ends) typing the active profile's name.
+    ProfileRename,
+    /// Deletes the active profile.
+    ProfileDelete,
     ChangeMouse,
     /// Slider of a driver-based mouse's single DPI value.
     BasicDpi,
@@ -528,6 +539,16 @@ impl Focus {
 }
 
 /// Bottom message, e.g. "All buttons reset · Undo".
+/// A row of the Profiles page.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProfileRow {
+    pub name: String,
+    /// Buttons that differ from the default layout.
+    pub remapped: usize,
+    /// Recorded macros.
+    pub macros: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Toast {
     pub text: String,
@@ -630,6 +651,11 @@ pub struct View {
     pub power: Power,
     pub buttons: [Action; BUTTON_COUNT],
     pub macros: Vec<Vec<MacroEvent>>,
+    pub profiles: Vec<ProfileRow>,
+    /// Index of the active profile.
+    pub profile: usize,
+    /// The active profile's new name while it is typed.
+    pub rename: Option<String>,
     /// Open "assign action" dialog.
     pub picker: Option<Picker>,
     pub macro_sel: usize,
@@ -1066,7 +1092,7 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
         let title = Rect::new(X0, TITLE_Y, CW, 24.0);
         f.g.text(&tr(v.page.title()).to_uppercase(), title, Size::Title, Weight::Semibold, Align::Left, th().text);
         f.g.fill(Rect::new(X0, TITLE_Y + 24.0 + TITLE_RULE.y, TITLE_RULE.w, TITLE_RULE.h), 0.0, th().acc_fill);
-        if matches!(v.page.nav(), Page::Profiles | Page::Overlay) {
+        if v.page.nav() == Page::Overlay {
             let title_w = text_w(&tr(v.page.title()).to_uppercase(), Size::Title);
             pro_tag(&mut f, X0 + title_w + 12.0, TITLE_Y + 4.0);
         }
@@ -1091,7 +1117,7 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
                 if v.page == Page::Buttons { buttons::buttons_page(&mut f, v) } else { buttons::macros_page(&mut f, v) }
             }
             Page::Stats => stats(&mut f, v),
-            Page::Profiles => pro::profiles_page(&mut f),
+            Page::Profiles => profiles::page(&mut f, v),
             Page::Overlay => pro::overlay_page(&mut f),
             Page::General | Page::Appearance | Page::Mouse | Page::About => {
                 f.tabs(&SETTING_TABS.map(|(p, t)| (p, tr(t))), v.page);
@@ -1512,7 +1538,7 @@ fn sidebar(f: &mut Frame, v: &View) {
     const PRO_ROW_H: f32 = 30.0;
     const FOOT_PAD: f32 = 4.0;
     /// Pages of the PRO version: mock-ups in this one.
-    const PRO_PAGES: [Page; 2] = [Page::Profiles, Page::Overlay];
+    const PRO_PAGES: [Page; 1] = [Page::Overlay];
 
     let side = Rect::new(0.0, TITLE_H, SIDE_W, PAGE_H - TITLE_H);
     f.g.fill(side, 0.0, th().side);
@@ -1812,7 +1838,7 @@ fn overview_stats(v: &View) -> Vec<Stat<'static>> {
 }
 
 /// Overview: what the mouse reports, as one strip of numbers; then the
-/// quick DPI switch and the profile switch of the PRO version.
+/// quick DPI switch and, for a mouse with button settings, the profiles.
 fn overview(f: &mut Frame, v: &View) {
     const STRIP_H: f32 = 108.0;
     let stages = v.caps.dpi == DpiUi::Stages;
@@ -1830,7 +1856,9 @@ fn overview(f: &mut Frame, v: &View) {
         f.segments(Rect::new(body.x + PANEL_PAD, body.y + PANEL_PAD, body.w - 2.0 * PANEL_PAD, SEGMENT_H), &items);
         y += panel.h + PANEL_GAP;
     }
-    pro::profile_switch(f, Rect::new(X0, y, CW, PANEL_HEAD + SEGMENT_H + 2.0 * PANEL_PAD));
+    if v.caps.buttons {
+        profiles::switch(f, v, Rect::new(X0, y, CW, profiles::switch_h(v.profiles.len())));
+    }
 }
 
 /// "Measured: 498 Hz" once Raw Input has a real measurement.

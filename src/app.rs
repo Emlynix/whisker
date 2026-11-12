@@ -9,6 +9,7 @@
 //! Lives on the UI thread in a thread-local; other threads reach it with
 //! `window::post(.. with_ctrl(..))`.
 
+mod profiles;
 mod report;
 mod updater;
 mod verify;
@@ -32,7 +33,7 @@ use crate::platform::{self, Access, Autostart, Shade, TitleColors, autostart, hi
 use crate::shell::{Hooks, KeyEvent, Mods, Phase};
 use crate::stats::{self, Period, Stats};
 use crate::theme::{self, THEMES};
-use crate::store::{self, AppConfig};
+use crate::store::{self, AppConfig, KnownMouse};
 use crate::tray::{Level, TrayAction};
 use crate::view::{
     self, Act, Answer, Ask, Badge, Banner, BasicView, BrandRow, Charge, CheckView, DelayMode, Detect, DetectRow, DetectStep, DeviceView, Dialog,
@@ -229,6 +230,8 @@ impl Knobs for MouseService {
 enum Undo {
     Buttons([Action; protocol::BUTTON_COUNT]),
     Macro(usize, Vec<MacroEvent>),
+    /// A deleted profile and where it was.
+    Profile(usize, store::Profile),
 }
 
 /// What must be re-sent to the mouse after an undo.
@@ -236,6 +239,8 @@ enum Undo {
 enum Resend {
     Buttons,
     Macros,
+    /// Another profile is the working one.
+    Layout,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -309,6 +314,7 @@ pub fn run(mode: StartMode, last: crate::log::Last) {
     with_ctrl(|c| {
         c.sync_stages();
         c.refresh_stats();
+        c.sync_profiles();
     });
 
     // Which mice are connected; asks the user on first run.
@@ -394,6 +400,9 @@ fn initial_view(cfg: &AppConfig, ask_setup: bool) -> View {
         power: cfg.power,
         buttons: cfg.buttons,
         macros: cfg.macros.clone(),
+        profiles: Vec::new(),
+        profile: cfg.profile,
+        rename: None,
         picker: None,
         macro_sel: 0,
         recording: false,
@@ -819,6 +828,49 @@ fn new_mouse<'a>(mice: &'a [DeviceInfo], seen: &[String], device: Option<&str>, 
     })
 }
 
+/// `"046D:C52B"`, as `mouse_key` starts.
+fn usb_id(usb: (u16, u16)) -> String {
+    format!("{:04X}:{:04X}", usb.0, usb.1)
+}
+
+/// Whether the chosen mouse is among the connected ones. A choice made
+/// from the lists has no USB ids: any product of its model counts; "other
+/// mouse" without ids cannot be told, so it counts as connected.
+fn chosen_connected(mice: &[DeviceInfo], device: &str, usb: Option<(u16, u16)>) -> bool {
+    if let Some(usb) = usb {
+        return mice.iter().any(|d| (d.vid, d.pid) == usb);
+    }
+    if device == store::GENERIC_DEVICE {
+        return true;
+    }
+    let id = devices::migrate_id(device);
+    mice.iter().any(|d| matches!(devices::match_device(d), Match::Known(m) if m.id == id))
+}
+
+/// The remembered mouse to switch to by itself, if any:
+///
+/// ```text
+/// a remembered mouse was connected since the last scan   -> that one
+/// the chosen mouse is gone and a remembered one is there -> the last used
+/// ```
+/// `seen` are the keys of the last scan; `None` at start, when nothing is
+/// news. Never the chosen mouse itself, and nothing before the first choice.
+fn remembered<'a>(mice: &[DeviceInfo], seen: Option<&[String]>, cfg: &'a AppConfig) -> Option<&'a KnownMouse> {
+    let device = cfg.device.as_deref()?;
+    let chosen = |k: &KnownMouse| k.device == device && Some(k.usb) == cfg.device_usb;
+    let connected = |k: &KnownMouse| mice.iter().any(|d| (d.vid, d.pid) == k.usb);
+    let ready: Vec<&KnownMouse> = cfg.known_mice.iter().filter(|k| !chosen(k) && connected(k)).collect();
+
+    let fresh = |k: &&KnownMouse| seen.is_some_and(|seen| !seen.iter().any(|key| key.starts_with(&usb_id(k.usb))));
+    if let Some(k) = ready.iter().copied().find(fresh) {
+        return Some(k);
+    }
+    if chosen_connected(mice, device, cfg.device_usb) {
+        return None;
+    }
+    ready.first().copied()
+}
+
 /// The banner for a catalogue mouse ("Brand Model"); `None` for any other.
 fn banner_of(d: &DeviceInfo) -> Option<Banner> {
     let Match::Known(m) = devices::match_device(d) else {
@@ -833,8 +885,9 @@ fn offer_choice(d: &DeviceInfo) -> String {
     detected(d).1.id.clone()
 }
 
-/// Remembers a "Not now" for this mouse.
+/// Remembers a "Not now" for this mouse: it is not switched to either.
 fn ignore_mouse(cfg: &mut AppConfig, d: &DeviceInfo) {
+    cfg.known_mice.retain(|k| k.usb != (d.vid, d.pid));
     let key = mouse_key(d);
     if !cfg.ignored_mice.contains(&key) {
         cfg.ignored_mice.push(key);
@@ -884,6 +937,10 @@ fn apply_undo(cfg: &mut AppConfig, u: Undo) -> Resend {
             }
             Resend::Macros
         }
+        Undo::Profile(at, profile) => {
+            profiles::restore(cfg, at, profile);
+            Resend::Layout
+        }
     }
 }
 
@@ -906,9 +963,17 @@ fn store_layout(cfg: &mut AppConfig, undo: &mut Option<Undo>, buttons: [Action; 
 }
 
 /// Another mouse is chosen: an undo for the previous one must not reach it.
-fn switch_device(cfg: &mut AppConfig, undo: &mut Option<Undo>, choice: String) {
+/// One picked among the connected mice (`usb`) is remembered for the
+/// automatic switch, and a former "Not now" for it is over.
+fn switch_device(cfg: &mut AppConfig, undo: &mut Option<Undo>, choice: String, usb: Option<(u16, u16)>) {
     *undo = None;
+    if let Some(usb) = usb {
+        cfg.remember_mouse(&choice, usb);
+        let id = usb_id(usb);
+        cfg.ignored_mice.retain(|key| !key.starts_with(&id));
+    }
     cfg.device = Some(choice);
+    cfg.device_usb = usb;
 }
 
 /// Ctrl+Z: puts back the pending undo; waits while a dialog is open.
@@ -1167,7 +1232,7 @@ fn command_key(m: Mods) -> bool {
     m.ctrl
 }
 
-/// Ctrl+1..6 opens the nth page of the sidebar, Ctrl+, Settings.
+/// Ctrl+1..7 opens the nth page of the sidebar, Ctrl+, Settings.
 fn page_shortcut(vk: u16, m: Mods, caps: &Caps) -> Option<Page> {
     if !command_key(m) {
         return None;
@@ -1297,6 +1362,16 @@ fn hook_tray(a: TrayAction) {
             });
         }
         TrayAction::Quit => window::quit(),
+        TrayAction::Profile(i) => {
+            with_ctrl(|c| {
+                crate::log!("tray profile {i}");
+                c.end_rename();
+                c.switch_profile(i);
+                // The menu's mark follows even when nothing changed.
+                c.sync_profiles();
+                window::invalidate();
+            });
+        }
     }
 }
 
@@ -1401,6 +1476,7 @@ impl Controller {
 
     /// Keyboard input stops reaching us: end recording and key capture.
     fn on_focus_lost(&mut self) {
+        self.end_rename();
         self.stop_recording();
         if let Some(p) = self.view.picker.as_mut() {
             p.capturing = false;
@@ -1411,6 +1487,12 @@ impl Controller {
     fn on_act(&mut self, a: Act) {
         let before = self.overlay();
         crate::log!("act {a:?}");
+        // A press ends typing a profile name and keeps what was typed;
+        // on "Rename" itself that is all it does.
+        if self.end_rename() && a == Act::ProfileRename {
+            window::invalidate();
+            return;
+        }
         self.act(a);
         // Any other press closes the open language list.
         if a != Act::LangMenu {
@@ -1506,6 +1588,7 @@ impl Controller {
                     self.macros_changed();
                 }
             }
+            Act::Profile(_) | Act::ProfileNew | Act::ProfileDuplicate | Act::ProfileRename | Act::ProfileDelete => self.profile_act(a),
             Act::ChangeMouse => self.open_detect_scan(),
             Act::BannerSwitch => self.switch_to_offer(),
             Act::BannerDismiss => self.ignore_offer(),
@@ -1844,6 +1927,7 @@ impl Controller {
             self.view.page = Page::Overview;
         }
         self.ident = Some(ident);
+        self.sync_profiles();
         self.refresh_device();
     }
 
@@ -1862,6 +1946,10 @@ impl Controller {
         // Mice connected at start are no news.
         self.seen = Some(mice.iter().map(mouse_key).collect());
         self.mice = mice.clone();
+        // The chosen mouse is not there, a remembered one is.
+        if self.auto_switch(&mice, None) {
+            return;
+        }
         self.retarget_bluetooth();
         self.refresh_device();
         if self.cfg.device.is_none() {
@@ -1976,6 +2064,9 @@ impl Controller {
         let Some(seen) = self.seen.replace(keys) else {
             return;
         };
+        if self.auto_switch(&mice, Some(&seen)) {
+            return;
+        }
         let found = new_mouse(&mice, &seen, self.cfg.device.as_deref(), &self.cfg.ignored_mice).cloned();
         if let Some(d) = found {
             self.offer_mouse(d);
@@ -2128,8 +2219,8 @@ impl Controller {
     /// Stores the chosen mouse (and which detected device, if picked from
     /// the detected ones) and points the driver at it.
     fn apply_device(&mut self, choice: String, usb: Option<(u16, u16)>) {
-        switch_device(&mut self.cfg, &mut self.undo, choice);
-        self.cfg.device_usb = usb;
+        self.end_rename();
+        switch_device(&mut self.cfg, &mut self.undo, choice, usb);
         self.hide_toast();
         store::save_config(&self.cfg);
 
@@ -2146,7 +2237,26 @@ impl Controller {
         if !view::page_visible(self.view.page, &self.view.caps) {
             self.view.page = Page::Overview;
         }
+        self.sync_profiles();
         self.refresh_device();
+    }
+
+    /// A remembered mouse was connected, or the chosen one is gone and a
+    /// remembered one is there: it becomes the chosen mouse. Not while the
+    /// user is choosing a mouse or reading one for a report. `true` if it
+    /// switched.
+    fn auto_switch(&mut self, mice: &[DeviceInfo], seen: Option<&[String]>) -> bool {
+        if self.view.detect.is_some() || self.wizard.is_some() || platform::demo() {
+            return false;
+        }
+        let Some(k) = remembered(mice, seen, &self.cfg).cloned() else {
+            return false;
+        };
+        crate::log!("remembered mouse {} {}: switching", usb_id(k.usb), k.device);
+        self.close_offer();
+        self.apply_device(k.device, Some(k.usb));
+        self.show_toast(fill(tr(T::SwitchedTo), &[&self.view.device_name]), None);
+        true
     }
 
     /// Rows of the Device page from the catalogue, USB identity and status.
@@ -2499,6 +2609,7 @@ impl Controller {
         self.view.buttons = buttons;
         self.send_setting(Command::SetButtons(self.cfg.buttons, self.cfg.macros.clone()));
         store::save_config(&self.cfg);
+        self.sync_profiles();
     }
 
     fn assign(&mut self, action: Action) {
@@ -2565,6 +2676,7 @@ impl Controller {
         match resend {
             Resend::Buttons => self.set_buttons(self.cfg.buttons),
             Resend::Macros => self.macros_changed(),
+            Resend::Layout => self.layout_changed(),
         }
         self.hide_toast();
         true
@@ -2734,6 +2846,10 @@ impl Controller {
         const VK_DIGIT_1: u16 = 0x31;
         const VK_DIGIT_9: u16 = 0x39;
         let bare = !(m.ctrl || m.alt || m.shift || m.win);
+        // A profile name being typed takes every key.
+        if self.rename_key(vk, m) {
+            return true;
+        }
         // F10 switches between the graphical and the text mode.
         if vk == VK_F10 && bare && !self.modal() {
             self.on_act(Act::ToggleTui);
@@ -2906,6 +3022,7 @@ impl Controller {
         self.drop_undo();
         self.view.macros = self.cfg.macros.clone();
         store::save_config(&self.cfg);
+        self.sync_profiles();
         if self.cfg.buttons.iter().any(|a| matches!(a, Action::Macro { .. })) {
             self.send_setting(Command::SetButtons(self.cfg.buttons, self.cfg.macros.clone()));
         }
@@ -3026,6 +3143,7 @@ impl Controller {
         let facts = self.facts();
         relabel(&mut self.view, self.link, &facts);
         self.update_tray();
+        self.sync_profiles();
         self.refresh_stats();
     }
 
@@ -3529,11 +3647,13 @@ mod tests {
     #[test]
     fn nav_shows_only_supported_pages() {
         let all = view::nav_pages(&devices::default_model().caps);
-        assert_eq!(all, [Page::Overview, Page::Dpi, Page::Polling, Page::Lighting, Page::Buttons, Page::Stats]);
+        assert_eq!(all, [Page::Overview, Page::Dpi, Page::Polling, Page::Lighting, Page::Buttons, Page::Profiles, Page::Stats]);
         assert_eq!(view::nav_pages(&CAPS_NONE), [Page::Overview, Page::Stats]);
 
         // Tabs follow their sidebar page; Settings is always there.
         assert!(!view::page_visible(Page::Macros, &CAPS_NONE));
+        // Profiles hold button layouts: nothing for a mouse without them.
+        assert!(!view::page_visible(Page::Profiles, &CAPS_NONE));
         assert!(view::page_visible(Page::Mouse, &CAPS_NONE));
         assert_eq!(Page::Appearance.nav(), Page::General);
     }
@@ -3543,7 +3663,8 @@ mod tests {
         let ctrl = Mods { ctrl: true, ..Mods::default() };
         let caps = devices::default_model().caps;
         assert_eq!(page_shortcut(VK_1, ctrl, &caps), Some(Page::Overview));
-        assert_eq!(page_shortcut(VK_1 + 5, ctrl, &caps), Some(Page::Stats));
+        assert_eq!(page_shortcut(VK_1 + 5, ctrl, &caps), Some(Page::Profiles));
+        assert_eq!(page_shortcut(VK_1 + 6, ctrl, &caps), Some(Page::Stats));
         assert_eq!(page_shortcut(VK_COMMA, ctrl, &caps), Some(Page::General));
         // Without Ctrl a digit is just a digit.
         assert_eq!(page_shortcut(VK_1, Mods::default(), &caps), None);
@@ -3634,6 +3755,75 @@ mod tests {
         assert_eq!(new_mouse(&mice, &[], None, &[]), None);
     }
 
+    /// A config that chose `current` and remembers `others` too, `current` last used.
+    fn remembering(current: &DeviceInfo, others: &[&DeviceInfo]) -> AppConfig {
+        let mut cfg = AppConfig::default();
+        let mut undo = None;
+        for d in others.iter().copied().chain([current]) {
+            switch_device(&mut cfg, &mut undo, offer_choice(d), Some((d.vid, d.pid)));
+        }
+        cfg
+    }
+
+    #[test]
+    fn a_remembered_mouse_is_switched_to_when_it_is_connected() {
+        let (lionel, eternico) = (listed(LIONEL, ""), listed(ETERNICO, ""));
+        let cfg = remembering(&lionel, &[&eternico]);
+        let both = [lionel.clone(), eternico.clone()];
+        let seen = vec![mouse_key(&lionel)];
+        let k = remembered(&both, Some(&seen), &cfg).expect("the remembered mouse was just plugged in");
+        assert_eq!((k.device.as_str(), k.usb), (ETERNICO, (eternico.vid, eternico.pid)));
+
+        // Both were there at the last scan, or at start: the choice stays.
+        let seen: Vec<String> = both.iter().map(mouse_key).collect();
+        assert_eq!(remembered(&both, Some(&seen), &cfg), None);
+        assert_eq!(remembered(&both, None, &cfg), None);
+    }
+
+    #[test]
+    fn a_missing_mouse_gives_way_to_a_remembered_one() {
+        let (lionel, eternico) = (listed(LIONEL, ""), listed(ETERNICO, ""));
+        let cfg = remembering(&lionel, &[&eternico]);
+        let only = [eternico.clone()];
+        let seen = vec![mouse_key(&eternico)];
+        // At start and after the chosen one was unplugged.
+        assert_eq!(remembered(&only, None, &cfg).map(|k| k.device.as_str()), Some(ETERNICO));
+        assert_eq!(remembered(&only, Some(&seen), &cfg).map(|k| k.device.as_str()), Some(ETERNICO));
+        // Nothing remembered is connected: nothing to switch to.
+        assert_eq!(remembered(&[], Some(&seen), &cfg), None);
+    }
+
+    #[test]
+    fn only_chosen_mice_are_switched_to() {
+        let (lionel, eternico) = (listed(LIONEL, ""), listed(ETERNICO, ""));
+        // Never chosen: the banner asks instead.
+        let cfg = remembering(&lionel, &[]);
+        assert_eq!(remembered(&[lionel.clone(), eternico.clone()], Some(&[]), &cfg), None);
+
+        // "Not now" forgets a mouse; choosing it again ends the "Not now".
+        let mut cfg = remembering(&lionel, &[&eternico]);
+        ignore_mouse(&mut cfg, &eternico);
+        assert_eq!(remembered(std::slice::from_ref(&eternico), None, &cfg), None);
+        switch_device(&mut cfg, &mut None, ETERNICO.into(), Some((eternico.vid, eternico.pid)));
+        assert_eq!(cfg.ignored_mice, Vec::<String>::new());
+
+        // Before the first choice the detect dialog asks.
+        let mut fresh = AppConfig::default();
+        fresh.remember_mouse(ETERNICO, (eternico.vid, eternico.pid));
+        assert_eq!(remembered(&[eternico], None, &fresh), None);
+    }
+
+    #[test]
+    fn a_choice_from_the_lists_counts_by_its_model() {
+        let (lionel, eternico) = (listed(LIONEL, ""), listed(ETERNICO, ""));
+        let mut cfg = remembering(&lionel, &[&eternico]);
+        // Chosen from the catalogue, without USB ids.
+        switch_device(&mut cfg, &mut None, LIONEL.into(), None);
+        let seen: Vec<String> = [&lionel, &eternico].into_iter().map(mouse_key).collect();
+        assert_eq!(remembered(&[lionel, eternico.clone()], Some(&seen), &cfg), None);
+        assert_eq!(remembered(&[eternico], Some(&seen), &cfg).map(|k| k.device.as_str()), Some(ETERNICO));
+    }
+
     #[test]
     fn banner_skips_the_current_and_unknown_mice() {
         let cable = DeviceInfo { pid: devices::by_id(LIONEL).unwrap().pids[1].0, ..listed(LIONEL, "") };
@@ -3668,7 +3858,7 @@ mod tests {
         let mut cfg = AppConfig { device: Some(LIONEL.into()), ..AppConfig::default() };
         let mut undo = Some(Undo::Buttons(DEFAULT_ACTIONS));
         let offered = listed("razer/auto", "");
-        switch_device(&mut cfg, &mut undo, offer_choice(&offered));
+        switch_device(&mut cfg, &mut undo, offer_choice(&offered), None);
         assert_eq!(cfg.device.as_deref(), Some("razer/auto"));
         assert_eq!(undo, None);
         assert_eq!(target_of(cfg.device.as_deref()), Target::Razer);
@@ -3812,7 +4002,7 @@ mod tests {
         let mut cfg = AppConfig::default();
         cfg.buttons[2] = Action::Disable;
         let mut undo = reset_layout(&mut cfg);
-        switch_device(&mut cfg, &mut undo, store::GENERIC_DEVICE.into());
+        switch_device(&mut cfg, &mut undo, store::GENERIC_DEVICE.into(), None);
         assert_eq!(ctrl_z(&mut cfg, &mut undo, Cover::Free), None);
         assert_eq!(cfg.buttons, DEFAULT_ACTIONS);
     }

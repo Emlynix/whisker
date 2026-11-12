@@ -41,6 +41,8 @@ pub enum TrayAction {
     Open,
     About,
     Quit,
+    /// A profile picked in the menu, by its index.
+    Profile(usize),
 }
 
 #[derive(Clone, Copy, PartialEq)]

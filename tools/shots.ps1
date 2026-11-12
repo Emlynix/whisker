@@ -36,7 +36,7 @@ public class Shots {
 "@
 
 # Scene = name, WHISKER_OPEN value, config overrides, clicks (client x,y).
-$NAV = @{ overview = 56; dpi = 88; performance = 120; lighting = 152; buttons = 184; statistics = 216; settings = 556 }
+$NAV = @{ overview = 56; dpi = 88; performance = 120; lighting = 152; buttons = 184; profiles = 216; statistics = 248; settings = 556 }
 $scenes = @(
     @{ name = "01-overview" }
     @{ name = "02-dpi"; clicks = @(, @(80, $NAV.dpi)) }
@@ -58,7 +58,8 @@ $scenes = @(
     @{ name = "18-overview-sk"; cfg = @{ lang = "sk" } }
     @{ name = "19-dpi-ja"; cfg = @{ lang = "ja"; theme = "dracula" }; clicks = @(, @(80, $NAV.dpi)) }
     @{ name = "20-overview-m705"; cfg = @{ device = "logitech/auto" } }
-    @{ name = "21-profiles"; clicks = @(, @(80, 294)) }
+    @{ name = "21-profiles"; clicks = @(, @(80, $NAV.profiles)) }
+    @{ name = "23-profiles-rename"; clicks = @(@(80, $NAV.profiles), @(659, 148)) }
     @{ name = "22-overlay"; clicks = @(, @(80, 326)) }
     @{ name = "24-settings-language"; clicks = @(@(80, $NAV.settings), @(490, 456)) }
     # Text mode: the menu is rows of the grid.
@@ -67,8 +68,9 @@ $scenes = @(
     @{ name = "32-tui-performance"; cfg = @{ tui = "1" }; clicks = @(, @(80, 141)) }
     @{ name = "33-tui-lighting"; cfg = @{ tui = "1" }; clicks = @(, @(80, 159)) }
     @{ name = "34-tui-buttons"; cfg = @{ tui = "1" }; clicks = @(, @(80, 177)) }
-    @{ name = "35-tui-statistics"; cfg = @{ tui = "1" }; clicks = @(, @(80, 195)) }
-    @{ name = "36-tui-profiles"; cfg = @{ tui = "1" }; clicks = @(, @(80, 231)) }
+    @{ name = "35-tui-statistics"; cfg = @{ tui = "1" }; clicks = @(, @(80, 213)) }
+    @{ name = "36-tui-profiles"; cfg = @{ tui = "1" }; clicks = @(, @(80, 195)) }
+    @{ name = "39-tui-profiles-rename"; cfg = @{ tui = "1" }; clicks = @(@(80, 195), @(417, 177)) }
     @{ name = "37-tui-overlay"; cfg = @{ tui = "1" }; clicks = @(, @(80, 249)) }
     @{ name = "38-tui-settings"; cfg = @{ tui = "1" }; clicks = @(, @(80, 555)) }
 )
@@ -85,6 +87,9 @@ function New-DemoData([string]$dir, [hashtable]$overrides) {
         device = "whiteshark/lionel"; device_usb = ""; stage = "0"; setup_asked = "1"
         theme = "tokyo"; lang = "en"; ignored_mice = ""
         update_check = "0"; update_checked = "$Now"; update_skip = ""; update_notified = ""
+        # Three profiles, the second active; the third swaps Back and Forward.
+        profile = "1"; "profile1.name" = "FPS"; "profile2.name" = "Desktop"
+        "profile2.buttons" = "100100,100200,100400,101000,100800,400100"
     }
     foreach ($k in $overrides.Keys) { $cfg[$k] = $overrides[$k] }
     Set-Content "$dir/config.txt" ($cfg.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -Encoding utf8NoBOM

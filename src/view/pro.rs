@@ -6,16 +6,15 @@
 //! translated when the feature behind them exists.
 //!
 //! ```text
-//!  PROFILES [PRO]                         OVERLAY & WIDGET [PRO]
-//!  Part of Whisker Pro.  whisker.emlynix… In-game overlay | Desktop widget
-//!  +- Profiles ---- [New][Dup][Del] -+    [x] Show overlay in games
-//!  | Name    Switch on app  Saved in |    +- preview --------------------+
-//!  |▌Default —              Mouse    |    +- Style / Shows / Position ---+
-//!  +- Automatic switching -----------+
+//!  PROFILES                               OVERLAY [PRO]
+//!  (the free page, `view::profiles`)      [x] Show overlay in games
+//!  +- Automatic switching [PRO] -----+    +- preview --------------------+
+//!  | [x] Switch by active app        |    +- Style / Shows / Position ---+
+//!  +---------------------------------+
 //! ```
 
 use super::{
-    Act, CW, Frame, Glyph, PANEL_GAP, PANEL_HEAD, PANEL_PAD, Page, RowPlace, SEGMENT_H, Segment, SettingRow, TOP, Web, X0, glyph, text_link, text_w, th,
+    Act, CW, Frame, Glyph, PANEL_GAP, PANEL_HEAD, PANEL_PAD, RowPlace, SEGMENT_H, Segment, SettingRow, TOP, X0, glyph, text_w, th,
 };
 use crate::gfx::{Align, Color, Rect, Size, Weight};
 use crate::i18n::{T, tr};
@@ -23,22 +22,9 @@ use crate::i18n::{T, tr};
 const BTN_H: f32 = 28.0;
 const TABLE_ROW: f32 = 32.0;
 const CHECK: f32 = 14.0;
-const SITE: &str = "whisker.emlynix.com";
-/// Height of the line under the page title that says what this is.
-const NOTE_H: f32 = 24.0;
-
 /// Mock controls are numbered only so each has its own hover.
 fn mock(id: u8) -> Act {
     Act::Mock(id)
-}
-
-/// "Part of Whisker Pro." and the link to the site, under the page title.
-/// Returns the y where the page goes on.
-fn pro_note(f: &mut Frame, y: f32) -> f32 {
-    let note = tr(T::ProOnly);
-    f.g.text(note, Rect::new(X0, y, CW, 18.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
-    text_link(f, Act::OpenWeb(Web::Site), SITE, X0 + text_w(note, Size::Caption) + 10.0, y);
-    y + NOTE_H
 }
 
 /// A checkbox with its label; pressing it does nothing.
@@ -79,52 +65,22 @@ fn key_cap(f: &mut Frame, x: f32, y: f32, label: &str) -> f32 {
     w
 }
 
-/// Profiles: the table of profiles and automatic switching.
-pub(super) fn profiles_page(f: &mut Frame) {
-    const PROFILES: [(&str, &str, &str); 3] = [("Default", "—", "Mouse"), ("FPS", "game.exe", "Mouse"), ("Desktop", "explorer.exe", "This PC")];
-    const COLS: [(f32, &str); 3] = [(0.0, "Name"), (0.45, "Switch on app"), (0.82, "Saved in")];
-    const SELECTED: usize = 0;
-    let y = pro_note(f, TOP);
+/// Profiles page: switching by the app in focus, of the PRO version.
+pub(super) fn auto_switch(f: &mut Frame, y: f32) {
+    const TITLE: &str = "Automatic switching";
+    const FALLBACK: &str = "Otherwise use";
+    const SELECT_W: f32 = 150.0;
+    let panel = Rect::new(X0, y, CW, PANEL_HEAD + BTN_H + 2.0 * PANEL_PAD);
+    let body = f.panel(panel, TITLE);
+    super::pro_tag(f, panel.x + PANEL_PAD + text_w(TITLE, Size::Body) + 10.0, panel.y + (PANEL_HEAD - 16.0) / 2.0);
+    f.panel_note(panel, tr(T::ProOnly));
 
-    let panel = Rect::new(X0, y, CW, PANEL_HEAD + TABLE_ROW * (PROFILES.len() + 1) as f32);
-    let body = f.panel(panel, "Profiles");
-    // Header buttons, right to left; "New" is the panel's primary one.
-    let mut right = panel.x + panel.w - PANEL_PAD;
-    for (k, (label, primary)) in [("Delete", false), ("Duplicate", false), ("New", true)].into_iter().enumerate() {
-        let w = text_w(label, Size::Body) + 26.0;
-        right -= w;
-        f.push_button(mock(10 + k as u8), Rect::new(right, panel.y + 4.0, w, BTN_H), label, primary);
-        right -= 6.0;
-    }
-
-    let col_x = |part: f32| body.x + PANEL_PAD + (body.w - 2.0 * PANEL_PAD) * part;
-    for (part, name) in COLS {
-        f.g.text(name, Rect::new(col_x(part), body.y, 160.0, TABLE_ROW), Size::Caption, Weight::Normal, Align::Left, th().muted);
-    }
-    for (i, (name, app, place)) in PROFILES.into_iter().enumerate() {
-        let r = Rect::new(body.x, body.y + (i + 1) as f32 * TABLE_ROW, body.w, TABLE_ROW);
-        let hot = f.button(mock(20 + i as u8), r);
-        f.g.fill(Rect::new(r.x + 1.0, r.y, r.w - 2.0, 1.0), 0.0, th().line);
-        if i == SELECTED {
-            f.g.fill(Rect::new(r.x + 1.0, r.y + 1.0, r.w - 2.0, r.h - 1.0), 0.0, th().acc_soft);
-            f.g.fill(Rect::new(r.x, r.y, 2.0, r.h), 0.0, th().acc_fill);
-        } else if hot {
-            f.g.fill(Rect::new(r.x + 1.0, r.y + 1.0, r.w - 2.0, r.h - 1.0), 0.0, th().sel);
-        }
-        let weight = if i == SELECTED { Weight::Semibold } else { Weight::Normal };
-        f.g.text(name, Rect::new(col_x(COLS[0].0), r.y, 200.0, r.h), Size::Body, weight, Align::Left, th().text);
-        f.g.text(app, Rect::new(col_x(COLS[1].0), r.y, 200.0, r.h), Size::Body, Weight::Normal, Align::Left, th().muted);
-        f.g.text(place, Rect::new(col_x(COLS[2].0), r.y, 100.0, r.h), Size::Body, Weight::Normal, Align::Left, th().muted);
-    }
-
-    let auto = SettingRow { title: "Automatic switching", desc: "Activates a profile while its app is in focus.", control_h: 22.0 + 10.0 + BTN_H };
-    let panel = Rect::new(X0, panel.y + panel.h + PANEL_GAP, CW, auto.height(CW));
-    f.card(panel);
-    let c = f.row(panel.x, panel.y, panel.w, &auto, RowPlace::First);
-    check(f, 30, c.x, c.y, 240.0, "Switch by active app", true, true);
-    let label = "Otherwise use";
-    f.g.text(label, Rect::new(c.x, c.y + 32.0, 120.0, BTN_H), Size::Body, Weight::Normal, Align::Left, th().muted);
-    select(f, 31, Rect::new(c.x + text_w(label, Size::Body) + 12.0, c.y + 32.0, 150.0, BTN_H), "Default");
+    let row_y = body.y + PANEL_PAD;
+    check(f, 30, body.x + PANEL_PAD, row_y + (BTN_H - 22.0) / 2.0, 240.0, "Switch by active app", false, true);
+    let select_x = body.x + body.w - PANEL_PAD - SELECT_W;
+    let label_w = text_w(FALLBACK, Size::Body) + 12.0;
+    f.g.text(FALLBACK, Rect::new(select_x - label_w, row_y, label_w, BTN_H), Size::Body, Weight::Normal, Align::Left, th().muted);
+    select(f, 31, Rect::new(select_x, row_y, SELECT_W, BTN_H), "Default");
 }
 
 /// The in-game overlay.
@@ -203,16 +159,6 @@ pub(super) fn overlay_page(f: &mut Frame) {
     }
     let scales: Vec<Segment> = [100, 125, 150, 200].into_iter().enumerate().map(|(k, pct)| Segment::new(mock(80 + k as u8), format!("{pct} %"), k == 1)).collect();
     f.segments(Rect::new(c.x + 2.0 * CORNER + 9.0 + 16.0, c.y + 10.0, SCALE_CELL * 4.0, SEGMENT_H), &scales);
-}
-
-/// Overview: the profile switch of the PRO version, with "Manage".
-pub(super) fn profile_switch(f: &mut Frame, r: Rect) {
-    const TITLE: &str = "Profile";
-    let body = f.panel(r, TITLE);
-    super::pro_tag(f, r.x + PANEL_PAD + text_w(TITLE, Size::Body) + 10.0, r.y + (PANEL_HEAD - 16.0) / 2.0);
-    f.panel_link(r, Act::Nav(Page::Profiles), "Manage");
-    let items: Vec<Segment> = ["Default", "FPS", "Desktop"].into_iter().enumerate().map(|(k, name)| Segment::new(mock(120 + k as u8), name, k == 0)).collect();
-    f.segments(Rect::new(body.x + PANEL_PAD, body.y + PANEL_PAD, body.w - 2.0 * PANEL_PAD, SEGMENT_H), &items);
 }
 
 /// Settings › About: "Backup & sync" of the PRO version, as a mock-up.

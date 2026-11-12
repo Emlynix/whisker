@@ -5,7 +5,8 @@
 //! ```text
 //!   libayatana-appindicator3.so.1 (or libappindicator3.so.1)
 //!     icon  = $XDG_RUNTIME_DIR/whisker-tray/whisker-<level>.png (theme path + name)
-//!     menu  = Open / About / — / Quit (any click opens it; middle click = Open)
+//!     menu  = Open / About / Profile ▸ / — / Quit (any click opens it;
+//!             middle click = Open; "Profile" only while there are profiles)
 //!     title = tooltip text (hosts show it where they have no tooltip)
 //! ```
 
@@ -50,6 +51,11 @@ struct Item {
     /// `AppIndicator*`, a GObject kept for the whole process.
     indicator: *mut c_void,
     _menu: gtk::Menu,
+    /// "Profile" and its list, refilled by `set_profiles`.
+    profile: gtk::MenuItem,
+    profile_list: gtk::Menu,
+    /// Names and active index the list shows; `None` = fill it again.
+    listed: Option<(Vec<String>, usize)>,
     on: fn(TrayAction),
     /// Icon name shown now; a new level gets a new name (hosts cache by name).
     shown: Option<String>,
@@ -122,9 +128,15 @@ pub fn add(on: fn(TrayAction)) {
     let menu = gtk::Menu::new();
     let open = menu_item(&menu, tr(T::TrayOpen), || TrayAction::Open);
     menu_item(&menu, tr(T::About), || TrayAction::About);
+    let profile = gtk::MenuItem::with_label(tr(T::Profile));
+    let profile_list = gtk::Menu::new();
+    profile.set_submenu(Some(&profile_list));
+    menu.append(&profile);
     menu.append(&gtk::SeparatorMenuItem::new());
     menu_item(&menu, tr(T::TrayQuit), || TrayAction::Quit);
     menu.show_all();
+    // Shown with the first profiles.
+    profile.hide();
 
     // SAFETY: valid strings; the indicator and menu live for the process.
     let indicator = unsafe { (api.new)(INDICATOR_ID.as_ptr(), c"".as_ptr(), CATEGORY_STATUS) };
@@ -141,7 +153,7 @@ pub fn add(on: fn(TrayAction)) {
         (api.set_status)(indicator, STATUS_ACTIVE);
     }
 
-    ITEM.with(|i| *i.borrow_mut() = Some(Item { api, indicator, _menu: menu, on, shown: None }));
+    ITEM.with(|i| *i.borrow_mut() = Some(Item { api, indicator, _menu: menu, profile, profile_list, listed: None, on, shown: None }));
     update(Level::Offline, crate::APP_NAME);
 }
 
@@ -193,6 +205,49 @@ pub fn update(level: Level, tip: &str) {
         }
         item.shown = Some(name);
     });
+}
+
+/// The menu's profile list, the active one marked; none hides "Profile".
+pub fn set_profiles(names: &[String], active: usize) {
+    let Some((item, list)) = ITEM.with(|i| {
+        let mut i = i.borrow_mut();
+        let item = i.as_mut()?;
+        let wanted = Some((names.to_vec(), active));
+        if item.listed == wanted {
+            return None;
+        }
+        item.listed = wanted;
+        Some((item.profile.clone(), item.profile_list.clone()))
+    }) else {
+        return;
+    };
+
+    // The list keeps its menu and changes its rows: hosts follow added and
+    // removed rows.
+    for old in list.children() {
+        list.remove(&old);
+    }
+    for (i, name) in names.iter().enumerate() {
+        let row = gtk::CheckMenuItem::with_label(name);
+        row.set_draw_as_radio(true);
+        // Marked before the handler is connected: marking fires it.
+        row.set_active(i == active);
+        row.connect_activate(move |_| pick_profile(i));
+        list.append(&row);
+    }
+    list.show_all();
+    item.set_visible(!names.is_empty());
+}
+
+/// A click toggles the row's mark by itself: the list is filled again
+/// even when the same profile stays active.
+fn pick_profile(i: usize) {
+    ITEM.with(|item| {
+        if let Some(item) = item.borrow_mut().as_mut() {
+            item.listed = None;
+        }
+    });
+    fire(TrayAction::Profile(i));
 }
 
 /// Hides the item (the process ends right after).
