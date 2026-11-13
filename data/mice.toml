@@ -4,6 +4,11 @@
 #
 # The drivers keep the protocol (commands, scales, codes). DPI ranges and
 # rates below repeat what the driver reports; driver tests check both agree.
+#
+# `buttons`, `layout` and `hand` say what the mouse looks like (the drawing
+# on the Buttons page). Collected 2026-11-13 from product pages, manuals and
+# reviews; a line marked "# unverified" had no source and is a best guess.
+# The DPI button on the underside of a mouse is not part of a layout.
 
 # White Shark: Telink "M022" firmware.
 [[brand]]
@@ -18,6 +23,8 @@ model = "Lionel"
 vid = 0x248A
 pids = 0x5B2F receiver, 0x5B2E cable
 support = full
+buttons = 6
+layout = left 2, top 1
 
 # Logitech HID++ 2.0 mice. Source: Solaar (github.com/pwr-Solaar/Solaar),
 # lib/logitech_receiver/descriptors.py at 5e4ae72 (2026-07-04): names,
@@ -41,6 +48,9 @@ brand = logitech
 model = "Couch Mouse M515"
 vid = 0x046D
 support = experimental
+buttons = 3
+layout = tilt
+hand = ambi
 
 [[mouse]]
 brand = logitech
@@ -48,6 +58,9 @@ model = "G Pro Wireless"
 vid = 0x046D
 pids = 0xC088 cable
 support = experimental
+buttons = 8
+layout = left 2, right 2
+hand = ambi
 
 [[mouse]]
 brand = logitech
@@ -55,6 +68,8 @@ model = "G402 Hyperion Fury"
 vid = 0x046D
 pids = 0xC07E cable
 support = experimental
+buttons = 8
+layout = left 2, top 2, sniper
 
 [[mouse]]
 brand = logitech
@@ -62,6 +77,8 @@ model = "G403"
 vid = 0x046D
 pids = 0xC082 cable
 support = experimental
+buttons = 6
+layout = left 2, top 1
 
 [[mouse]]
 brand = logitech
@@ -69,6 +86,8 @@ model = "G502"
 vid = 0x046D
 pids = 0xC07D cable
 support = experimental
+buttons = 11
+layout = left 2, top 1, edge 2, tilt, sniper
 
 [[mouse]]
 brand = logitech
@@ -76,6 +95,8 @@ model = "G502 Lightspeed"
 vid = 0x046D
 pids = 0xC08D cable
 support = experimental
+buttons = 11
+layout = left 2, top 1, edge 2, tilt, sniper
 
 [[mouse]]
 brand = logitech
@@ -83,6 +104,8 @@ model = "G502 Proteus Spectrum"
 vid = 0x046D
 pids = 0xC332 cable
 support = experimental
+buttons = 11
+layout = left 2, top 1, edge 2, tilt, sniper
 
 [[mouse]]
 brand = logitech
@@ -90,6 +113,8 @@ model = "G502 SE Hero"
 vid = 0x046D
 pids = 0xC08B cable
 support = experimental
+buttons = 11
+layout = left 2, top 1, edge 2, tilt, sniper
 
 [[mouse]]
 brand = logitech
@@ -97,6 +122,8 @@ model = "G703 Hero"
 vid = 0x046D
 pids = 0xC090 cable
 support = experimental
+buttons = 6
+layout = left 2, top 1
 
 [[mouse]]
 brand = logitech
@@ -104,6 +131,8 @@ model = "G703 Lightspeed"
 vid = 0x046D
 pids = 0xC087 cable
 support = experimental
+buttons = 6
+layout = left 2, top 1
 
 [[mouse]]
 brand = logitech
@@ -111,6 +140,9 @@ model = "G900 Chaos Spectrum"
 vid = 0x046D
 pids = 0xC081 cable
 support = experimental
+buttons = 9
+layout = left 2, right 2, top 1, tilt
+hand = ambi
 
 [[mouse]]
 brand = logitech
@@ -118,6 +150,9 @@ model = "G903 Hero"
 vid = 0x046D
 pids = 0xC091 cable
 support = experimental
+buttons = 11
+layout = left 2, right 2, top 1, tilt
+hand = ambi
 
 [[mouse]]
 brand = logitech
@@ -125,36 +160,54 @@ model = "G903 Lightspeed"
 vid = 0x046D
 pids = 0xC086 cable
 support = experimental
+buttons = 11
+layout = left 2, right 2, top 1, tilt
+hand = ambi
 
 [[mouse]]
 brand = logitech
 model = "M150"
 vid = 0x046D
 support = experimental
+buttons = 3  # unverified
+layout = plain  # unverified
+hand = ambi
 
 [[mouse]]
 brand = logitech
 model = "M185 / M235 / M310"
 vid = 0x046D
 support = experimental
+buttons = 3
+layout = plain
+hand = ambi
 
 [[mouse]]
 brand = logitech
 model = "M187"
 vid = 0x046D
 support = experimental
+buttons = 3  # unverified
+layout = plain  # unverified
+hand = ambi
 
 [[mouse]]
 brand = logitech
 model = "M325"
 vid = 0x046D
 support = experimental
+buttons = 5
+layout = tilt
+hand = ambi
 
 [[mouse]]
 brand = logitech
 model = "M345"
 vid = 0x046D
 support = experimental
+buttons = 3  # unverified
+layout = plain  # unverified
+hand = ambi
 
 [[mouse]]
 brand = logitech
@@ -162,36 +215,49 @@ model = "M500s"
 vid = 0x046D
 pids = 0xC093 cable
 support = experimental
+buttons = 7
+layout = left 2, top 1, tilt
 
 [[mouse]]
 brand = logitech
 model = "M510"
 vid = 0x046D
 support = experimental
+buttons = 7
+layout = left 2, tilt
 
 [[mouse]]
 brand = logitech
 model = "M525"
 vid = 0x046D
 support = experimental
+buttons = 3  # unverified
+layout = tilt  # unverified
+hand = ambi
 
 [[mouse]]
 brand = logitech
 model = "M585 / M590"
 vid = 0x046D
 support = experimental
+buttons = 7
+layout = left 2, top 1, tilt
 
 [[mouse]]
 brand = logitech
 model = "Marathon M705"
 vid = 0x046D
 support = experimental
+buttons = 7
+layout = left 2, tilt
 
 [[mouse]]
 brand = logitech
 model = "MX Anywhere 2"
 vid = 0x046D
 support = experimental
+buttons = 6
+layout = left 2, top 1
 
 [[mouse]]
 brand = logitech
@@ -199,6 +265,8 @@ model = "MX Master"
 vid = 0x046D
 pids = 0xB012
 support = experimental
+buttons = 7  # unverified
+layout = left 3, top 1, thumbwheel  # unverified
 
 [[mouse]]
 brand = logitech
@@ -206,6 +274,8 @@ model = "MX Master 2S"
 vid = 0x046D
 pids = 0xB019
 support = experimental
+buttons = 7
+layout = left 3, top 1, thumbwheel
 
 [[mouse]]
 brand = logitech
@@ -213,6 +283,8 @@ model = "MX Master 3"
 vid = 0x046D
 pids = 0xB023
 support = experimental
+buttons = 7
+layout = left 3, top 1, thumbwheel
 
 [[mouse]]
 brand = logitech
@@ -220,6 +292,9 @@ model = "MX Vertical"
 vid = 0x046D
 pids = 0xC08A cable, 0xB020
 support = experimental
+buttons = 4
+layout = left 2, top 1
+hand = vertical
 
 [[mouse]]
 brand = logitech
@@ -227,12 +302,17 @@ model = "MX518"
 vid = 0x046D
 pids = 0xC08E cable
 support = experimental
+buttons = 8
+layout = left 2, top 2, sniper
 
 [[mouse]]
 brand = logitech
 model = "Pebble M350"
 vid = 0x046D
 support = experimental
+buttons = 3
+layout = plain
+hand = ambi
 
 [[mouse]]
 brand = logitech
@@ -240,12 +320,17 @@ model = "PRO X Wireless"
 vid = 0x046D
 pids = 0xC094 cable
 support = experimental
+buttons = 5
+layout = left 2
 
 [[mouse]]
 brand = logitech
 model = "Touch Mouse M600"
 vid = 0x046D
 support = experimental
+buttons = 2
+layout = plain
+hand = ambi
 
 # Razer mice. Source: OpenRazer (github.com/openrazer/openrazer),
 # daemon/openrazer_daemon/hardware/mouse.py at 477f4d6 (2026-03-01):
@@ -265,6 +350,9 @@ model = "Abyssus"
 vid = 0x1532
 pids = 0x0042
 support = experimental
+buttons = 3  # unverified
+layout = plain  # unverified
+hand = ambi
 
 [[mouse]]
 brand = razer
@@ -272,6 +360,9 @@ model = "Abyssus 2000"
 vid = 0x1532
 pids = 0x005E
 support = experimental
+buttons = 3  # unverified
+layout = plain  # unverified
+hand = ambi
 
 [[mouse]]
 brand = razer
@@ -279,6 +370,9 @@ model = "Abyssus Elite (D.Va Edition)"
 vid = 0x1532
 pids = 0x006A
 support = experimental
+buttons = 3  # unverified
+layout = plain  # unverified
+hand = ambi
 
 [[mouse]]
 brand = razer
@@ -286,6 +380,9 @@ model = "Abyssus Essential"
 vid = 0x1532
 pids = 0x006B
 support = experimental
+buttons = 3
+layout = plain
+hand = ambi
 
 [[mouse]]
 brand = razer
@@ -293,6 +390,9 @@ model = "Abyssus V2"
 vid = 0x1532
 pids = 0x005B
 support = experimental
+buttons = 4
+layout = top 1
+hand = ambi
 
 [[mouse]]
 brand = razer
@@ -300,6 +400,9 @@ model = "Atheris"
 vid = 0x1532
 pids = 0x0062 receiver
 support = experimental
+buttons = 5
+layout = left 2
+hand = ambi
 
 [[mouse]]
 brand = razer
@@ -307,6 +410,8 @@ model = "Basilisk"
 vid = 0x1532
 pids = 0x0064
 support = experimental
+buttons = 8  # unverified
+layout = left 2, top 2, sniper  # unverified
 
 [[mouse]]
 brand = razer
@@ -314,6 +419,8 @@ model = "Basilisk Essential"
 vid = 0x1532
 pids = 0x0065
 support = experimental
+buttons = 7
+layout = left 2, top 1, sniper
 
 [[mouse]]
 brand = razer
@@ -321,6 +428,8 @@ model = "Basilisk Mobile"
 vid = 0x1532
 pids = 0x00D3 cable, 0x00D4 receiver
 support = experimental
+buttons = 7  # unverified
+layout = left 2, top 1, tilt  # unverified
 
 [[mouse]]
 brand = razer
@@ -328,6 +437,8 @@ model = "Basilisk Ultimate"
 vid = 0x1532
 pids = 0x0086 cable
 support = experimental
+buttons = 11  # unverified
+layout = left 2, top 2, tilt, sniper  # unverified
 
 [[mouse]]
 brand = razer
@@ -335,6 +446,8 @@ model = "Basilisk V2"
 vid = 0x1532
 pids = 0x0085
 support = experimental
+buttons = 11  # unverified
+layout = left 2, top 2, tilt, sniper  # unverified
 
 [[mouse]]
 brand = razer
@@ -342,6 +455,8 @@ model = "Basilisk V3"
 vid = 0x1532
 pids = 0x0099
 support = experimental
+buttons = 11
+layout = left 2, top 2, tilt, sniper
 
 [[mouse]]
 brand = razer
@@ -349,6 +464,8 @@ model = "Basilisk V3 35K"
 vid = 0x1532
 pids = 0x00CB
 support = experimental
+buttons = 11
+layout = left 2, top 2, tilt, sniper
 
 [[mouse]]
 brand = razer
@@ -356,6 +473,8 @@ model = "Basilisk V3 Pro"
 vid = 0x1532
 pids = 0x00AA cable, 0x00AB receiver
 support = experimental
+buttons = 11
+layout = left 2, top 2, tilt, sniper
 
 [[mouse]]
 brand = razer
@@ -363,6 +482,8 @@ model = "Basilisk V3 Pro 35K"
 vid = 0x1532
 pids = 0x00CC cable, 0x00CD receiver, 0x00D6 cable, 0x00D7 receiver
 support = experimental
+buttons = 11
+layout = left 2, top 2, tilt, sniper
 
 [[mouse]]
 brand = razer
@@ -370,6 +491,8 @@ model = "Basilisk V3 X HyperSpeed"
 vid = 0x1532
 pids = 0x00B9 receiver
 support = experimental
+buttons = 6  # unverified
+layout = left 2, top 1  # unverified
 
 [[mouse]]
 brand = razer
@@ -377,6 +500,8 @@ model = "Basilisk X HyperSpeed"
 vid = 0x1532
 pids = 0x0083 receiver
 support = experimental
+buttons = 6
+layout = left 2, top 1
 
 [[mouse]]
 brand = razer
@@ -384,6 +509,8 @@ model = "Cobra"
 vid = 0x1532
 pids = 0x00A3
 support = experimental
+buttons = 8  # unverified
+layout = left 2, top 2  # unverified
 
 [[mouse]]
 brand = razer
@@ -391,6 +518,8 @@ model = "Cobra HyperSpeed"
 vid = 0x1532
 pids = 0x00DA cable, 0x00DB receiver
 support = experimental
+buttons = 6
+layout = left 2, top 1
 
 [[mouse]]
 brand = razer
@@ -398,6 +527,8 @@ model = "Cobra Pro"
 vid = 0x1532
 pids = 0x00AF cable, 0x00B0 receiver
 support = experimental
+buttons = 10
+layout = left 2, top 2, tilt
 
 [[mouse]]
 brand = razer
@@ -405,6 +536,8 @@ model = "DeathAdder 1800"
 vid = 0x1532
 pids = 0x0038
 support = experimental
+buttons = 5  # unverified
+layout = left 2  # unverified
 
 [[mouse]]
 brand = razer
@@ -412,6 +545,8 @@ model = "DeathAdder 2000"
 vid = 0x1532
 pids = 0x004F
 support = experimental
+buttons = 5  # unverified
+layout = left 2  # unverified
 
 [[mouse]]
 brand = razer
@@ -419,6 +554,8 @@ model = "DeathAdder 2013"
 vid = 0x1532
 pids = 0x0037
 support = experimental
+buttons = 5  # unverified
+layout = left 2  # unverified
 
 [[mouse]]
 brand = razer
@@ -426,6 +563,8 @@ model = "DeathAdder 3500"
 vid = 0x1532
 pids = 0x0054
 support = experimental
+buttons = 5  # unverified
+layout = left 2  # unverified
 
 [[mouse]]
 brand = razer
@@ -433,6 +572,8 @@ model = "DeathAdder Chroma"
 vid = 0x1532
 pids = 0x0043
 support = experimental
+buttons = 5
+layout = left 2
 
 [[mouse]]
 brand = razer
@@ -440,6 +581,8 @@ model = "DeathAdder Elite"
 vid = 0x1532
 pids = 0x005C
 support = experimental
+buttons = 7
+layout = left 2, top 2
 
 [[mouse]]
 brand = razer
@@ -447,6 +590,8 @@ model = "DeathAdder Essential"
 vid = 0x1532
 pids = 0x006E, 0x0071
 support = experimental
+buttons = 5
+layout = left 2
 
 [[mouse]]
 brand = razer
@@ -454,6 +599,8 @@ model = "DeathAdder Essential (2021)"
 vid = 0x1532
 pids = 0x0098
 support = experimental
+buttons = 5  # unverified
+layout = left 2  # unverified
 
 [[mouse]]
 brand = razer
@@ -461,6 +608,8 @@ model = "DeathAdder V2"
 vid = 0x1532
 pids = 0x0084
 support = experimental
+buttons = 8  # unverified
+layout = left 2, top 2  # unverified
 
 [[mouse]]
 brand = razer
@@ -468,6 +617,8 @@ model = "DeathAdder V2 Lite"
 vid = 0x1532
 pids = 0x00A1
 support = experimental
+buttons = 5  # unverified
+layout = left 2, top 1  # unverified
 
 [[mouse]]
 brand = razer
@@ -475,6 +626,8 @@ model = "DeathAdder V2 Mini"
 vid = 0x1532
 pids = 0x008C
 support = experimental
+buttons = 6  # unverified
+layout = left 2, top 1  # unverified
 
 [[mouse]]
 brand = razer
@@ -482,6 +635,8 @@ model = "DeathAdder V2 Pro"
 vid = 0x1532
 pids = 0x007C cable, 0x007D receiver
 support = experimental
+buttons = 8
+layout = left 2, top 2
 
 [[mouse]]
 brand = razer
@@ -489,6 +644,8 @@ model = "DeathAdder V2 X HyperSpeed"
 vid = 0x1532
 pids = 0x009C receiver
 support = experimental
+buttons = 7  # unverified
+layout = left 2, top 1  # unverified
 
 [[mouse]]
 brand = razer
@@ -496,6 +653,8 @@ model = "DeathAdder V3"
 vid = 0x1532
 pids = 0x00B2
 support = experimental
+buttons = 6
+layout = left 2
 
 [[mouse]]
 brand = razer
@@ -503,6 +662,8 @@ model = "DeathAdder V3 HyperSpeed"
 vid = 0x1532
 pids = 0x00C4 cable, 0x00C5 receiver
 support = experimental
+buttons = 6  # unverified
+layout = left 2  # unverified
 
 [[mouse]]
 brand = razer
@@ -510,6 +671,8 @@ model = "DeathAdder V3 Pro"
 vid = 0x1532
 pids = 0x00B6 cable, 0x00B7 receiver, 0x00C2 cable, 0x00C3 receiver
 support = experimental
+buttons = 6
+layout = left 2
 
 [[mouse]]
 brand = razer
@@ -517,6 +680,8 @@ model = "DeathAdder V4 Pro"
 vid = 0x1532
 pids = 0x00BE cable, 0x00BF receiver
 support = experimental
+buttons = 6
+layout = left 2
 
 [[mouse]]
 brand = razer
@@ -524,6 +689,9 @@ model = "Diamondback Chroma"
 vid = 0x1532
 pids = 0x004C
 support = experimental
+buttons = 9  # unverified
+layout = left 2, right 2, top 2  # unverified
+hand = ambi
 
 [[mouse]]
 brand = razer
@@ -531,6 +699,9 @@ model = "Lancehead"
 vid = 0x1532
 pids = 0x0059 cable, 0x005A receiver
 support = experimental
+buttons = 9  # unverified
+layout = left 2, right 2, top 2  # unverified
+hand = ambi
 
 [[mouse]]
 brand = razer
@@ -538,6 +709,9 @@ model = "Lancehead Tournament Edition"
 vid = 0x1532
 pids = 0x0060
 support = experimental
+buttons = 9  # unverified
+layout = left 2, right 2, top 2  # unverified
+hand = ambi
 
 [[mouse]]
 brand = razer
@@ -545,6 +719,9 @@ model = "Lancehead Wireless"
 vid = 0x1532
 pids = 0x0070 cable, 0x006F receiver
 support = experimental
+buttons = 9  # unverified
+layout = left 2, right 2, top 2  # unverified
+hand = ambi
 
 [[mouse]]
 brand = razer
@@ -552,6 +729,8 @@ model = "Mamba Chroma"
 vid = 0x1532
 pids = 0x0044 cable, 0x0045 receiver
 support = experimental
+buttons = 9  # unverified
+layout = left 2, right 2, top 2  # unverified
 
 [[mouse]]
 brand = razer
@@ -559,6 +738,8 @@ model = "Mamba Elite"
 vid = 0x1532
 pids = 0x006C
 support = experimental
+buttons = 9  # unverified
+layout = left 2, right 2, top 2  # unverified
 
 [[mouse]]
 brand = razer
@@ -566,6 +747,8 @@ model = "Mamba Tournament Edition"
 vid = 0x1532
 pids = 0x0046
 support = experimental
+buttons = 9
+layout = left 2, right 2, top 2
 
 [[mouse]]
 brand = razer
@@ -573,6 +756,8 @@ model = "Mamba Wireless"
 vid = 0x1532
 pids = 0x0073 cable, 0x0072 receiver
 support = experimental
+buttons = 9  # unverified
+layout = left 2, right 2, top 2  # unverified
 
 [[mouse]]
 brand = razer
@@ -580,6 +765,8 @@ model = "Naga 2014"
 vid = 0x1532
 pids = 0x0040
 support = experimental
+buttons = 19
+layout = top 2, grid 12, tilt
 
 [[mouse]]
 brand = razer
@@ -587,6 +774,8 @@ model = "Naga Chroma"
 vid = 0x1532
 pids = 0x0053
 support = experimental
+buttons = 16  # unverified
+layout = top 1, grid 12  # unverified
 
 [[mouse]]
 brand = razer
@@ -594,6 +783,8 @@ model = "Naga Epic Chroma"
 vid = 0x1532
 pids = 0x003E cable, 0x003F receiver
 support = experimental
+buttons = 19
+layout = top 2, grid 12, tilt
 
 [[mouse]]
 brand = razer
@@ -601,6 +792,8 @@ model = "Naga Hex"
 vid = 0x1532
 pids = 0x0041, 0x0036
 support = experimental
+buttons = 7  # unverified
+layout = grid 7  # unverified
 
 [[mouse]]
 brand = razer
@@ -608,6 +801,8 @@ model = "Naga Hex V2"
 vid = 0x1532
 pids = 0x0050
 support = experimental
+buttons = 14
+layout = top 2, grid 7, tilt
 
 [[mouse]]
 brand = razer
@@ -615,6 +810,9 @@ model = "Naga Left-Handed Edition 2020"
 vid = 0x1532
 pids = 0x008D
 support = experimental
+buttons = 8  # unverified
+layout = top 1, grid 8  # unverified
+hand = left
 
 [[mouse]]
 brand = razer
@@ -622,6 +820,8 @@ model = "Naga Pro"
 vid = 0x1532
 pids = 0x008F cable, 0x0090 receiver
 support = experimental
+buttons = 19
+layout = top 2, grid 12, tilt
 
 [[mouse]]
 brand = razer
@@ -629,6 +829,8 @@ model = "Naga Trinity"
 vid = 0x1532
 pids = 0x0067
 support = experimental
+buttons = 19  # unverified
+layout = top 2, grid 12, tilt  # unverified
 
 [[mouse]]
 brand = razer
@@ -636,6 +838,8 @@ model = "Naga V2 HyperSpeed"
 vid = 0x1532
 pids = 0x00B4 receiver
 support = experimental
+buttons = 19  # unverified
+layout = top 2, grid 12, tilt  # unverified
 
 [[mouse]]
 brand = razer
@@ -643,6 +847,8 @@ model = "Naga V2 Pro"
 vid = 0x1532
 pids = 0x00A7 cable, 0x00A8 receiver
 support = experimental
+buttons = 19
+layout = top 2, grid 12, tilt
 
 [[mouse]]
 brand = razer
@@ -650,6 +856,8 @@ model = "Naga X"
 vid = 0x1532
 pids = 0x0096
 support = experimental
+buttons = 16  # unverified
+layout = top 1, grid 12  # unverified
 
 [[mouse]]
 brand = razer
@@ -657,6 +865,9 @@ model = "Orochi"
 vid = 0x1532
 pids = 0x0048 cable
 support = experimental
+buttons = 7  # unverified
+layout = left 2, top 1  # unverified
+hand = ambi
 
 [[mouse]]
 brand = razer
@@ -664,6 +875,9 @@ model = "Orochi 2013"
 vid = 0x1532
 pids = 0x0039
 support = experimental
+buttons = 7  # unverified
+layout = left 2, top 1  # unverified
+hand = ambi
 
 [[mouse]]
 brand = razer
@@ -671,6 +885,9 @@ model = "Orochi V2"
 vid = 0x1532
 pids = 0x0094 receiver, 0x0095
 support = experimental
+buttons = 6  # unverified
+layout = left 2, top 1  # unverified
+hand = ambi
 
 [[mouse]]
 brand = razer
@@ -678,6 +895,8 @@ model = "Pro Click"
 vid = 0x1532
 pids = 0x0080 cable, 0x0077 receiver
 support = experimental
+buttons = 7  # unverified
+layout = left 2, top 1, tilt  # unverified
 
 [[mouse]]
 brand = razer
@@ -685,6 +904,9 @@ model = "Pro Click Mini"
 vid = 0x1532
 pids = 0x009A receiver
 support = experimental
+buttons = 7
+layout = left 2, top 1, tilt
+hand = ambi
 
 [[mouse]]
 brand = razer
@@ -692,6 +914,8 @@ model = "Pro Click V2"
 vid = 0x1532
 pids = 0x00D0 cable, 0x00D1 receiver
 support = experimental
+buttons = 9
+layout = left 2, top 2, tilt
 
 [[mouse]]
 brand = razer
@@ -699,6 +923,9 @@ model = "Pro Click V2 Vertical Edition"
 vid = 0x1532
 pids = 0x00C7 cable, 0x00C8 receiver
 support = experimental
+buttons = 8
+layout = left 2, top 2
+hand = vertical
 
 [[mouse]]
 brand = razer
@@ -706,6 +933,9 @@ model = "Taipan"
 vid = 0x1532
 pids = 0x0034
 support = experimental
+buttons = 9  # unverified
+layout = left 2, right 2, top 2  # unverified
+hand = ambi
 
 [[mouse]]
 brand = razer
@@ -713,6 +943,9 @@ model = "Viper"
 vid = 0x1532
 pids = 0x0078
 support = experimental
+buttons = 8  # unverified
+layout = left 2, right 2  # unverified
+hand = ambi
 
 [[mouse]]
 brand = razer
@@ -720,6 +953,9 @@ model = "Viper 8KHz"
 vid = 0x1532
 pids = 0x0091
 support = experimental
+buttons = 8  # unverified
+layout = left 2, right 2  # unverified
+hand = ambi
 
 [[mouse]]
 brand = razer
@@ -727,6 +963,9 @@ model = "Viper Mini"
 vid = 0x1532
 pids = 0x008A
 support = experimental
+buttons = 6  # unverified
+layout = left 2, top 1  # unverified
+hand = ambi
 
 [[mouse]]
 brand = razer
@@ -734,6 +973,9 @@ model = "Viper Mini SE"
 vid = 0x1532
 pids = 0x009E cable, 0x009F receiver
 support = experimental
+buttons = 6  # unverified
+layout = left 2, top 1  # unverified
+hand = ambi
 
 [[mouse]]
 brand = razer
@@ -741,6 +983,9 @@ model = "Viper Ultimate"
 vid = 0x1532
 pids = 0x007A cable, 0x007B receiver
 support = experimental
+buttons = 8  # unverified
+layout = left 2, right 2  # unverified
+hand = ambi
 
 [[mouse]]
 brand = razer
@@ -748,6 +993,8 @@ model = "Viper V2 Pro"
 vid = 0x1532
 pids = 0x00A5 cable, 0x00A6 receiver
 support = experimental
+buttons = 5  # unverified
+layout = left 2  # unverified
 
 [[mouse]]
 brand = razer
@@ -755,6 +1002,8 @@ model = "Viper V3 HyperSpeed"
 vid = 0x1532
 pids = 0x00B8 receiver
 support = experimental
+buttons = 6  # unverified
+layout = left 2, top 1  # unverified
 
 [[mouse]]
 brand = razer
@@ -762,6 +1011,8 @@ model = "Viper V3 Pro"
 vid = 0x1532
 pids = 0x00C0 cable, 0x00C1 receiver
 support = experimental
+buttons = 6
+layout = left 2
 
 [[mouse]]
 brand = razer
@@ -769,6 +1020,8 @@ model = "Viper V3 Pro SE"
 vid = 0x1532
 pids = 0x00DE cable, 0x00DF receiver
 support = experimental
+buttons = 6
+layout = left 2
 
 # SteelSeries (rivalcfg). Cable and dongle ids of one model in one block.
 [[brand]]
@@ -785,6 +1038,8 @@ pids = 0x1824, 0x184C
 support = experimental
 dpi = 200..8500 step 100
 rates = 125, 250, 500, 1000
+buttons = 6
+layout = left 2, top 1
 
 [[mouse]]
 brand = steelseries
@@ -794,6 +1049,8 @@ pids = 0x1870
 support = experimental
 dpi = 200..8500 step 100
 rates = 125, 250, 500, 1000
+buttons = 6
+layout = left 2, top 1
 
 [[mouse]]
 brand = steelseries
@@ -803,6 +1060,8 @@ pids = 0x1830
 support = experimental
 dpi = 100..18000 step 100
 rates = 125, 250, 500, 1000
+buttons = 6
+layout = left 2, top 1
 
 [[mouse]]
 brand = steelseries
@@ -812,6 +1071,8 @@ pids = 0x1872
 support = experimental
 dpi = 100..18000 step 100
 rates = 125, 250, 500, 1000
+buttons = 6
+layout = left 2, top 1
 
 [[mouse]]
 brand = steelseries
@@ -821,6 +1082,8 @@ pids = 0x183C, 0x183E
 support = experimental
 dpi = 100..18000 step 100
 rates = 125, 250, 500, 1000
+buttons = 9  # unverified
+layout = left 4, top 1, sniper  # unverified
 
 [[mouse]]
 brand = steelseries
@@ -830,6 +1093,8 @@ pids = 0x1836
 support = experimental
 dpi = 200..8500 step 100
 rates = 125, 250, 500, 1000
+buttons = 6
+layout = left 2, top 1
 
 [[mouse]]
 brand = steelseries
@@ -839,6 +1104,8 @@ pids = 0x183A, 0x187A, 0x1838, 0x1878
 support = experimental
 dpi = 100..18000 step 100
 rates = 125, 250, 500, 1000
+buttons = 6
+layout = left 2, top 1
 
 [[mouse]]
 brand = steelseries
@@ -848,6 +1115,8 @@ pids = 0x1850
 support = experimental
 dpi = 100..18000 step 100
 rates = 125, 250, 500, 1000
+buttons = 9  # unverified
+layout = left 4, top 1, sniper  # unverified
 
 [[mouse]]
 brand = steelseries
@@ -857,6 +1126,8 @@ pids = 0x1854, 0x185E, 0x1862, 0x1852, 0x185C, 0x1860
 support = experimental
 dpi = 100..18000 step 100
 rates = 125, 250, 500, 1000
+buttons = 9  # unverified
+layout = left 4, top 1, sniper  # unverified
 
 [[mouse]]
 brand = steelseries
@@ -866,6 +1137,8 @@ pids = 0x185A, 0x1876, 0x1858, 0x1874
 support = experimental
 dpi = 100..18000 step 100
 rates = 125, 250, 500, 1000
+buttons = 18
+layout = left 2, top 1, grid 12
 
 [[mouse]]
 brand = steelseries
@@ -875,6 +1148,8 @@ pids = 0x1842, 0x184A, 0x1840, 0x1848
 support = experimental
 dpi = 100..18000 step 100
 rates = 125, 250, 500, 1000
+buttons = 6
+layout = left 2, top 1
 
 [[mouse]]
 brand = steelseries
@@ -884,6 +1159,8 @@ pids = 0x182E, 0x182A, 0x1856, 0x182C
 support = experimental
 dpi = 50..18000 step 50
 rates = 125, 250, 500, 1000
+buttons = 6  # unverified
+layout = left 2, top 1  # unverified
 
 [[mouse]]
 brand = steelseries
@@ -893,6 +1170,8 @@ pids = 0x184D
 support = experimental
 dpi = 50..18000 step 50
 rates = 125, 250, 500, 1000
+buttons = 5
+layout = left 2
 
 [[mouse]]
 brand = steelseries
@@ -902,6 +1181,9 @@ pids = 0x1832, 0x1834
 support = experimental
 dpi = 50..18000 step 50
 rates = 125, 250, 500, 1000
+buttons = 8
+layout = left 2, right 2, top 1
+hand = ambi
 
 [[mouse]]
 brand = steelseries
@@ -911,6 +1193,9 @@ pids = 0x1729, 0x1816
 support = experimental
 dpi = 200..7200 step 100
 rates = 125, 250, 500, 1000
+buttons = 6
+layout = left 2, top 1
+hand = ambi
 
 [[mouse]]
 brand = steelseries
@@ -920,6 +1205,8 @@ pids = 0x1720, 0x171E, 0x1736
 support = experimental
 dpi = 100..12000 step 100
 rates = 125, 250, 500, 1000
+buttons = 6
+layout = left 2, top 1
 
 [[mouse]]
 brand = steelseries
@@ -929,6 +1216,9 @@ pids = 0x1722
 support = experimental
 dpi = 100..12000 step 100
 rates = 125, 250, 500, 1000
+buttons = 8
+layout = left 2, right 2, top 1
+hand = ambi
 
 [[mouse]]
 brand = steelseries
@@ -938,6 +1228,8 @@ pids = 0x1724, 0x172E
 support = experimental
 dpi = 100..12000 step 100
 rates = 125, 250, 500, 1000
+buttons = 7
+layout = left 3, top 1
 
 [[mouse]]
 brand = steelseries
@@ -947,6 +1239,8 @@ pids = 0x1700, 0x1730
 support = experimental
 dpi = 100..12000 step 100
 rates = 125, 250, 500, 1000
+buttons = 7
+layout = left 3, top 1
 
 [[mouse]]
 brand = steelseries
@@ -956,6 +1250,8 @@ pids = 0x172B, 0x1726
 support = experimental
 dpi = 100..12000 step 100
 rates = 125, 250, 500, 1000
+buttons = 7
+layout = left 3, top 1
 
 # Corsair Bragi (ckb-next, OpenRGB). Rates depend on what the mouse reports.
 [[brand]]
@@ -971,6 +1267,8 @@ vid = 0x1B1C
 pids = 0x1B80, 0x1B81
 support = experimental
 dpi = 100..18000 step 50
+buttons = 8
+layout = left 2, top 2, sniper
 
 [[mouse]]
 brand = corsair
@@ -979,6 +1277,8 @@ vid = 0x1B1C
 pids = 0x1B7E, 0x1B7F
 support = experimental
 dpi = 100..18000 step 50
+buttons = 8
+layout = left 2, top 2, sniper
 
 [[mouse]]
 brand = corsair
@@ -987,6 +1287,8 @@ vid = 0x1B1C
 pids = 0x1B5E
 support = experimental
 dpi = 100..10000 step 50
+buttons = 6
+layout = left 2, top 1
 
 [[mouse]]
 brand = corsair
@@ -995,6 +1297,8 @@ vid = 0x1B1C
 pids = 0x1B4C
 support = experimental
 dpi = 100..18000 step 50
+buttons = 10
+layout = left 2, top 1, sniper
 
 [[mouse]]
 brand = corsair
@@ -1003,6 +1307,8 @@ vid = 0x1B1C
 pids = 0x2B32, 0x2B00
 support = experimental
 dpi = 100..18000 step 50
+buttons = 10
+layout = left 2, top 1, sniper
 
 [[mouse]]
 brand = corsair
@@ -1011,6 +1317,9 @@ vid = 0x1B1C
 pids = 0x1B93
 support = experimental
 dpi = 100..12400 step 50
+buttons = 6
+layout = left 2, top 1
+hand = ambi
 
 [[mouse]]
 brand = corsair
@@ -1019,6 +1328,9 @@ vid = 0x1B1C
 pids = 0x1BBA
 support = experimental
 dpi = 100..12400 step 50
+buttons = 6
+layout = left 2, top 1
+hand = ambi
 
 [[mouse]]
 brand = corsair
@@ -1027,6 +1339,9 @@ vid = 0x1B1C
 pids = 0x1BAC
 support = experimental
 dpi = 100..18000 step 50
+buttons = 6
+layout = left 2, top 1
+hand = ambi
 
 [[mouse]]
 brand = corsair
@@ -1035,6 +1350,9 @@ vid = 0x1B1C
 pids = 0x1B70
 support = experimental
 dpi = 100..12400 step 50
+buttons = 8
+layout = left 2, right 2, top 1
+hand = ambi
 
 [[mouse]]
 brand = corsair
@@ -1043,6 +1361,8 @@ vid = 0x1B1C
 pids = 0x1B9E
 support = experimental
 dpi = 100..26000 step 50
+buttons = 8
+layout = left 2, top 2, sniper
 
 [[mouse]]
 brand = corsair
@@ -1051,6 +1371,8 @@ vid = 0x1B1C
 pids = 0x1BB5
 support = experimental
 dpi = 100..26000 step 50
+buttons = 8
+layout = left 2, top 2, sniper
 
 [[mouse]]
 brand = corsair
@@ -1059,6 +1381,9 @@ vid = 0x1B1C
 pids = 0x1BF0
 support = experimental
 dpi = 100..26000 step 50
+buttons = 7
+layout = left 2, right 2
+hand = ambi
 
 [[mouse]]
 brand = corsair
@@ -1067,6 +1392,9 @@ vid = 0x1B1C
 pids = 0x1BF1, 0x1BDC
 support = experimental
 dpi = 100..26000 step 50
+buttons = 7
+layout = left 2, right 2
+hand = ambi
 
 [[mouse]]
 brand = corsair
@@ -1075,6 +1403,8 @@ vid = 0x1B1C
 pids = 0x1BE3
 support = experimental
 dpi = 100..26000 step 50
+buttons = 17
+layout = top 2, grid 12
 
 # Shared receivers: the paired mouse names the model.
 [[mouse]]
@@ -1100,6 +1430,7 @@ support = experimental
 dpi = 100..8200 step 100
 rates = 125, 250, 500, 1000
 buttons = 10
+layout = left 2, top 2, sniper
 
 [[mouse]]
 brand = asus
@@ -1110,6 +1441,7 @@ support = experimental
 dpi = 100..16000 step 100
 rates = 125, 250, 500, 1000
 buttons = 5
+layout = left 2, top 1
 
 [[mouse]]
 brand = asus
@@ -1120,6 +1452,7 @@ support = experimental
 dpi = 100..16000 step 100
 rates = 125, 250, 500, 1000
 buttons = 5
+layout = left 2, top 1
 
 [[mouse]]
 brand = asus
@@ -1130,6 +1463,7 @@ support = experimental
 dpi = 100..36000 step 100
 rates = 125, 250, 500, 1000
 buttons = 14
+layout = left 2, top 1
 
 [[mouse]]
 brand = asus
@@ -1140,6 +1474,7 @@ support = experimental
 dpi = 100..12000 step 100
 rates = 125, 250, 500, 1000
 buttons = 9
+layout = left 2, top 1, sniper
 
 [[mouse]]
 brand = asus
@@ -1150,6 +1485,7 @@ support = experimental
 dpi = 100..12000 step 100
 rates = 125, 250, 500, 1000
 buttons = 8
+layout = left 2, top 1
 
 [[mouse]]
 brand = asus
@@ -1160,6 +1496,7 @@ support = experimental
 dpi = 100..12000 step 100
 rates = 125, 250, 500, 1000
 buttons = 8
+layout = left 2, top 1
 
 [[mouse]]
 brand = asus
@@ -1170,6 +1507,7 @@ support = experimental
 dpi = 100..36000 step 50
 rates = 125, 250, 500, 1000
 buttons = 5
+layout = left 2, top 1  # unverified
 
 [[mouse]]
 brand = asus
@@ -1180,6 +1518,7 @@ support = experimental
 dpi = 100..16000 step 100
 rates = 125, 250, 500, 1000
 buttons = 8
+layout = left 2, top 1  # unverified
 
 [[mouse]]
 brand = asus
@@ -1190,6 +1529,7 @@ support = experimental
 dpi = 100..16000 step 100
 rates = 125, 250, 500, 1000
 buttons = 8
+layout = left 2, top 1
 
 [[mouse]]
 brand = asus
@@ -1200,6 +1540,7 @@ support = experimental
 dpi = 100..36000 step 50
 rates = 125, 250, 500, 1000
 buttons = 7
+layout = left 2
 
 [[mouse]]
 brand = asus
@@ -1210,6 +1551,8 @@ support = experimental
 dpi = 100..7200 step 100
 rates = 125, 250, 500, 1000
 buttons = 10
+layout = left 2, right 2  # unverified
+hand = ambi
 
 [[mouse]]
 brand = asus
@@ -1220,6 +1563,7 @@ support = experimental
 dpi = 100..19000 step 50
 rates = 125, 250, 500, 1000
 buttons = 14
+layout = top 2, grid 6
 
 [[mouse]]
 brand = asus
@@ -1230,6 +1574,7 @@ support = experimental
 dpi = 100..7200 step 100
 rates = 125, 250, 500, 1000
 buttons = 8
+layout = left 2, top 1  # unverified
 
 [[mouse]]
 brand = asus
@@ -1240,6 +1585,8 @@ support = experimental
 dpi = 100..5000 step 100
 rates = 125, 250, 500, 1000
 buttons = 6
+layout = left 2, top 1  # unverified
+hand = ambi
 
 [[mouse]]
 brand = asus
@@ -1250,6 +1597,8 @@ support = experimental
 dpi = 200..6200 step 100
 rates = 125, 250, 500, 1000
 buttons = 8
+layout = left 2, top 1  # unverified
+hand = ambi
 
 [[mouse]]
 brand = asus
@@ -1260,6 +1609,8 @@ support = experimental
 dpi = 100..16000 step 100
 rates = 125, 250, 500, 1000
 buttons = 8
+layout = left 2, top 1
+hand = ambi
 
 [[mouse]]
 brand = asus
@@ -1270,6 +1621,8 @@ support = experimental
 dpi = 100..12000 step 50
 rates = 125, 250, 500, 1000
 buttons = 8
+layout = left 2, top 1  # unverified
+hand = ambi
 
 [[mouse]]
 brand = asus
@@ -1280,6 +1633,8 @@ support = experimental
 dpi = 100..8000 step 100
 rates = 125, 250, 500, 1000
 buttons = 8
+layout = left 2, top 1
+hand = ambi
 
 [[mouse]]
 brand = asus
@@ -1290,6 +1645,8 @@ support = experimental
 dpi = 100..16000 step 100
 rates = 125, 250, 500, 1000
 buttons = 6
+layout = left 2, top 1
+hand = ambi
 
 [[mouse]]
 brand = asus
@@ -1300,6 +1657,8 @@ support = experimental
 dpi = 100..12000 step 100
 rates = 125, 250, 500, 1000
 buttons = 8
+layout = left 2, top 1  # unverified
+hand = ambi
 
 # Roccat Kone family (libratbag).
 [[brand]]
@@ -1316,6 +1675,8 @@ pids = 0x2D51
 support = experimental
 dpi = 100..6000 step 100
 rates = 125, 250, 500, 1000
+buttons = 12
+layout = left 2, top 3, tilt
 
 [[mouse]]
 brand = roccat
@@ -1325,6 +1686,8 @@ pids = 0x2E22
 support = experimental
 dpi = 200..8200 step 200
 rates = 125, 250, 500, 1000
+buttons = 12
+layout = left 2, top 3, tilt
 
 [[mouse]]
 brand = roccat
@@ -1334,6 +1697,8 @@ pids = 0x2DBE
 support = experimental
 dpi = 200..8200 step 200
 rates = 125, 250, 500, 1000
+buttons = 8  # unverified
+layout = left 2, top 1, tilt  # unverified
 
 [[mouse]]
 brand = roccat
@@ -1343,6 +1708,8 @@ pids = 0x2DC2, 0x2DCB
 support = experimental
 dpi = 200..8200 step 200
 rates = 125, 250, 500, 1000
+buttons = 8  # unverified
+layout = left 2, top 1, tilt  # unverified
 
 [[mouse]]
 brand = roccat
@@ -1352,6 +1719,8 @@ pids = 0x2E24
 support = experimental
 dpi = 100..12000 step 100
 rates = 125, 250, 500, 1000
+buttons = 12  # unverified
+layout = left 2, top 2, tilt, sniper  # unverified
 
 # Sinowealth firmware, Glorious branded. DPI depends on the sensor read.
 [[brand]]
@@ -1366,6 +1735,9 @@ model = "Model O/O-"
 vid = 0x258A
 pids = 0x0036
 support = experimental
+buttons = 6
+layout = left 2, top 1
+hand = ambi
 
 [[mouse]]
 brand = glorious
@@ -1373,6 +1745,8 @@ model = "Model D/D-"
 vid = 0x258A
 pids = 0x0033
 support = experimental
+buttons = 6
+layout = left 2, top 1
 
 [[mouse]]
 brand = glorious
@@ -1380,6 +1754,9 @@ model = "Model O (old firmware)"
 vid = 0x258A
 pids = 0x0027
 support = experimental
+buttons = 6
+layout = left 2, top 1
+hand = ambi
 
 [[mouse]]
 brand = glorious
@@ -1387,6 +1764,9 @@ model = "Model O Eternal"
 vid = 0x3794
 pids = 0xA000
 support = experimental
+buttons = 6  # unverified
+layout = left 2, top 1  # unverified
+hand = ambi
 
 # Eternico: two receivers, no vendor-wide driver.
 [[brand]]
@@ -1402,6 +1782,8 @@ vid = 0x1D57
 pids = 0xFA60 receiver
 support = partial
 stage_dpi = 1200, 2400, 3200, 6400
+buttons = 7
+layout = left 2, top 1, thumbwheel
 
 # Reuses an Apple keyboard id; only its mouse collection is matched.
 # Link state only: statistics, plus a Bluetooth battery where any.
@@ -1412,6 +1794,9 @@ vid = 0x05AC
 pids = 0x024F receiver
 family = none
 support = stats-only
+buttons = 6  # unverified
+layout = left 2, top 1  # unverified
+hand = vertical
 
 # One OEM protocol (OpenMouse). Models on shared receivers have no
 # product id of their own: the mouse names itself (CID/MID).
@@ -1426,18 +1811,24 @@ brand = atk
 model = "F1 Ultimate 2.0"
 vid = 0x373B
 support = experimental
+buttons = 5
+layout = left 2
 
 [[mouse]]
 brand = atk
 model = "X1 Pro Max"
 vid = 0x373B
 support = experimental
+buttons = 5
+layout = left 2
 
 [[mouse]]
 brand = atk
 model = "A9 Plus Nearlink"
 vid = 0x373B
 support = experimental
+buttons = 5  # unverified
+layout = left 2  # unverified
 
 [[brand]]
 id = vxe-vgn-lamzu
@@ -1451,6 +1842,8 @@ brand = vxe-vgn-lamzu
 model = "VXE R1 Pro Max"
 vid = 0x3554
 support = experimental
+buttons = 6
+layout = left 2, top 1
 
 [[mouse]]
 brand = vxe-vgn-lamzu
@@ -1458,6 +1851,8 @@ model = "VGN Dragonfly F2 Master+"
 vid = 0x3554
 pids = 0xFB57, 0xFB56
 support = experimental
+buttons = 6  # unverified
+layout = left 2, top 1  # unverified
 
 [[mouse]]
 brand = vxe-vgn-lamzu
@@ -1465,6 +1860,9 @@ model = "Lamzu Atlantis"
 vid = 0x3554
 pids = 0xF50F, 0xF50D, 0xF510
 support = experimental
+buttons = 6  # unverified
+layout = left 2, top 1  # unverified
+hand = ambi
 
 # Sinowealth firmware under other brands. One product id, several
 # firmwares: the driver tells them apart.
@@ -1481,6 +1879,8 @@ model = "Dream Machines DM5 Blink"
 vid = 0x258A
 pids = 0x0027
 support = experimental
+buttons = 8
+layout = left 2, top 2
 
 [[mouse]]
 brand = sinowealth
@@ -1488,6 +1888,8 @@ model = "Genesis Xenon 770"
 vid = 0x258A
 pids = 0x0027
 support = experimental
+buttons = 8  # unverified
+layout = left 2, top 2, sniper  # unverified
 
 [[mouse]]
 brand = sinowealth
@@ -1495,6 +1897,8 @@ model = "G-Wolves Hati HT-M Wired"
 vid = 0x258A
 pids = 0x0027
 support = experimental
+buttons = 6  # unverified
+layout = left 2, top 1  # unverified
 
 [[mouse]]
 brand = sinowealth
@@ -1502,6 +1906,8 @@ model = "Machenike M620"
 vid = 0x258A
 pids = 0x0029
 support = experimental
+buttons = 6  # unverified
+layout = left 2, top 1  # unverified
 
 [[mouse]]
 brand = sinowealth
@@ -1509,6 +1915,8 @@ model = "Mad Dog GM905"
 vid = 0x258A
 pids = 0x0029
 support = experimental
+buttons = 8  # unverified
+layout = left 2, top 2, sniper  # unverified
 
 [[mouse]]
 brand = sinowealth
@@ -1516,6 +1924,8 @@ model = "T-Dagger Imperial T-TGM310"
 vid = 0x258A
 pids = 0x0051
 support = experimental
+buttons = 7  # unverified
+layout = left 2, top 2  # unverified
 
 [[mouse]]
 brand = sinowealth
@@ -1523,3 +1933,5 @@ model = "Marvo Scorpion G961"
 vid = 0x258A
 pids = 0x1007
 support = experimental
+buttons = 7  # unverified
+layout = left 2, top 2  # unverified

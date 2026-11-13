@@ -1,18 +1,22 @@
 //! The mouse on the Buttons page: a low-poly mesh of a classic
-//! right-handed mouse, seen from the front-left above, with its six
-//! buttons as parts that light up.
+//! right-handed mouse, seen from the front-left above, with its buttons
+//! as parts; those the page can set light up.
 //!
 //! ```text
 //!   body   a height field over a rounded footprint, 12 x 16 cells, the
 //!          inner vertices nudged so the triangles look hand-made
 //!   parts  1 left, 2 right (the shell in front of the seam), 3 wheel
 //!          (cylinder), 4 DPI button (box), 5 and 6 side buttons (boxes)
+//!   more   what the model's `Layout` adds: further side and top
+//!          buttons, a thumb grid, a sniper paddle, a thumb wheel, edge
+//!          buttons; parts without a number
 //!   view   orthographic, painter-sorted, back faces dropped, flat shading
 //! ```
 //! Geometry and numbers follow `mesh()` of the design mock-up. Building
 //! it is pure and done once; drawing only picks colors.
 
 use super::{Act, Frame, th};
+use crate::devices::{Hand, Layout};
 use crate::gfx::{Align, Color, Rect, Seg, Size, Weight};
 
 /// The drawing fits a box of this size; callouts end at its sides.
@@ -42,8 +46,22 @@ const SEAM_V: f32 = -0.05;
 const JITTER_SEED: u64 = 5;
 
 /// Mesh regions (the mock-up's part numbers) to the app's button order:
-/// left, right, middle, back, forward, DPI.
-const REGION_BUTTON: [Option<usize>; 7] = [None, Some(0), Some(1), Some(2), Some(5), Some(3), Some(4)];
+/// left, right, middle, back, forward, DPI. The last region is a part
+/// the page has no button for.
+const REGION_BUTTON: [Option<usize>; REGIONS] = [None, Some(0), Some(1), Some(2), Some(5), Some(3), Some(4), None];
+const REGIONS: usize = 8;
+const WHEEL: usize = 3;
+const TOP_KEY: usize = 4;
+const BACK_KEY: usize = 5;
+const FORWARD_KEY: usize = 6;
+const OTHER_PART: usize = 7;
+/// Parts of one kind that are drawn; a mouse with more shows these.
+const SIDE_MAX: u8 = 4;
+const TOP_MAX: u8 = 3;
+const EDGE_MAX: u8 = 2;
+const GRID_MAX: u8 = 12;
+/// The flank of the shell, in u: where side parts sit.
+const FLANK_U: f32 = 0.93;
 /// Buttons whose callout goes to the left side.
 const LEFT_CALLOUTS: [usize; 3] = [0, 3, 4];
 /// Callout labels keep this distance from each other.
@@ -54,6 +72,8 @@ struct Tri {
     depth: f32,
     shade: f32,
     button: Option<usize>,
+    /// A button or wheel, not the shell.
+    part: bool,
 }
 
 struct Callout {
@@ -129,8 +149,45 @@ fn shell(u: f32, v: f32) -> P3 {
 struct Builder {
     tris: Vec<Tri>,
     /// Sum of the screen centres of each region's triangles, and their count.
-    centers: [(f32, f32, f32); 7],
+    centers: [(f32, f32, f32); REGIONS],
     light: P3,
+}
+
+/// The face of a box that is left out: it sits against the shell.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Open {
+    None,
+    /// +x: a part on the left flank.
+    Px,
+    /// -x: a part on the right flank.
+    Nx,
+}
+
+/// The axis a cylinder turns around.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Axis {
+    /// The scroll wheel.
+    X,
+    /// A thumb wheel.
+    Z,
+}
+
+/// Which flank of the shell.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Left,
+    Right,
+}
+
+impl Side {
+    /// Sign of x on this side.
+    fn sign(self) -> f32 {
+        if self == Side::Left { -1.0 } else { 1.0 }
+    }
+
+    fn open(self) -> Open {
+        if self == Side::Left { Open::Px } else { Open::Nx }
+    }
 }
 
 impl Builder {
@@ -154,7 +211,7 @@ impl Builder {
             (k.0, k.1, k.2) = (k.0 + (pa[0] + pb[0] + pc[0]) / 3.0, k.1 + (pa[1] + pb[1] + pc[1]) / 3.0, k.2 + 1.0);
         }
         let depth = (pa[2] + pb[2] + pc[2]) / 3.0;
-        self.tris.push(Tri { pts: [(pa[0], pa[1]), (pb[0], pb[1]), (pc[0], pc[1])], depth, shade, button: REGION_BUTTON[region] });
+        self.tris.push(Tri { pts: [(pa[0], pa[1]), (pb[0], pb[1]), (pc[0], pc[1])], depth, shade, button: REGION_BUTTON[region], part: region != 0 });
     }
 
     fn quad(&mut self, q: [P3; 4], region: usize, inside: P3) {
@@ -162,33 +219,105 @@ impl Builder {
         self.tri(q[0], q[2], q[3], region, inside);
     }
 
-    /// A box around `c` with half-sizes `h`; `open_px` leaves out the
-    /// +x face (side buttons sit against the shell).
-    fn block(&mut self, c: P3, h: P3, region: usize, open_px: bool) {
+    /// A box around `c` with half-sizes `h`, without its `open` face.
+    fn block(&mut self, c: P3, h: P3, region: usize, open: Open) {
         let v = |dx: f32, dy: f32, dz: f32| [c[0] + dx * h[0], c[1] + dy * h[1], c[2] + dz * h[2]];
         let top = [v(-1.0, -1.0, 1.0), v(1.0, -1.0, 1.0), v(1.0, 1.0, 1.0), v(-1.0, 1.0, 1.0)];
         let nx = [v(-1.0, -1.0, -1.0), v(-1.0, 1.0, -1.0), v(-1.0, 1.0, 1.0), v(-1.0, -1.0, 1.0)];
         let px = [v(1.0, -1.0, -1.0), v(1.0, -1.0, 1.0), v(1.0, 1.0, 1.0), v(1.0, 1.0, -1.0)];
         let ny = [v(-1.0, -1.0, -1.0), v(-1.0, -1.0, 1.0), v(1.0, -1.0, 1.0), v(1.0, -1.0, -1.0)];
         let py = [v(-1.0, 1.0, -1.0), v(1.0, 1.0, -1.0), v(1.0, 1.0, 1.0), v(-1.0, 1.0, 1.0)];
-        for face in [top, nx, ny, py] {
+        for face in [top, ny, py] {
             self.quad(face, region, c);
         }
-        if !open_px {
+        if open != Open::Nx {
+            self.quad(nx, region, c);
+        }
+        if open != Open::Px {
             self.quad(px, region, c);
         }
     }
 
-    /// A cylinder along x around `c`: the wheel.
-    fn cylinder(&mut self, c: P3, radius: f32, half: f32, region: usize, sides: usize) {
-        let p = |a: f32, w: f32| [c[0] + w, c[1] + radius * a.cos(), c[2] + radius * a.sin()];
+    /// A cylinder around `c` turning on `axis`: a wheel.
+    fn cylinder(&mut self, c: P3, radius: f32, half: f32, axis: Axis, region: usize, sides: usize) {
+        let p = |a: f32, w: f32| match axis {
+            Axis::X => [c[0] + w, c[1] + radius * a.cos(), c[2] + radius * a.sin()],
+            Axis::Z => [c[0] + radius * a.cos(), c[1] + radius * a.sin(), c[2] + w],
+        };
+        let hub = |w: f32| if axis == Axis::X { [c[0] + w, c[1], c[2]] } else { [c[0], c[1], c[2] + w] };
         for k in 0..sides {
             let a0 = std::f32::consts::TAU * k as f32 / sides as f32;
             let a1 = std::f32::consts::TAU * (k + 1) as f32 / sides as f32;
             self.quad([p(a0, -half), p(a0, half), p(a1, half), p(a1, -half)], region, c);
             for w in [-half, half] {
-                self.tri([c[0] + w, c[1], c[2]], p(a0, w), p(a1, w), region, c);
+                self.tri(hub(w), p(a0, w), p(a1, w), region, c);
             }
+        }
+    }
+
+    /// `count` side buttons in a row along one flank, front to back.
+    ///
+    /// ```text
+    ///   v: -0.21 ........ 0.31     two: centres -0.08 and 0.18
+    ///      [ forward ][ back ]
+    /// ```
+    fn side_keys(&mut self, side: Side, count: u8) {
+        const FROM_V: f32 = -0.21;
+        const SPAN_V: f32 = 0.52;
+        const GAP: f32 = 1.54;
+        let n = count.min(SIDE_MAX);
+        let slot = SPAN_V / n.max(1) as f32;
+        for k in 0..n {
+            let q = shell(side.sign() * FLANK_U, FROM_V + slot * (k as f32 + 0.5));
+            // The page's Forward and Back are the first two on the left.
+            let region = match (side, k) {
+                (Side::Left, 0) => FORWARD_KEY,
+                (Side::Left, 1) => BACK_KEY,
+                _ => OTHER_PART,
+            };
+            self.block([q[0] + side.sign(), q[1], q[2]], [1.2, slot * HALF_L / 2.0 - GAP, 1.8], region, side.open());
+        }
+    }
+
+    /// The buttons behind the wheel; returns the v where they start and
+    /// end (the middle seam leaves that out).
+    fn top_keys(&mut self, count: u8) -> Option<(f32, f32)> {
+        const ONE_V: f32 = -0.25;
+        const FROM_V: f32 = -0.37;
+        const SPAN_V: f32 = 0.3;
+        let n = count.min(TOP_MAX);
+        if n == 0 {
+            return None;
+        }
+        let slot = if n == 1 { 0.12 } else { SPAN_V / n as f32 };
+        let first = if n == 1 { ONE_V } else { FROM_V + slot / 2.0 };
+        for k in 0..n {
+            let q = shell(0.0, first + slot * k as f32);
+            let region = if k == 0 { TOP_KEY } else { OTHER_PART };
+            self.block([0.0, q[1], q[2] + 0.4], [2.4, slot * HALF_L / 2.0 - 0.5, 1.2], region, Open::None);
+        }
+        Some((first - slot / 2.0, first + slot * (n as f32 - 0.5)))
+    }
+
+    /// A thumb grid on a flank: rows of small buttons, top row first.
+    ///
+    /// ```text
+    ///   12 -> 3 rows of 4      7, 8 -> 2 rows of 4      6 -> 2 rows of 3
+    /// ```
+    fn grid_keys(&mut self, side: Side, count: u8) {
+        const FROM_V: f32 = -0.2;
+        const SPAN_V: f32 = 0.56;
+        /// Rows go down the flank: toward the edge of the footprint.
+        const ROW_U: [f32; 3] = [0.9, 0.955, 0.99];
+        const LOWEST_Z: f32 = 3.2;
+        let count = count.min(GRID_MAX);
+        let rows: u8 = if count > 8 { 3 } else { 2 };
+        let cols = count.div_ceil(rows).max(1);
+        let slot = SPAN_V / cols as f32;
+        for k in 0..count.min(rows * cols) {
+            let (row, col) = ((k / cols) as usize, k % cols);
+            let q = shell(side.sign() * ROW_U[row], FROM_V + slot * (col as f32 + 0.5));
+            self.block([q[0] + 0.8 * side.sign(), q[1], q[2].max(LOWEST_Z)], [1.0, slot * HALF_L / 2.0 - 0.8, 1.5], OTHER_PART, side.open());
         }
     }
 }
@@ -237,12 +366,13 @@ fn seam(from: (f32, f32), to: (f32, f32), steps: usize) -> Vec<(f32, f32)> {
         .collect()
 }
 
-pub fn build() -> Mesh {
+/// Builds the mesh of a mouse with the buttons of `layout`.
+pub fn build(layout: &Layout) -> Mesh {
     let light = {
         let l = len(LIGHT);
         [LIGHT[0] / l, LIGHT[1] / l, LIGHT[2] / l]
     };
-    let mut b = Builder { tris: Vec::new(), centers: [(0.0, 0.0, 0.0); 7], light };
+    let mut b = Builder { tris: Vec::new(), centers: [(0.0, 0.0, 0.0); REGIONS], light };
     let origin = [0.0, 0.0, 0.0];
     let g = grid();
 
@@ -270,33 +400,53 @@ pub fn build() -> Mesh {
         }
     }
 
-    // Wheel, DPI button, the two side buttons.
+    // The wheel, the buttons behind it, those on the flanks.
+    const WHEEL_END_V: f32 = -0.4;
     let wheel = shell(0.0, -0.5);
-    b.cylinder([0.0, wheel[1], wheel[2] + 0.8], 5.5, 2.8, 3, 12);
-    let dpi = shell(0.0, -0.25);
-    b.block([0.0, dpi[1], dpi[2] + 0.4], [2.4, 3.0, 1.2], 4, false);
-    for (v, region) in [(0.18, 5), (-0.08, 6)] {
-        let q = shell(-0.93, v);
-        b.block([q[0] - 1.0, q[1], q[2]], [1.2, 6.0, 1.8], region, true);
+    b.cylinder([0.0, wheel[1], wheel[2] + 0.8], 5.5, 2.8, Axis::X, WHEEL, 12);
+    let top = b.top_keys(layout.top);
+
+    // What the thumb has more: on the right for a left-handed mouse. A
+    // grid takes the whole flank: no plain side buttons beside it.
+    let thumb = if layout.hand == Hand::Left { Side::Right } else { Side::Left };
+    for (side, count) in [(Side::Left, layout.left), (Side::Right, layout.right)] {
+        if layout.grid == 0 || side != thumb {
+            b.side_keys(side, count);
+        }
+    }
+    b.grid_keys(thumb, layout.grid);
+    if layout.sniper {
+        let q = shell(thumb.sign() * FLANK_U, -0.31);
+        b.block([q[0] + thumb.sign(), q[1], q[2] - 1.0], [1.2, 3.6, 1.6], OTHER_PART, thumb.open());
+    }
+    if layout.thumb_wheel {
+        let q = shell(thumb.sign() * FLANK_U, 0.44);
+        b.cylinder([q[0] + 0.6 * thumb.sign(), q[1], q[2] - 1.0], 4.2, 1.6, Axis::Z, OTHER_PART, 10);
+    }
+    // Edge buttons: on the left main button, by its outer edge.
+    for k in 0..layout.edge.min(EDGE_MAX) {
+        let q = shell(-0.74, -0.5 + 0.2 * k as f32);
+        b.block([q[0], q[1], q[2] + 0.3], [1.8, 4.2, 1.0], OTHER_PART, Open::None);
     }
     // Painter's order: far first.
     b.tris.sort_by(|x, y| x.depth.total_cmp(&y.depth));
 
     // Seams: across behind the buttons, and along the middle with gaps
-    // for the wheel and the DPI button.
-    let seams = vec![
-        seam((-0.98, SEAM_V), (0.98, SEAM_V), 24),
-        seam((0.0, -0.99), (0.0, -0.6), 4),
-        seam((0.0, -0.4), (0.0, -0.31), 2),
-        seam((0.0, -0.19), (0.0, SEAM_V), 2),
-    ];
+    // for the wheel and the buttons behind it.
+    let mut seams = vec![seam((-0.98, SEAM_V), (0.98, SEAM_V), 24), seam((0.0, -0.99), (0.0, -0.6), 4)];
+    let (keys_from, keys_to) = top.unwrap_or((SEAM_V, SEAM_V));
+    for (from, to) in [(WHEEL_END_V, keys_from), (keys_to, SEAM_V)] {
+        if to - from > 0.02 {
+            seams.push(seam((0.0, from), (0.0, to), 2));
+        }
+    }
 
     Mesh { callouts: callouts(&b.centers), tris: b.tris, seams }
 }
 
 /// One callout per button, from the middle of its part to a number at
 /// the side; labels of one side keep their distance.
-fn callouts(centers: &[(f32, f32, f32); 7]) -> Vec<Callout> {
+fn callouts(centers: &[(f32, f32, f32); REGIONS]) -> Vec<Callout> {
     let mut anchors: Vec<(usize, (f32, f32))> =
         (1..centers.len()).filter(|&r| centers[r].2 > 0.0).filter_map(|r| REGION_BUTTON[r].map(|b| (b, (centers[r].0 / centers[r].2, centers[r].1 / centers[r].2)))).collect();
     anchors.sort_by(|a, b| a.1.1.total_cmp(&b.1.1));
@@ -343,7 +493,7 @@ pub fn draw(f: &mut Frame, mesh: &Mesh, x: f32, y: f32, lit: Option<usize>) {
             f.g.stroke_path(&path, 0.6, Color(th().acc_fill.0, alpha(0.95)));
             continue;
         }
-        let part = t.button.is_some();
+        let part = t.part;
         f.g.fill_path(&path, Color(th().text.0, alpha(if part { 0.08 } else { 0.04 } + 0.42 * t.shade * t.shade)));
         f.g.stroke_path(&path, 0.55, Color(th().text.0, alpha(if part { 0.5 } else { 0.32 })));
     }
@@ -381,7 +531,7 @@ mod tests {
 
     #[test]
     fn mesh_is_the_same_every_time_and_has_all_six_buttons() {
-        let (a, b) = (build(), build());
+        let (a, b) = (build(&Layout::GENERIC), build(&Layout::GENERIC));
         assert_eq!(a.tris.len(), b.tris.len());
         assert!(a.tris.len() > 300, "{} triangles", a.tris.len());
         for button in 0..6 {
@@ -392,7 +542,7 @@ mod tests {
 
     #[test]
     fn drawing_fits_its_box_and_labels_keep_apart() {
-        let m = build();
+        let m = build(&Layout::GENERIC);
         for t in &m.tris {
             for (x, y) in t.pts {
                 assert!((0.0..=WIDTH).contains(&x) && (0.0..=HEIGHT).contains(&y), "({x}, {y})");
@@ -408,7 +558,41 @@ mod tests {
 
     #[test]
     fn far_triangles_are_drawn_first() {
-        let m = build();
+        let m = build(&Layout::GENERIC);
         assert!(m.tris.windows(2).all(|w| w[0].depth <= w[1].depth));
+    }
+
+    fn parts(l: &Layout) -> usize {
+        build(l).tris.iter().filter(|t| t.part).count()
+    }
+
+    #[test]
+    fn every_part_of_a_layout_is_drawn_inside_the_box() {
+        let plain = Layout::PLAIN;
+        let all = Layout { left: 255, right: 255, top: 255, edge: 255, grid: 255, tilt: true, thumb_wheel: true, sniper: true, hand: Hand::Right };
+        for t in &build(&all).tris {
+            for (x, y) in t.pts {
+                assert!((0.0..=WIDTH).contains(&x) && (0.0..=HEIGHT).contains(&y), "({x}, {y})");
+            }
+        }
+
+        // Each kind of part adds triangles to the plain mouse.
+        let more = [
+            Layout { left: 1, ..plain },
+            Layout { top: 1, ..plain },
+            Layout { edge: 1, ..plain },
+            Layout { grid: 6, ..plain },
+            Layout { thumb_wheel: true, ..plain },
+            Layout { sniper: true, ..plain },
+        ];
+        for l in more {
+            assert!(parts(&l) > parts(&plain), "{l:?}");
+        }
+        assert!(parts(&Layout { left: 4, ..plain }) > parts(&Layout { left: 2, ..plain }));
+        assert!(parts(&Layout { grid: 12, ..plain }) > parts(&Layout { grid: 6, ..plain }));
+
+        // No side buttons: no callouts for Back and Forward.
+        assert_eq!(build(&plain).callouts.len(), 3);
+        assert_eq!(build(&Layout::GENERIC).callouts.len(), 6);
     }
 }

@@ -6,7 +6,7 @@
 //!   text ──lines──> blocks [[brand]] / [[mouse]] ──keys──> records
 //! ```
 
-use super::{Family, Link, Support, slug};
+use super::{Family, Hand, Layout, Link, Support, slug};
 use crate::drivers::DpiRange;
 use crate::i18n::T;
 use std::fmt;
@@ -54,6 +54,7 @@ pub(super) struct MouseRec<'a> {
     pub(super) rates: Vec<u32>,
     pub(super) stage_dpi: Vec<u32>,
     pub(super) buttons: Option<u8>,
+    pub(super) layout: Option<Layout>,
 }
 
 /// The whole file, records in file order.
@@ -93,6 +94,12 @@ const LINKS: [(&str, Link); 2] = [("receiver", Link::Receiver), ("cable", Link::
 const LABELS: [(&str, T); 1] = [("oem", T::BrandOem)];
 
 const BOOLS: [(&str, bool); 2] = [("true", true), ("false", false)];
+
+const HANDS: [(&str, Hand); 4] = [("right", Hand::Right), ("ambi", Hand::Ambi), ("left", Hand::Left), ("vertical", Hand::Vertical)];
+/// `layout = plain`: nothing beside the main buttons and the wheel.
+const PLAIN_WORD: &str = "plain";
+/// More buttons of one kind than any mouse has: a typo.
+const MAX_PART: u8 = 20;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -245,6 +252,7 @@ fn brand<'a>(block: &Block<'a>) -> Result<BrandRec<'a>, ParseError> {
 
 fn mouse<'a>(block: &Block<'a>) -> Result<MouseRec<'a>, ParseError> {
     let (mut brand, mut model, mut vid, mut support) = (None, None, None, None);
+    let (mut places, mut hand) = (None, None);
     let mut m = MouseRec {
         brand: "",
         model: "",
@@ -256,6 +264,7 @@ fn mouse<'a>(block: &Block<'a>) -> Result<MouseRec<'a>, ParseError> {
         rates: Vec::new(),
         stage_dpi: Vec::new(),
         buttons: None,
+        layout: None,
     };
     for f in &block.fields {
         let at = |msg: String| fail(f.line, format!("{}: {msg}", f.key));
@@ -271,6 +280,8 @@ fn mouse<'a>(block: &Block<'a>) -> Result<MouseRec<'a>, ParseError> {
             "rates" => m.rates = list(v, int).map_err(at)?,
             "stage_dpi" => m.stage_dpi = list(v, int).map_err(at)?,
             "buttons" => m.buttons = Some(int(v).map_err(at)?),
+            "layout" => places = Some(layout(v).map_err(at)?),
+            "hand" => hand = Some((lookup(&HANDS, v).map_err(at)?, f.line)),
             key => return Err(fail(f.line, format!("unknown mouse key {key}"))),
         }
     }
@@ -280,7 +291,52 @@ fn mouse<'a>(block: &Block<'a>) -> Result<MouseRec<'a>, ParseError> {
     m.model = model.ok_or_else(|| missing("model"))?;
     m.vid = vid.ok_or_else(|| missing("vid"))?;
     m.support = support.ok_or_else(|| missing("support"))?;
+    // The hand belongs to a layout: alone it draws nothing.
+    m.layout = match (places, hand) {
+        (Some(l), hand) => Some(Layout { hand: hand.map_or(l.hand, |(h, _)| h), ..l }),
+        (None, Some((_, line))) => return Err(fail(line, "hand without layout".into())),
+        (None, None) => None,
+    };
     Ok(m)
+}
+
+/// `left 2, top 1, tilt`: counted parts with their number, the others
+/// as bare words; `plain` alone for none.
+pub(super) fn layout(v: &str) -> Result<Layout, String> {
+    let mut l = Layout::PLAIN;
+    if v == PLAIN_WORD {
+        return Ok(l);
+    }
+    let mut seen: Vec<&str> = Vec::new();
+    for part in list(v, Ok)? {
+        let mut words = part.split_whitespace();
+        let (name, number) = (words.next().unwrap_or(""), words.next());
+        if words.next().is_some() || seen.contains(&name) {
+            return Err(format!("bad or repeated layout part {part}"));
+        }
+        seen.push(name);
+
+        let count = || -> Result<u8, String> {
+            let n: u8 = int(number.ok_or_else(|| format!("{name} needs a number"))?)?;
+            if n == 0 || n > MAX_PART {
+                return Err(format!("{name} {n} out of range"));
+            }
+            Ok(n)
+        };
+        let flag = || if number.is_some() { Err(format!("{name} takes no number")) } else { Ok(true) };
+        match name {
+            "left" => l.left = count()?,
+            "right" => l.right = count()?,
+            "top" => l.top = count()?,
+            "edge" => l.edge = count()?,
+            "grid" => l.grid = count()?,
+            "tilt" => l.tilt = flag()?,
+            "thumbwheel" => l.thumb_wheel = flag()?,
+            "sniper" => l.sniper = flag()?,
+            _ => return Err(format!("unknown layout part {part}")),
+        }
+    }
+    Ok(l)
 }
 
 /// `"White Shark"` -> `White Shark`; no escapes, no inner quotes.
@@ -387,6 +443,8 @@ dpi = 100..36000 step 100
 rates = 125, 1000
 stage_dpi = 400, 800
 buttons = 14
+layout = left 2, grid 12, tilt
+hand = left
 
 [[mouse]]
 brand = acme
@@ -396,6 +454,23 @@ family = none
 support = stats-only
 dpi = 400, 800
 "#;
+
+    #[test]
+    fn layout_is_a_list_of_parts() {
+        let l = layout("left 2, top 1, edge 2, grid 12, tilt, thumbwheel, sniper").unwrap();
+        assert_eq!((l.left, l.right, l.top, l.edge, l.grid), (2, 0, 1, 2, 12));
+        assert!(l.tilt && l.thumb_wheel && l.sniper);
+        assert_eq!(layout("plain"), Ok(Layout::PLAIN));
+        for bad in ["left", "left 0", "left 99", "tilt 2", "left 2, left 3", "wings 2", "left 2 3", "plain, tilt"] {
+            assert!(layout(bad).is_err(), "{bad}");
+        }
+        // The hand comes with a layout, never alone.
+        let data = parse(GOOD).unwrap();
+        assert_eq!(data.mice[0].layout.map(|l| (l.grid, l.hand)), Some((12, Hand::Left)));
+        assert_eq!(data.mice[1].layout, None);
+        let without = GOOD.replace("layout = left 2, grid 12, tilt\n", "");
+        assert_eq!(parse(&without).err().map(|e| e.line), Some(20));
+    }
 
     fn line_of(src: &str) -> usize {
         parse(src).err().map_or(0, |e| e.line)

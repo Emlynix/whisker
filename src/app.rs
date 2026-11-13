@@ -426,6 +426,7 @@ fn initial_view(cfg: &AppConfig, ask_setup: bool) -> View {
         delay_mode: DelayMode::Recorded,
         notice: String::new(),
         caps: caps_of(cfg.device.as_deref()),
+        layout: layout_of(cfg.device.as_deref()),
         device_name: device_name(cfg.device.as_deref()),
         device: DeviceView::default(),
         detect: None,
@@ -477,6 +478,21 @@ fn caps_of(device: Option<&str>) -> Caps {
         None => devices::default_model().caps,
         Some(id) => devices::by_id(id).map_or(CAPS_NONE, |m| m.caps),
     }
+}
+
+/// Where the chosen mouse has its buttons; the usual layout for an entry
+/// that is not one model.
+fn layout_of(device: Option<&str>) -> devices::Layout {
+    // Debug builds: WHISKER_LAYOUT="left 4, top 2, sniper" draws any mouse.
+    #[cfg(debug_assertions)]
+    if let Some(l) = std::env::var("WHISKER_LAYOUT").ok().and_then(|text| devices::parse_layout(&text)) {
+        return l;
+    }
+    let model = match device {
+        None => Some(devices::default_model()),
+        Some(id) => devices::by_id(id),
+    };
+    model.and_then(|m| m.layout).unwrap_or(devices::Layout::GENERIC)
 }
 
 /// Catalogue caps cut down to what the opened mouse reports: a
@@ -1958,6 +1974,7 @@ impl Controller {
     fn on_ident(&mut self, ident: Ident, ability: Ability) {
         self.name_from(&ident);
         self.view.caps = narrow_caps(caps_of(self.cfg.device.as_deref()), &ability);
+        self.view.layout = layout_of(self.cfg.device.as_deref());
         self.view.basic.values = ability.dpi.map(|r| r.values()).unwrap_or_default();
         self.view.basic.rates = ability.rates;
         self.view.basic.stages = ability.stages;
@@ -2272,6 +2289,7 @@ impl Controller {
         (self.status, self.ident, self.device_info, self.basic_online) = (None, None, None, false);
         let caps = caps_of(self.cfg.device.as_deref());
         self.view.caps = caps;
+        self.view.layout = layout_of(self.cfg.device.as_deref());
         forget_mouse(&mut self.view, caps);
         self.retarget_bluetooth();
 

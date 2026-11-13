@@ -252,10 +252,19 @@ pub(super) fn buttons_page(f: &mut Frame, v: &View) {
         button_row(f, r, i, *a, lit == Some(i));
     }
     // Drawn after the rows: Tab visits the list first. The mesh is built
-    // once; a frame only picks its colors.
-    static MESH: std::sync::OnceLock<mesh::Mesh> = std::sync::OnceLock::new();
+    // once per mouse; a frame only picks its colors.
+    thread_local! {
+        static MESH: std::cell::RefCell<Option<(crate::devices::Layout, mesh::Mesh)>> = const { std::cell::RefCell::new(None) };
+    }
     let (mx, my) = (panel.x + (ART_W - mesh::WIDTH) / 2.0, panel.y + (h - mesh::HEIGHT) / 2.0);
-    mesh::draw(f, MESH.get_or_init(mesh::build), mx, my, lit);
+    MESH.with_borrow_mut(|built| {
+        if built.as_ref().is_none_or(|(of, _)| *of != v.layout) {
+            *built = Some((v.layout, mesh::build(&v.layout)));
+        }
+        if let Some((_, m)) = built {
+            mesh::draw(f, m, mx, my, lit);
+        }
+    });
 
     let y = panel.y + panel.h + PANEL_GAP;
     // Nothing to reset while the layout is the default one.

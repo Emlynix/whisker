@@ -40,7 +40,7 @@ pub use device::{Badge, Banner, BrandRow, Detect, DetectRow, DetectStep, DeviceV
 pub use report::{Answer, Ask, CheckView, Kind as ReportKind, PickRow, REPORT_ROWS, ReportView, Sending, Step as ReportStep, report_at, report_lines};
 pub use tui::page_of_key;
 pub use update::{Install, Offer, Probe, Step as UpdateStep, UpdateView, note_lines, notes_cut};
-use crate::devices::{Caps, DpiUi};
+use crate::devices::{Caps, DpiUi, Layout};
 use crate::platform::Access;
 use crate::store::{DEBOUNCE_CHOICES, SLEEP_CHOICES};
 use crate::theme::{self, THEMES, Theme};
@@ -689,6 +689,8 @@ pub struct View {
     pub notice: String,
     /// What the selected mouse supports; hides other pages.
     pub caps: Caps,
+    /// Where the chosen mouse has its buttons: the drawing on the Buttons page.
+    pub layout: Layout,
     /// Selected mouse, shown under the app name.
     pub device_name: String,
     pub device: DeviceView,

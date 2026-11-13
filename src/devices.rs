@@ -28,6 +28,12 @@
 //!   `partial`, `stats-only`) are required; `pids` (each with an optional
 //!   `receiver` / `cable`; none = only by vendor id), `family` (default:
 //!   the brand's), `dpi`, `rates`, `stage_dpi`, `buttons` are optional.
+//!   `layout` says where the buttons are, beside the two main ones and
+//!   the wheel: a comma list of `left N` / `right N` (side buttons),
+//!   `top N` (behind the wheel), `edge N` (at the edge of the left
+//!   button), `grid N` (thumb grid), `tilt` (wheel), `thumbwheel`,
+//!   `sniper` (thumb paddle), or `plain` for none of these; `hand` is
+//!   `right` (default), `ambi`, `left` or `vertical`.
 //! - family: `telink-m022`, `hidpp`, `razer`, `eternico`, `sinowealth`,
 //!   `steelseries`, `oemhid`, `roccat`, `corsair`, `asus`, `none`.
 //!
@@ -44,6 +50,7 @@
 //! rates = 125, 250, 500, 1000
 //! stage_dpi = 400, 800, 1600, 3200
 //! buttons = 8
+//! layout = left 2, top 2, sniper
 //! ```
 
 mod data;
@@ -144,6 +151,58 @@ const CAPS_STATUS: Caps = Caps { dpi: DpiUi::None, polling: false, extras: false
 /// Driver-based mice: DPI, report rate, battery.
 const CAPS_BASIC: Caps = Caps { dpi: DpiUi::Single, polling: true, extras: false, lighting: false, buttons: false, battery: true };
 
+/// The hand a shell is made for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hand {
+    Right,
+    /// Symmetric shape.
+    Ambi,
+    Left,
+    Vertical,
+}
+
+/// Where a mouse has its buttons, beside the two main ones and the wheel:
+/// what the drawing on the Buttons page is built from.
+///
+/// ```text
+///        .--+--.
+///   edge/   |w|  \\        w     wheel (`tilt`: it also tilts)
+///      |    |t|   |       t     `top` buttons behind the wheel
+///  left|----------|right  left  thumb buttons, or a `grid` of them,
+///      |          |             a `sniper` paddle, a `thumb_wheel`
+///       \\________/
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Layout {
+    pub left: u8,
+    pub right: u8,
+    pub top: u8,
+    /// Buttons at the outer edge of the left main button (G502).
+    pub edge: u8,
+    /// Buttons of a thumb grid (Naga: 12).
+    pub grid: u8,
+    pub tilt: bool,
+    pub thumb_wheel: bool,
+    pub sniper: bool,
+    pub hand: Hand,
+}
+
+impl Layout {
+    /// A mouse with nothing beside the main buttons and the wheel.
+    pub const PLAIN: Layout =
+        Layout { left: 0, right: 0, top: 0, edge: 0, grid: 0, tilt: false, thumb_wheel: false, sniper: false, hand: Hand::Right };
+    /// The usual mouse, drawn for a model without a layout: two thumb
+    /// buttons and a DPI button.
+    pub const GENERIC: Layout = Layout { left: 2, top: 1, ..Layout::PLAIN };
+}
+
+/// Debug builds: a layout as written in the data file, e.g.
+/// "left 4, top 2, sniper" (to look at the drawing of any mouse).
+#[cfg(debug_assertions)]
+pub(crate) fn parse_layout(text: &str) -> Option<Layout> {
+    data::layout(text).ok()
+}
+
 /// Kind of catalogue entry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Entry {
@@ -178,8 +237,10 @@ pub struct Model {
     pub dpi: Option<DpiRange>,
     /// Report rates in Hz from the data file; empty = unknown.
     pub rates: Vec<u32>,
-    /// Physical buttons, for a future button remap page.
+    /// Programmable buttons, as the manufacturer counts them.
     pub buttons: Option<u8>,
+    /// Where the buttons are; none for an entry that is not one model.
+    pub layout: Option<Layout>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -299,6 +360,7 @@ fn from_data(d: data::Data<'static>) -> Vec<Brand> {
             dpi: m.dpi,
             rates: m.rates,
             buttons: m.buttons,
+            layout: m.layout,
         });
     }
 
@@ -320,6 +382,7 @@ fn from_data(d: data::Data<'static>) -> Vec<Brand> {
             dpi: None,
             rates: Vec::new(),
             buttons: None,
+            layout: None,
         });
     }
     brands
@@ -351,6 +414,7 @@ fn other_brand() -> Brand {
         dpi: None,
         rates: Vec::new(),
         buttons: None,
+        layout: None,
     };
     Brand { id: "other", name: "", label: Some(T::OtherBrand), in_names: false, verified: Vec::new(), receivers: Vec::new(), models: vec![other] }
 }
@@ -739,6 +803,25 @@ mod tests {
         assert_eq!(families_for(0x1D57), [Family::Eternico]);
         assert_eq!(families_for(0x258A), [Family::Sinowealth]);
         assert!(families_for(0x0458).is_empty());
+    }
+
+    #[test]
+    fn every_model_says_where_its_buttons_are() {
+        // The one named entry that is no mouse.
+        const RECEIVER: &str = "corsair/slipstream-receiver";
+        for m in models().filter(|m| m.entry == Entry::Named && m.id != RECEIVER) {
+            assert!(m.layout.is_some(), "{} has no layout", m.id);
+            assert!(m.buttons.is_some(), "{} has no button count", m.id);
+        }
+        // Entries that are not one model get the usual drawing.
+        assert!(models().filter(|m| m.entry != Entry::Named).all(|m| m.layout.is_none()));
+
+        assert_eq!(by_id("whiteshark/lionel").unwrap().layout, Some(Layout::GENERIC));
+        let g502 = by_id("logitech/g502").unwrap().layout.unwrap();
+        assert_eq!((g502.left, g502.top, g502.edge, g502.tilt, g502.sniper), (2, 1, 2, true, true));
+        let naga = by_id("razer/naga-left-handed-edition-2020").unwrap().layout.unwrap();
+        assert_eq!((naga.grid, naga.hand), (8, Hand::Left));
+        assert_eq!(by_id("logitech/pebble-m350").unwrap().layout, Some(Layout { hand: Hand::Ambi, ..Layout::PLAIN }));
     }
 
     #[test]
