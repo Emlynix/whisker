@@ -887,48 +887,19 @@ fn profiles(g: &mut Grid, v: &View) {
     g.wrap(r + 1, y + 6, PAGE_W - 2, tr(T::ProfileNote), Style::Faint);
 }
 
-/// The in-game overlay of the PRO version: a mock-up.
+/// The in-game overlay of the PRO version: a veiled frame, as the
+/// graphical mode shows it. Nothing of the page is to be read.
 fn overlay(g: &mut Grid) {
-    const SHOWS: [&str; 6] = ["Clicks per second", "Polling rate", "Battery", "DPI", "Acceleration graph", "Speed graph"];
-    const SHOWN: usize = 4;
+    const ROWS: i32 = 24;
+    const NOTE_ROW: i32 = 13;
     let r = PAGE_X;
-    g.frame(r, 1, PAGE_W, 8, "Overlay preview", Lead::Focused, Some("PRO"));
-    for y in 2..8 {
-        let dots: String = (0..PAGE_W - 2).map(|i| if (i + y) % 4 == 0 { '·' } else { ' ' }).collect();
-        g.put(r + 1, y, &dots, Style::Faint);
+    g.frame(r, 1, PAGE_W, ROWS + 2, "Overlay", Lead::Focused, Some("PRO"));
+    let shade: String = (0..PAGE_W - 2).map(|_| '░').collect();
+    for y in 2..2 + ROWS {
+        g.put(r + 1, y, &shade, Style::Faint);
     }
-    let sample = "7 CPS · 500 Hz · 78 % · 2400 DPI";
-    g.put(r + PAGE_W - 3 - cells(sample), 2, sample, Style::AccentBold);
-
-    g.frame(r, 9, HALF_W, 9, "Overlay", Lead::Plain, None);
-    g.check(r + 2, 10, "Show in games", true, Some(Act::Mock(40)));
-    for (k, name) in ["Minimal", "Compact", "Full"].into_iter().enumerate() {
-        g.radio(r + 2, 12 + k as i32, name, k == 0, Act::Mock(50 + k as u8));
-    }
-    g.put(r + 2, 16, "toggle ", Style::Dim);
-    g.put(r + 9, 16, "Ctrl+Shift+O", Style::Accent);
-
-    g.frame(r + HALF_W, 9, HALF_W, 9, "Position & size", Lead::Plain, None);
-    let gx = r + HALF_W + 3;
-    for (row, line) in ["┌───┬───┐", "│   │   │", "├───┼───┤", "│   │   │", "└───┴───┘"].into_iter().enumerate() {
-        g.put(gx, 11 + row as i32, line, Style::Border);
-    }
-    for (k, (x, y)) in [(1, 12), (5, 12), (1, 14), (5, 14)].into_iter().enumerate() {
-        let on = k == 1;
-        g.link(gx + x, y, if on { " ■ " } else { "   " }, if on { Style::AccentBold } else { Style::Text }, Act::Mock(70 + k as u8));
-    }
-    for (k, pct) in [100, 125, 150, 200].into_iter().enumerate() {
-        g.radio(r + HALF_W + 16, 11 + k as i32, &format!("{pct}%"), k == 1, Act::Mock(80 + k as u8));
-    }
-
-    // What the overlay shows: two columns, as in the graphical mode.
-    g.frame(r, 18, PAGE_W, 7, "Shows", Lead::Plain, None);
-    for (k, name) in SHOWS.into_iter().enumerate() {
-        let (x, y) = (r + 2 + (k as i32 % 2) * HALF_W, 20 + k as i32 / 2);
-        g.put(x, y, "≡", Style::Faint);
-        g.check(x + 2, y, name, k < SHOWN, Some(Act::Mock(60 + k as u8)));
-    }
-    g.put_in(r + 2, 26, PAGE_W - 4, tr(T::ProOnly), Style::Faint);
+    let note = format!("  {}  ", fit(tr(T::ProOnly), PAGE_W - 8));
+    g.put(r + (PAGE_W - cells(&note)) / 2, NOTE_ROW, &note, Style::Text);
 }
 
 fn settings(g: &mut Grid, v: &View) {

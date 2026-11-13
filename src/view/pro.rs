@@ -1,6 +1,6 @@
-//! Pages of the PRO version, as mock-ups: the open app shows what
-//! Whisker Pro has, with controls that answer the pointer and do
-//! nothing. The real pages live in the private Pro build.
+//! Pages of the PRO version, as mock-ups: the open app shows that
+//! Whisker Pro has them, behind a veil that leaves the layout to guess
+//! and no text to read. The real pages live in the private Pro build.
 //!
 //! Texts here are English and fixed on purpose: they are placeholders,
 //! translated when the feature behind them exists.
@@ -24,6 +24,32 @@ const CHECK: f32 = 14.0;
 /// Mock controls are numbered only so each has its own hover.
 fn mock(id: u8) -> Act {
     Act::Mock(id)
+}
+
+/// Covers a mock-up drawn in `area` with a grid of bars of `ground`, so
+/// only a dot of every cell shows through: shapes, no readable text.
+/// The controls under it, added since `hits`, take no press.
+///
+/// ```text
+///  ███ ███ ███
+///  ███ ███ ███      BAR wide bars, GAP between them
+///
+///  ███ ███ ███
+/// ```
+fn veil(f: &mut Frame, area: Rect, ground: Color, hits: usize) {
+    const BAR: f32 = 2.0;
+    const GAP: f32 = 2.0;
+    f.hits.truncate(hits);
+    let mut x = area.x;
+    while x < area.x + area.w {
+        f.g.fill(Rect::new(x, area.y, BAR.min(area.x + area.w - x), area.h), 0.0, ground);
+        x += BAR + GAP;
+    }
+    let mut y = area.y;
+    while y < area.y + area.h {
+        f.g.fill(Rect::new(area.x, y, area.w, BAR.min(area.y + area.h - y)), 0.0, ground);
+        y += BAR + GAP;
+    }
 }
 
 /// A checkbox with its label; pressing it does nothing.
@@ -70,6 +96,7 @@ pub(super) fn overlay_page(f: &mut Frame) {
     const SHOWS: [(&str, bool); 6] =
         [("Clicks per second", true), ("Polling rate", true), ("Battery", true), ("DPI", true), ("Acceleration graph", false), ("Speed graph", false)];
     let mut y = TOP;
+    let hits = f.hits.len();
 
     // One row above the preview: the switch and the hotkey.
     check(f, 40, X0, y, 260.0, "Show overlay in games", true, true);
@@ -137,6 +164,17 @@ pub(super) fn overlay_page(f: &mut Frame) {
     }
     let scales: Vec<Segment> = [100, 125, 150, 200].into_iter().enumerate().map(|(k, pct)| Segment::new(mock(80 + k as u8), format!("{pct} %"), k == 1)).collect();
     f.segments(Rect::new(c.x + 2.0 * CORNER + 9.0 + 16.0, c.y + 10.0, SCALE_CELL * 4.0, SEGMENT_H), &scales);
+
+    // Veiled, with the reason in a plate over the middle.
+    const PLATE_H: f32 = 44.0;
+    let page = Rect::new(X0, TOP, CW, panel.y + panel.h - TOP);
+    veil(f, page, th().bg, hits);
+    let note = tr(T::ProOnly);
+    let plate_w = text_w(note, Size::Body) + 2.0 * PANEL_PAD + 40.0;
+    let plate = Rect::new(page.x + (page.w - plate_w) / 2.0, page.y + (page.h - PLATE_H) / 2.0, plate_w, PLATE_H);
+    f.card(plate);
+    let tag_w = super::pro_tag(f, plate.x + PANEL_PAD, plate.y + (PLATE_H - 16.0) / 2.0);
+    f.g.text(note, Rect::new(plate.x + PANEL_PAD + tag_w + 10.0, plate.y, plate.w, PLATE_H), Size::Body, Weight::Normal, Align::Left, th().text);
 }
 
 /// Settings › About: "Backup & sync" of the PRO version, as a mock-up.
@@ -148,6 +186,7 @@ pub(super) fn backup_panel(f: &mut Frame, y: f32) -> f32 {
     let body = f.panel(panel, TITLE);
     super::pro_tag(f, panel.x + PANEL_PAD + text_w(TITLE, Size::Body) + 10.0, panel.y + (PANEL_HEAD - 16.0) / 2.0);
     f.panel_note(panel, tr(T::ProOnly));
+    let hits = f.hits.len();
 
     check(f, 130, body.x + PANEL_PAD, body.y + (ROW - 22.0) / 2.0, 200.0, "Sync automatically", false, true);
     // Buttons from the right: the file ones, then "Sync now".
@@ -158,5 +197,6 @@ pub(super) fn backup_panel(f: &mut Frame, y: f32) -> f32 {
         f.push_button(mock(131 + k as u8), Rect::new(right, body.y + (ROW - BTN_H) / 2.0, w, BTN_H), label, false);
         right -= 6.0;
     }
+    veil(f, Rect::new(body.x + 1.0, body.y, body.w - 2.0, body.h - 1.0), th().panel, hits);
     panel.y + panel.h
 }
