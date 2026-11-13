@@ -888,15 +888,33 @@ fn profiles(g: &mut Grid, v: &View) {
 }
 
 /// The in-game overlay of the PRO version: a veiled frame, as the
-/// graphical mode shows it. Nothing of the page is to be read.
+/// graphical mode shows it. The panels of the page stay, as shaded
+/// boxes; nothing in them is to be read.
+///
+/// ```text
+///  ┌ Overlay PRO ─────────┐
+///  │░░░░░░ preview ░░░░░░░│
+///  ├──────────┬───────────┤
+///  │░ style ░░│░ position │
+///  ├──────────┴───────────┤
+///  │░░░░░░░ shows ░░░░░░░░│
+///  └──────────────────────┘
+/// ```
 fn overlay(g: &mut Grid) {
-    const ROWS: i32 = 24;
     const NOTE_ROW: i32 = 13;
     let r = PAGE_X;
-    g.frame(r, 1, PAGE_W, ROWS + 2, "Overlay", Lead::Focused, Some("PRO"));
-    let shade: String = (0..PAGE_W - 2).map(|_| '░').collect();
-    for y in 2..2 + ROWS {
-        g.put(r + 1, y, &shade, Style::Faint);
+    // x, y, w, h of each panel; the first carries the page title.
+    let panels = [(r, 1, PAGE_W, 8), (r, 9, HALF_W, 9), (r + HALF_W, 9, HALF_W, 9), (r, 18, PAGE_W, 7)];
+    for (i, (x, y, w, h)) in panels.into_iter().enumerate() {
+        if i == 0 {
+            g.frame(x, y, w, h, "Overlay", Lead::Focused, Some("PRO"));
+        } else {
+            g.frame(x, y, w, h, "", Lead::Plain, None);
+        }
+        let shade = "░".repeat((w - 2) as usize);
+        for row in y + 1..y + h - 1 {
+            g.put(x + 1, row, &shade, Style::Faint);
+        }
     }
     let note = format!("  {}  ", fit(tr(T::ProOnly), PAGE_W - 8));
     g.put(r + (PAGE_W - cells(&note)) / 2, NOTE_ROW, &note, Style::Text);
