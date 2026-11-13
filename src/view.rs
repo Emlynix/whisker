@@ -1783,6 +1783,11 @@ fn stat_strip(f: &mut Frame, r: Rect, cells: &[Stat], corners: Corners) {
     const VALUE_Y: f32 = 30.0;
     const VALUE_H: f32 = 34.0;
     const BAR_H: f32 = METER_H;
+    /// Under the number: to a plain note, and to and from a bar. The bar
+    /// sits closer, so that a two-line note under it clears the bottom edge.
+    const NOTE_GAP: f32 = 6.0;
+    const BAR_GAP: f32 = 2.0;
+    const BAR_NOTE_GAP: f32 = 4.0;
     f.card(r);
     if corners == Corners::Marked {
         corner_marks(f.g, r);
@@ -1798,7 +1803,7 @@ fn stat_strip(f: &mut Frame, r: Rect, cells: &[Stat], corners: Corners) {
         f.g.text(c.label, Rect::new(cx, r.y + PAD_Y, cw, 16.0), Size::Caption, Weight::Normal, Align::Left, th().muted);
 
         let value = Rect::new(cx, r.y + VALUE_Y, cw, VALUE_H);
-        let mut below = value.y + VALUE_H + 6.0;
+        let mut below = value.y + VALUE_H + if c.bar.is_some() { BAR_GAP } else { NOTE_GAP };
         if c.value == UNKNOWN {
             skeleton(f.g, Rect::new(value.x, value.y + 8.0, 72.0, 20.0));
         } else if c.value.is_empty() {
@@ -1811,7 +1816,7 @@ fn stat_strip(f: &mut Frame, r: Rect, cells: &[Stat], corners: Corners) {
         }
         if let Some((pct, color)) = c.bar {
             meter(f.g, Rect::new(cx, below, cw, BAR_H), pct, color);
-            below += BAR_H + 6.0;
+            below += BAR_H + BAR_NOTE_GAP;
         }
         f.g.text(&c.note, Rect::new(cx, below, cw, 32.0), Size::Caption, Weight::Normal, Align::Wrap, th().muted);
     }

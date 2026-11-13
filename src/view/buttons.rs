@@ -11,7 +11,7 @@
 //!  Hovering or focusing a row lights its marker, and the other way round.
 //! ```
 
-use super::{Act, BODY, CW, Frame, Glyph, HEIGHT, Mark, PAGE_H, PANEL_GAP, PANEL_PAD, R_CTRL, RADIUS, SEGMENT_H, Segment, Squares, View, WIDTH, X0, art, glyph, mesh, text_w, th};
+use super::{Act, BODY, CW, Frame, Glyph, HEIGHT, Mark, PAGE_H, PANEL_GAP, PANEL_PAD, R_CTRL, RADIUS, SEGMENT_H, Segment, Squares, View, WIDTH, X0, art, glyph, mesh, name_lines, text_w, th};
 use crate::gfx::{Align, Color, Rect, Size, Weight};
 use crate::i18n::{T, fill, tr};
 use crate::keys;
@@ -232,8 +232,6 @@ fn mouse_chip_label(t: T, a: Action) -> String {
 ///  +-----------+----------------------------------------+
 /// ```
 pub(super) fn buttons_page(f: &mut Frame, v: &View) {
-    /// The box of the 3D mouse.
-    const ART_W: f32 = 244.0;
     const BTN_ROW: f32 = 41.0;
     let h = BTN_ROW * v.buttons.len() as f32;
 
@@ -282,11 +280,25 @@ pub(super) fn buttons_page(f: &mut Frame, v: &View) {
     }
 }
 
+/// The box of the 3D mouse on the Buttons page.
+const ART_W: f32 = mesh::WIDTH;
+/// A button row: where the name starts, the select box, and the gap
+/// between them (it holds the "changed" dot).
+const NAME_X: f32 = PANEL_PAD + 32.0;
+const SELECT_W: f32 = 150.0;
+const NAME_GAP: f32 = 16.0;
+/// Height of a line of a name too long for one.
+const NAME_LINE: f32 = 16.0;
+
+/// Room for the button's name in a row `row_w` wide.
+fn name_w(row_w: f32) -> f32 {
+    row_w - NAME_X - NAME_GAP - SELECT_W - PANEL_PAD
+}
+
 /// "[1] Left button            [Left click v]": number badge, name, and
 /// the action in a select box; an accent square marks an action changed
 /// from the default.
 fn button_row(f: &mut Frame, r: Rect, i: usize, a: Action, lit: bool) {
-    const SELECT_W: f32 = 150.0;
     const SELECT_H: f32 = 28.0;
     const CHANGED: f32 = 3.5;
     let hot = f.button(Act::EditButton(i), r);
@@ -299,10 +311,18 @@ fn button_row(f: &mut Frame, r: Rect, i: usize, a: Action, lit: bool) {
     let cy = r.y + r.h / 2.0;
     art::marker(f, r.x + PANEL_PAD + 10.0, cy, i, lit);
 
-    let name_x = r.x + PANEL_PAD + 32.0;
+    let name_x = r.x + NAME_X;
     let select = Rect::new(r.x + r.w - PANEL_PAD - SELECT_W, cy - SELECT_H / 2.0, SELECT_W, SELECT_H);
-    let name = Rect::new(name_x, r.y, select.x - name_x - 20.0, r.h);
-    f.g.text(button_name(i), name, Size::Body, Weight::Semibold, Align::Left, th().text);
+    // A long name (some languages) takes two lines instead of an ellipsis.
+    let (first, second) = name_lines(button_name(i), name_w(r.w), Size::Body);
+    let name = match second {
+        None => Rect::new(name_x, r.y, name_w(r.w), r.h),
+        Some(_) => Rect::new(name_x, cy - NAME_LINE, name_w(r.w), NAME_LINE),
+    };
+    f.g.text(&first, name, Size::Body, Weight::Semibold, Align::Left, th().text);
+    if let Some(rest) = second {
+        f.g.text(&rest, Rect::new(name_x, cy, name.w, NAME_LINE), Size::Body, Weight::Semibold, Align::Left, th().text);
+    }
     if a != DEFAULT_ACTIONS[i] {
         f.g.dot(select.x - 12.0, cy, CHANGED, th().acc_fill);
     }
@@ -635,4 +655,31 @@ fn macro_tab(f: &mut Frame, area: Rect, v: &View, p: &Picker) {
     }
     let hint = Rect::new(area.x, y + 110.0, area.w, 20.0);
     f.g.text(tr(T::MacroPickHint), hint, Size::Caption, Weight::Normal, Align::Left, th().muted);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn button_names_fit_their_column() {
+        let room = name_w(CW - ART_W - 1.0);
+        for lang in crate::i18n::Lang::ALL {
+            crate::i18n::with_lang(lang, || {
+                for i in 0..BUTTON_NAMES.len() {
+                    // One line, or two for a long name: never an ellipsis.
+                    let (first, second) = name_lines(button_name(i), room, Size::Body);
+                    for line in [Some(first), second].into_iter().flatten() {
+                        assert!(text_w(&line, Size::Body) <= room, "{lang:?}: \"{line}\" is {} wide, room {room}", text_w(&line, Size::Body));
+                    }
+                }
+            });
+        }
+        // English, the language of most screenshots, needs no second line.
+        crate::i18n::with_lang(crate::i18n::Lang::En, || {
+            for i in 0..BUTTON_NAMES.len() {
+                assert_eq!(name_lines(button_name(i), room, Size::Body).1, None, "{}", button_name(i));
+            }
+        });
+    }
 }
