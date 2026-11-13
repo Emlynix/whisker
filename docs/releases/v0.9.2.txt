@@ -1,0 +1,7 @@
+New design, profiles and a Logitech fix.
+- New look: fixed window, own title bar, sharp controls
+- Profiles: named button layouts, per mouse, switched by hand or by app
+- Export and import of profiles
+- Remembers your mice and switches between them
+- Text mode (F10)
+- Logitech mice on a Unifying receiver keep their name and battery
