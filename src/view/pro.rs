@@ -77,7 +77,7 @@ pub(super) fn check_box(f: &mut Frame, act: Act, x: f32, y: f32, w: f32, label: 
 }
 
 /// A key cap: display only.
-fn key_cap(f: &mut Frame, x: f32, y: f32, label: &str) -> f32 {
+pub(super) fn key_cap(f: &mut Frame, x: f32, y: f32, label: &str) -> f32 {
     let w = text_w(label, Size::Key) + 12.0;
     let r = Rect::new(x, y, w, 20.0);
     f.g.fill(r, 0.0, th().input);

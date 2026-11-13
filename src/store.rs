@@ -399,7 +399,9 @@ pub fn remove_data() {
     let Some(dir) = data_dir() else {
         return;
     };
-    for name in [CONFIG_FILE, STATS_FILE] {
+    // The app's own files, then those of an attached edition.
+    let own = [CONFIG_FILE, STATS_FILE];
+    for name in own.into_iter().chain(crate::edition::data_files()) {
         let _ = std::fs::remove_file(dir.join(name));
         let _ = std::fs::remove_file(dir.join(format!("{name}.tmp")));
     }

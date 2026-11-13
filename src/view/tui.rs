@@ -238,6 +238,102 @@ impl Grid {
     }
 }
 
+/// Style of text on an edition's text-mode page.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum TextStyle {
+    Text,
+    Dim,
+    Faint,
+    Head,
+    Accent,
+    Warn,
+    /// Accent ground: tags.
+    Tag,
+    /// Accent ground: the chosen item.
+    Selected,
+}
+
+impl TextStyle {
+    fn style(self) -> Style {
+        match self {
+            TextStyle::Text => Style::Text,
+            TextStyle::Dim => Style::Dim,
+            TextStyle::Faint => Style::Faint,
+            TextStyle::Head => Style::Head,
+            TextStyle::Accent => Style::Accent,
+            TextStyle::Warn => Style::Warn,
+            TextStyle::Tag => Style::Tag,
+            TextStyle::Selected => Style::Selected,
+        }
+    }
+}
+
+/// Which box of a text-mode page carries the page title.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum TextBox {
+    Lead,
+    Plain,
+}
+
+/// The text-mode page of an attached edition (`crate::edition`) while
+/// it is filled: cells of the grid right of the menu.
+///
+/// ```text
+///  column 0 = first cell right of the menu, `TextUi::COLS` cells wide
+///  row 1    = first row under the page title, `TextUi::ROWS` rows
+/// ```
+pub struct TextUi<'a> {
+    g: &'a mut Grid,
+}
+
+impl TextUi<'_> {
+    /// Cells across the page area.
+    pub const COLS: i32 = PAGE_W;
+    /// Rows of the page area, above the status row.
+    pub const ROWS: i32 = ROWS - 2;
+
+    /// Writes `s`; returns the column after it.
+    pub fn put(&mut self, x: i32, y: i32, s: &str, style: TextStyle) -> i32 {
+        self.g.put(PAGE_X + x, y, s, style.style()) - PAGE_X
+    }
+
+    /// Text cut to `w` cells, ending in "…" when it does not fit.
+    pub fn put_in(&mut self, x: i32, y: i32, w: i32, s: &str, style: TextStyle) -> i32 {
+        self.g.put_in(PAGE_X + x, y, w, s, style.style()) - PAGE_X
+    }
+
+    /// Text that sends `id` when pressed.
+    pub fn link(&mut self, x: i32, y: i32, s: &str, style: TextStyle, id: u16) -> i32 {
+        self.g.link(PAGE_X + x, y, s, style.style(), Act::Ext(id)) - PAGE_X
+    }
+
+    /// A box with its title cut into the top border.
+    pub fn frame(&mut self, x: i32, y: i32, w: i32, h: i32, title: &str, kind: TextBox, tag: Option<&str>) {
+        let lead = if kind == TextBox::Lead { Lead::Focused } else { Lead::Plain };
+        self.g.frame(PAGE_X + x, y, w, h, title, lead, tag);
+    }
+
+    /// `[x] label`; `None` = shown, but nothing to press now.
+    pub fn check(&mut self, x: i32, y: i32, label: &str, on: bool, id: Option<u16>) -> i32 {
+        self.g.check(PAGE_X + x, y, label, on, id.map(Act::Ext)) - PAGE_X
+    }
+
+    /// One of a few values in a line: `[6]` chosen, ` 7 ` not.
+    pub fn choice(&mut self, x: i32, y: i32, label: &str, on: bool, id: u16) -> i32 {
+        self.g.choice(PAGE_X + x, y, label, on, Act::Ext(id)) - PAGE_X
+    }
+
+    /// Text wrapped at spaces into lines of `w` cells; returns the rows used.
+    pub fn wrap(&mut self, x: i32, y: i32, w: i32, text: &str, style: TextStyle) -> i32 {
+        self.g.wrap(PAGE_X + x, y, w, text, style.style())
+    }
+}
+
+/// Lets the attached edition fill the Overlay page; false without one.
+fn edition_page(g: &mut Grid) -> bool {
+    crate::edition::with(|e| e.text_page(&mut TextUi { g })).is_some()
+}
+
 /// Cells a text takes.
 fn cells(s: &str) -> i32 {
     s.chars().map(|c| if c as u32 >= WIDE_FROM { 2 } else { 1 }).sum()
@@ -289,7 +385,11 @@ fn build(v: &View) -> Grid {
         Page::Buttons => buttons(&mut g, v),
         Page::Stats => statistics(&mut g, v),
         Page::Profiles => profiles(&mut g, v),
-        Page::Overlay => overlay(&mut g),
+        Page::Overlay => {
+            if !edition_page(&mut g) {
+                overlay(&mut g);
+            }
+        }
         _ => settings(&mut g, v),
     }
     g
@@ -940,7 +1040,9 @@ fn settings(g: &mut Grid, v: &View) {
 
     g.frame(r, 7, HALF_W, 8, tr(T::TabGeneral), Lead::Plain, None);
     g.check(r + 2, 9, &fit(tr(T::Autostart), HALF_W - 8), v.autostart, v.installed.then_some(Act::Autostart));
-    g.check(r + 2, 10, &fit(tr(T::UpdateAuto), HALF_W - 8), v.update.auto, Some(Act::UpdateAuto));
+    // An attached edition has its own release channel: no checks to switch.
+    let free = !crate::edition::attached();
+    g.check(r + 2, 10, &fit(tr(T::UpdateAuto), HALF_W - 8), free && v.update.auto, free.then_some(Act::UpdateAuto));
     let (state, act, label) = if v.installed { (T::Installed, Act::Uninstall, T::Uninstall) } else { (T::NotInstalled, Act::Install, T::Install) };
     g.put_in(r + 2, 12, HALF_W - 4, tr(state), Style::Dim);
     g.link(r + 2, 13, &format!("[ {} ]", fit(tr(label), HALF_W - 10)), Style::Accent, act);
@@ -976,7 +1078,12 @@ fn settings(g: &mut Grid, v: &View) {
     g.frame(r + HALF_W, 22, HALF_W, 8, tr(T::About), Lead::Plain, None);
     g.put_in(x, 23, HALF_W - 4, &format!("{} {} · GPL-3.0-or-later", crate::APP_NAME, env!("CARGO_PKG_VERSION")), Style::Text);
     for (k, (label, act)) in [(T::UpdateCheck, Act::UpdateCheck), (T::HelpAddMouse, Act::ReportOpen), (T::ShowLog, Act::ShowLog)].into_iter().enumerate() {
-        g.link(x, 24 + k as i32, &format!("[ {} ]", fit(tr(label), HALF_W - 8)), Style::Accent, act);
+        let text = format!("[ {} ]", fit(tr(label), HALF_W - 8));
+        if act == Act::UpdateCheck && !free {
+            g.put(x, 24 + k as i32, &text, Style::Faint);
+            continue;
+        }
+        g.link(x, 24 + k as i32, &text, Style::Accent, act);
     }
     g.put_in(x, 28, HALF_W - 4, &fill(tr(T::DataDir), &[&v.data_dir]), Style::Faint);
 }

@@ -3,10 +3,15 @@
 
 use crate::gfx::{Align, Color, Face, Rect, Seg, Size, Weight};
 use std::collections::HashMap;
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Direct2D::Common::*;
 use windows::Win32::Graphics::Direct2D::*;
 use windows::Win32::Graphics::DirectWrite::*;
+use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
+use windows::Win32::Graphics::Gdi::{
+    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, GdiFlush, HBITMAP, HDC,
+    HGDIOBJ, SelectObject,
+};
 use windows::core::{Interface, PCWSTR, w};
 use windows_numerics::Vector2;
 
@@ -50,11 +55,101 @@ fn bundled_fonts(dw: &IDWriteFactory) -> Option<IDWriteFontCollection> {
     }
 }
 
+/// Bytes of a pixel of the memory target: B, G, R, A.
+const PIXEL_BYTES: usize = 4;
+
+/// Memory target of an off-window `Gfx`: a top-down 32-bit bitmap in a
+/// memory DC, drawn to through a DC render target.
+///
+/// ```text
+///  Gfx calls -> ID2D1DCRenderTarget -> memory DC -> DIB section `bits`
+/// ```
+struct Memory {
+    rt: ID2D1DCRenderTarget,
+    dc: HDC,
+    bitmap: HBITMAP,
+    /// What the DC held before `bitmap`, put back before it is deleted.
+    old: HGDIOBJ,
+    bits: *mut u8,
+    w: u32,
+    h: u32,
+    scale: f32,
+}
+
+impl Drop for Memory {
+    fn drop(&mut self) {
+        // SAFETY: the handles were made by `Memory::new` and are freed once.
+        unsafe {
+            SelectObject(self.dc, self.old);
+            let _ = DeleteObject(self.bitmap.into());
+            let _ = DeleteDC(self.dc);
+        }
+    }
+}
+
+impl Memory {
+    fn new(d2d: &ID2D1Factory, w: u32, h: u32, scale: f32) -> Option<Memory> {
+        // A side GDI cannot hold would make a bitmap of another size.
+        let (width, height) = (i32::try_from(w).ok().filter(|v| *v > 0)?, i32::try_from(h).ok().filter(|v| *v > 0)?);
+        let header = BITMAPINFOHEADER {
+            biSize: size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: width,
+            // Negative: the first row is the top one.
+            biHeight: -height,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        };
+        let info = BITMAPINFO { bmiHeader: header, ..Default::default() };
+        let props = D2D1_RENDER_TARGET_PROPERTIES {
+            r#type: D2D1_RENDER_TARGET_TYPE_SOFTWARE,
+            pixelFormat: D2D1_PIXEL_FORMAT { format: DXGI_FORMAT_B8G8R8A8_UNORM, alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED },
+            dpiX: BASE_DPI * scale,
+            dpiY: BASE_DPI * scale,
+            ..Default::default()
+        };
+
+        // SAFETY: plain GDI calls; every handle made here is owned by the
+        // returned value or freed on the way out.
+        unsafe {
+            let dc = CreateCompatibleDC(None);
+            if dc.is_invalid() {
+                return None;
+            }
+            let mut bits = std::ptr::null_mut();
+            let Ok(bitmap) = CreateDIBSection(Some(dc), &info, DIB_RGB_COLORS, &mut bits, None, 0) else {
+                let _ = DeleteDC(dc);
+                return None;
+            };
+            let old = SelectObject(dc, bitmap.into());
+            let bound = d2d.CreateDCRenderTarget(&props).ok().filter(|rt| {
+                let area = RECT { left: 0, top: 0, right: width, bottom: height };
+                rt.BindDC(dc, &area).is_ok()
+            });
+            let Some(rt) = bound else {
+                SelectObject(dc, old);
+                let _ = DeleteObject(bitmap.into());
+                let _ = DeleteDC(dc);
+                return None;
+            };
+            // Over a clear ground ClearType would leave color fringes.
+            rt.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+            Some(Memory { rt, dc, bitmap, old, bits: bits.cast(), w, h, scale })
+        }
+    }
+}
+
 pub struct Gfx {
     hwnd: HWND,
     d2d: ID2D1Factory,
     dw: IDWriteFactory,
-    rt: Option<ID2D1HwndRenderTarget>,
+    /// What the frame is drawn to: the window's target or the memory one.
+    rt: Option<ID2D1RenderTarget>,
+    /// The window's target, for `resize`.
+    window: Option<ID2D1HwndRenderTarget>,
+    /// Off-window drawing (`begin_offscreen`).
+    memory: Option<Memory>,
     brush: Option<ID2D1SolidColorBrush>,
     formats: HashMap<(Size, Weight, Align), IDWriteTextFormat>,
     /// The bundled fonts; `None` = system fonts.
@@ -78,12 +173,61 @@ impl Gfx {
             ..Default::default()
         };
         let round = unsafe { d2d.CreateStrokeStyle(&props, None).ok() };
-        Some(Self { hwnd, d2d, dw, rt: None, brush: None, formats: HashMap::new(), fonts, round, dpi: BASE_DPI })
+        Some(Self { hwnd, d2d, dw, rt: None, window: None, memory: None, brush: None, formats: HashMap::new(), fonts, round, dpi: BASE_DPI })
+    }
+
+    /// A `Gfx` without a window: frames go to memory (`begin_offscreen`).
+    pub fn offscreen() -> Option<Self> {
+        Self::new(HWND::default())
+    }
+
+    /// Starts a frame of `w` x `h` physical pixels on a clear ground;
+    /// `scale` physical pixels make one DIP.
+    pub fn begin_offscreen(&mut self, w: u32, h: u32, scale: f32) -> bool {
+        let fits = self.memory.as_ref().is_some_and(|m| (m.w, m.h, m.scale) == (w, h, scale));
+        if !fits {
+            self.rt = None;
+            self.brush = None;
+            self.memory = Memory::new(&self.d2d, w, h, scale);
+        }
+        let Some(m) = &self.memory else {
+            return false;
+        };
+
+        let rt: ID2D1RenderTarget = m.rt.clone().into();
+        if self.brush.is_none() {
+            self.brush = unsafe { rt.CreateSolidColorBrush(&color(Color::rgb(0)), None).ok() };
+        }
+        unsafe {
+            rt.BeginDraw();
+            rt.Clear(Some(&color(Color(0, 0))));
+        }
+        self.rt = Some(rt);
+        self.brush.is_some()
+    }
+
+    /// Ends the frame: its pixels as B, G, R, A bytes with the alpha
+    /// multiplied in, rows from the top.
+    pub fn end_offscreen(&mut self) -> Option<&[u8]> {
+        let rt = self.rt.take()?;
+        if unsafe { rt.EndDraw(None, None) }.is_err() {
+            self.memory = None;
+            self.brush = None;
+            return None;
+        }
+        let m = self.memory.as_ref()?;
+        // What GDI still holds back must be in the bitmap before it is read.
+        let _ = unsafe { GdiFlush() };
+        let len = (m.w as usize).checked_mul(m.h as usize)?.checked_mul(PIXEL_BYTES)?;
+        // SAFETY: the DIB section holds `len` bytes and lives as long as
+        // `self.memory`, which the returned borrow of `self` keeps in place.
+        Some(unsafe { std::slice::from_raw_parts(m.bits, len) })
     }
 
     /// Frees the render target while the window is hidden; rebuilt on next paint.
     pub fn release(&mut self) {
         self.rt = None;
+        self.window = None;
         self.brush = None;
         self.formats.clear();
     }
@@ -96,7 +240,7 @@ impl Gfx {
     }
 
     pub fn resize(&mut self, w: u32, h: u32) {
-        if let Some(rt) = &self.rt {
+        if let Some(rt) = &self.window {
             let _ = unsafe { rt.Resize(&D2D_SIZE_U { width: w, height: h }) };
         }
     }
@@ -122,7 +266,8 @@ impl Gfx {
         let brush = unsafe { rt.CreateSolidColorBrush(&color(Color::rgb(0)), None).ok()? };
         unsafe { rt.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE) };
 
-        self.rt = Some(rt);
+        self.rt = Some(rt.clone().into());
+        self.window = Some(rt);
         self.brush = Some(brush);
         Some(())
     }
@@ -143,11 +288,12 @@ impl Gfx {
         };
         if unsafe { rt.EndDraw(None, None) }.is_err() {
             self.rt = None;
+            self.window = None;
             self.brush = None;
         }
     }
 
-    fn paint(&self, c: Color, f: impl FnOnce(&ID2D1HwndRenderTarget, &ID2D1SolidColorBrush)) {
+    fn paint(&self, c: Color, f: impl FnOnce(&ID2D1RenderTarget, &ID2D1SolidColorBrush)) {
         let (Some(rt), Some(b)) = (&self.rt, &self.brush) else {
             return;
         };

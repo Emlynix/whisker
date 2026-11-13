@@ -3,7 +3,7 @@
 //! credentials are switched off; the caller follows redirects itself.
 
 use super::win::wide;
-use crate::platform::{Fetch, NetError, Reply};
+use crate::platform::{Content, Fetch, NetError, Reply};
 use std::ffi::c_void;
 use std::ptr::{null, null_mut};
 use std::time::Instant;
@@ -11,8 +11,6 @@ use windows_sys::Win32::Networking::WinHttp::*;
 
 const GET: &str = "GET";
 const POST: &str = "POST";
-/// Header of a POST body, with its line end.
-const TEXT_HEADER: &str = "Content-Type: text/plain; charset=utf-8\r\n";
 const CHUNK: usize = 16 * 1024;
 /// Longest `Location` header read, in UTF-16 units.
 const LOCATION_MAX: usize = 8 * 1024;
@@ -40,11 +38,16 @@ pub fn get(req: &Fetch) -> Result<Reply, NetError> {
 }
 
 pub fn post(req: &Fetch, body: &[u8]) -> Result<Reply, NetError> {
-    send(req, Some(body))
+    send(req, Some((body, Content::Text)))
+}
+
+/// POST of a body of the given kind.
+pub fn post_as(req: &Fetch, body: &[u8], content: Content) -> Result<Reply, NetError> {
+    send(req, Some((body, content)))
 }
 
 /// One request; with a body it is a POST of plain text.
-fn send(req: &Fetch, body: Option<&[u8]>) -> Result<Reply, NetError> {
+fn send(req: &Fetch, body: Option<(&[u8], Content)>) -> Result<Reply, NetError> {
     let start = Instant::now();
     let agent = wide(req.agent);
     let session = Handle::new(unsafe { WinHttpOpen(agent.as_ptr(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, null(), null(), 0) })?;
@@ -67,8 +70,8 @@ fn send(req: &Fetch, body: Option<&[u8]>) -> Result<Reply, NetError> {
 
     let sent = match body {
         None => unsafe { WinHttpSendRequest(request.0, null(), 0, null(), 0, 0, 0) },
-        Some(b) => {
-            let header = wide(TEXT_HEADER);
+        Some((b, content)) => {
+            let header = wide(content.header());
             let len = u32::try_from(b.len()).map_err(|_| NetError::TooLarge)?;
             // Header length in characters, without the final NUL.
             let chars = (header.len() - 1) as u32;

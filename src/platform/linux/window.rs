@@ -194,6 +194,12 @@ pub fn set_clipboard(text: &str) -> bool {
     true
 }
 
+/// Text on the clipboard, at most `limit` characters of it.
+pub fn clipboard_text(limit: usize) -> Option<String> {
+    let text = gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD).wait_for_text()?;
+    Some(text.chars().take(limit).collect())
+}
+
 pub fn set_tray(level: Level, tip: &str) {
     tray::update(level, tip);
 }

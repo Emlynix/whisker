@@ -32,8 +32,8 @@
 //! Every request is HTTPS to port 443; redirects are followed here (at most
 //! `MAX_REDIRECTS`), each hop again HTTPS and on the purpose's host list.
 
-mod json;
-mod sha256;
+pub(crate) mod json;
+pub(crate) mod sha256;
 mod sig;
 
 use crate::platform::{self, Fetch, NetError};

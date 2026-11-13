@@ -15,6 +15,7 @@ mod updater;
 mod verify;
 mod watch;
 
+use crate::edition;
 use crate::feedback;
 
 use crate::devices::{self, CAPS_NONE, Caps, DpiUi, Entry, Family, Link, Match, Model, Support};
@@ -292,7 +293,12 @@ pub fn run(mode: StartMode, last: crate::log::Last) {
         view: initial_view(&cfg, first_run),
         cfg,
         stats: Stats::start(),
-        mouse: MouseService::start(target.clone(), pick, |ev| post(move |c| c.on_mouse(ev))),
+        mouse: MouseService::start(target.clone(), pick, |ev| {
+            post(move |c| {
+                c.on_mouse(ev);
+                c.publish_live();
+            })
+        }),
         status: None,
         link: T::LinkSearching,
         level: Level::Offline,
@@ -339,6 +345,7 @@ pub fn run(mode: StartMode, last: crate::log::Last) {
     if !platform::demo() {
         platform::single::listen(|| post(|c| c.show()), || window::post(window::quit));
     }
+    edition::with(|e| e.start());
     window::set_timer(TIMER_SAVE, SAVE_MS);
     window::set_timer(TIMER_SCAN, SCAN_MS);
     window::set_timer(TIMER_UPDATE, updater::POLL_MS);
@@ -354,6 +361,7 @@ pub fn run(mode: StartMode, last: crate::log::Last) {
     }
     window::run();
     watch::stop();
+    edition::with(|e| e.quit());
 
     // Guided checks may have changed a setting: put it back before exit.
     with_ctrl(|c| {
@@ -1555,7 +1563,31 @@ impl Controller {
         if matches!(a, Act::Nav(_)) || self.overlay() != before {
             self.view.focus = None;
         }
+        self.publish_live();
         window::invalidate();
+    }
+
+    /// Hands the numbers of the mouse to the attached edition.
+    fn publish_live(&self) {
+        if !edition::attached() {
+            return;
+        }
+        let v = &self.view;
+        let stages = v.caps.dpi == DpiUi::Stages;
+        let dpi = if stages { v.stages.get(v.active).map(|s| s.dpi) } else { v.basic.dpi };
+        let rate_hz = match (v.caps.polling, stages) {
+            (true, true) => view::RATES.get(v.polling).copied(),
+            (true, false) => v.basic.rate,
+            (false, _) => None,
+        };
+
+        edition::publish(edition::Slow {
+            connected: v.connected,
+            battery: (v.connected && v.has_battery).then_some(v.battery),
+            charging: v.charge != view::Charge::Discharging,
+            dpi,
+            rate_hz,
+        });
     }
 
     /// Which dialogs are open, to notice one opening or closing.
@@ -1680,6 +1712,9 @@ impl Controller {
             Act::CloseDialog => self.view.dialog = None,
             // Moving the window is the platform's business; a mock-up has none.
             Act::Caption | Act::Mock(_) => {}
+            Act::Ext(id) => {
+                edition::with(|e| e.press(id));
+            }
             Act::FxTexture | Act::FxMotion => self.toggle_fx(a),
             Act::ToggleTui => self.toggle_tui(),
             Act::LangMenu => self.view.lang_menu = !self.view.lang_menu,
@@ -2910,6 +2945,13 @@ impl Controller {
         // A profile name being typed takes every key.
         if self.rename_key(vk, m) {
             return true;
+        }
+        // The attached edition's page: its input field takes the keys.
+        if self.view.page == Page::Overlay && !self.modal() {
+            let key = edition::Key { vk, ctrl: m.ctrl, shift: m.shift, alt: m.alt };
+            if edition::with(|e| e.key(key)) == Some(edition::Used::Yes) {
+                return true;
+            }
         }
         // F10 switches between the graphical and the text mode.
         if vk == VK_F10 && bare && !self.modal() {

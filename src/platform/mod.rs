@@ -219,6 +219,23 @@ pub struct Fetch<'a> {
     pub timeout: std::time::Duration,
 }
 
+/// What the body of a POST is, for its `Content-Type`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Content {
+    Text,
+    Json,
+}
+
+impl Content {
+    /// The header line, e.g. `Content-Type: application/json; charset=utf-8`.
+    pub fn header(self) -> &'static str {
+        match self {
+            Content::Text => "Content-Type: text/plain; charset=utf-8",
+            Content::Json => "Content-Type: application/json; charset=utf-8",
+        }
+    }
+}
+
 pub struct Reply {
     pub status: u16,
     /// `Location` header of a redirect.

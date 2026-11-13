@@ -29,6 +29,7 @@ use crate::protocol::{
 mod art;
 mod buttons;
 mod device;
+pub mod kit;
 mod mesh;
 mod pro;
 mod profiles;
@@ -38,7 +39,7 @@ mod update;
 pub use buttons::{DelayMode, Picker, Tab, button_name};
 pub use device::{Badge, Banner, BrandRow, Detect, DetectRow, DetectStep, DeviceView, Found, LIST_ROWS, Pane, detect_pane_at};
 pub use report::{Answer, Ask, CheckView, Kind as ReportKind, PickRow, REPORT_ROWS, ReportView, Sending, Step as ReportStep, report_at, report_lines};
-pub use tui::page_of_key;
+pub use tui::{TextBox, TextStyle, TextUi, page_of_key};
 pub use update::{Install, Offer, Probe, Step as UpdateStep, UpdateView, note_lines, notes_cut};
 use crate::devices::{Caps, DpiUi, Layout};
 use crate::platform::Access;
@@ -455,6 +456,8 @@ pub enum Act {
     FxMotion,
     /// A control of a PRO mock-up: answers the pointer, does nothing.
     Mock(u8),
+    /// A control of the attached edition's page, by the id it gave it.
+    Ext(u16),
     /// Title bar: its empty part (moves the window) and the window buttons.
     Caption,
     WinMinimize,
@@ -1144,7 +1147,11 @@ pub fn draw(g: &mut Gfx, v: &View, hot: Option<Act>) -> Vec<Hit> {
             }
             Page::Stats => stats(&mut f, v),
             Page::Profiles => profiles::page(&mut f, v),
-            Page::Overlay => pro::overlay_page(&mut f),
+            Page::Overlay => {
+                if !kit::page(&mut f) {
+                    pro::overlay_page(&mut f);
+                }
+            }
             Page::General | Page::Appearance | Page::Mouse | Page::About => {
                 f.tabs(&SETTING_TABS.map(|(p, t)| (p, tr(t))), v.page);
                 match v.page {
@@ -2332,7 +2339,9 @@ fn settings(f: &mut Frame, v: &View) {
     y += autostart.height(w);
 
     let c = f.row(x, y, w, &update, RowPlace::Next);
-    f.toggle(Some(Act::UpdateAuto), c.x, c.y, v.update.auto);
+    // An attached edition has its own release channel: no checks to switch.
+    let free = !crate::edition::attached();
+    f.toggle(free.then_some(Act::UpdateAuto), c.x, c.y, free && v.update.auto);
     y += update.height(w);
 
     // Language: a select with the languages by their own names.

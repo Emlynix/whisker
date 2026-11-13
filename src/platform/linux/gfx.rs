@@ -61,19 +61,65 @@ fn dips(v: i32) -> f32 {
     v as f32 / pango::SCALE as f32
 }
 
+/// Bytes of a pixel of an off-window frame: B, G, R, A.
+const PIXEL_BYTES: usize = 4;
+
 pub struct Gfx {
     cr: Option<cairo::Context>,
     /// Text context of the current frame (font options of the target).
     text: Option<pango::Context>,
     width: f32,
     height: f32,
+    /// Surface of an off-window frame (`begin_offscreen`).
+    memory: Option<cairo::ImageSurface>,
+    /// Pixels of the last off-window frame.
+    pixels: Vec<u8>,
 }
 
 impl Gfx {
     pub fn new() -> Self {
         // Before the first text layout: Pango lists fonts once.
         load_fonts();
-        Self { cr: None, text: None, width: 0.0, height: 0.0 }
+        Self { cr: None, text: None, width: 0.0, height: 0.0, memory: None, pixels: Vec::new() }
+    }
+
+    /// A `Gfx` without a window: frames go to memory (`begin_offscreen`).
+    pub fn offscreen() -> Option<Self> {
+        Some(Self::new())
+    }
+
+    /// Starts a frame of `w` x `h` physical pixels on a clear ground;
+    /// `scale` physical pixels make one DIP.
+    pub fn begin_offscreen(&mut self, w: u32, h: u32, scale: f32) -> bool {
+        let Ok(surface) = cairo::ImageSurface::create(cairo::Format::ARgb32, w as i32, h as i32) else {
+            return false;
+        };
+        let Ok(cr) = cairo::Context::new(&surface) else {
+            return false;
+        };
+        cr.scale(scale as f64, scale as f64);
+        self.begin(&cr, w as f32 / scale, h as f32 / scale);
+        self.memory = Some(surface);
+        true
+    }
+
+    /// Ends the frame: its pixels as B, G, R, A bytes with the alpha
+    /// multiplied in, rows from the top.
+    pub fn end_offscreen(&mut self) -> Option<&[u8]> {
+        // The context goes first: the pixels are read through the only
+        // reference to the surface.
+        self.end();
+        let mut surface = self.memory.take()?;
+        surface.flush();
+        let (stride, w, h) = (surface.stride() as usize, surface.width() as usize, surface.height() as usize);
+        let data = surface.data().ok()?;
+
+        // A row may be padded; the caller gets rows of exactly `w` pixels.
+        self.pixels.clear();
+        for row in data.chunks(stride).take(h) {
+            self.pixels.extend_from_slice(&row[..w * PIXEL_BYTES]);
+        }
+        Some(&self.pixels)
     }
 
     /// Starts a frame on the context GTK prepared for `draw`.

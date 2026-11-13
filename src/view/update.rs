@@ -168,7 +168,8 @@ pub(super) fn about_row(f: &mut Frame, u: &UpdateView, x: f32, y: f32, w: f32) {
     let label = tr(T::UpdateCheck);
     let bw = text_w(label, Size::Body) + 36.0;
     let b = Rect::new(x, y, bw, H);
-    if u.probe == Probe::Checking {
+    // An attached edition has its own release channel: nothing to ask here.
+    if u.probe == Probe::Checking || crate::edition::attached() {
         f.dead_button(b, label);
     } else {
         f.push_button(Act::UpdateCheck, b, label, false);

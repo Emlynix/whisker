@@ -181,6 +181,35 @@ pub fn set_clipboard(text: &str) -> bool {
     }
 }
 
+/// Unicode text on the clipboard, at most `limit` UTF-16 units of it.
+pub fn clipboard_text(limit: usize) -> Option<String> {
+    use windows_sys::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
+    use windows_sys::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
+    /// Standard clipboard format of UTF-16 text.
+    const CF_UNICODETEXT: u32 = 13;
+
+    unsafe {
+        if OpenClipboard(hwnd()) == 0 {
+            return None;
+        }
+        let mem = GetClipboardData(CF_UNICODETEXT);
+        let src = if mem.is_null() { std::ptr::null() } else { GlobalLock(mem) as *const u16 };
+        if src.is_null() {
+            CloseClipboard();
+            return None;
+        }
+
+        // The block's size bounds the read: the text may lack its NUL.
+        let units = (GlobalSize(mem) / size_of::<u16>()).min(limit);
+        let all = std::slice::from_raw_parts(src, units);
+        let end = all.iter().position(|&u| u == 0).unwrap_or(units);
+        let text = String::from_utf16_lossy(&all[..end]);
+        GlobalUnlock(mem);
+        CloseClipboard();
+        Some(text)
+    }
+}
+
 pub fn set_tray(level: Level, tip: &str) {
     tray::update(hwnd(), level, tip);
 }

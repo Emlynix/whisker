@@ -2,7 +2,7 @@
 //! only, no redirects followed, `~/.curlrc` ignored (`-q`), system
 //! certificate store. The status and `Location` come after the body.
 
-use crate::platform::{Fetch, NetError, Reply};
+use crate::platform::{Content, Fetch, NetError, Reply};
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 
@@ -14,19 +14,24 @@ const TRAILER_MAX: usize = 16 * 1024;
 /// curl exit code: `--max-filesize` exceeded.
 const CURL_TOO_LARGE: i32 = 63;
 
-/// POST: the body comes on stdin, as plain text.
-const POST_ARGS: [&str; 4] = ["--data-binary", "@-", "--header", "Content-Type: text/plain; charset=utf-8"];
+/// POST: the body comes on stdin; its `Content-Type` header follows.
+const POST_ARGS: [&str; 3] = ["--data-binary", "@-", "--header"];
 
 pub fn get(req: &Fetch) -> Result<Reply, NetError> {
     send(req, None)
 }
 
 pub fn post(req: &Fetch, body: &[u8]) -> Result<Reply, NetError> {
-    send(req, Some(body))
+    send(req, Some((body, Content::Text)))
+}
+
+/// POST of a body of the given kind.
+pub fn post_as(req: &Fetch, body: &[u8], content: Content) -> Result<Reply, NetError> {
+    send(req, Some((body, content)))
 }
 
 /// One request; with a body it is a POST of plain text.
-fn send(req: &Fetch, body: Option<&[u8]>) -> Result<Reply, NetError> {
+fn send(req: &Fetch, body: Option<(&[u8], Content)>) -> Result<Reply, NetError> {
     let url = format!("https://{}{}", req.host, req.path);
     let secs = req.timeout.as_secs().max(1).to_string();
     let limit = req.limit.to_string();
@@ -37,12 +42,12 @@ fn send(req: &Fetch, body: Option<&[u8]>) -> Result<Reply, NetError> {
     ];
     let mut cmd = Command::new(CURL);
     cmd.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
-    if body.is_some() {
-        cmd.args(POST_ARGS).stdin(Stdio::piped());
+    if let Some((_, content)) = body {
+        cmd.args(POST_ARGS).arg(content.header()).stdin(Stdio::piped());
     }
     let mut child = cmd.spawn().map_err(|_| NetError::Failed)?;
     // curl reads the whole body before it connects; closing stdin ends it.
-    if let (Some(b), Some(mut stdin)) = (body, child.stdin.take()) {
+    if let (Some((b, _)), Some(mut stdin)) = (body, child.stdin.take()) {
         let _ = stdin.write_all(b);
     }
 

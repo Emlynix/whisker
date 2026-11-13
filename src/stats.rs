@@ -232,6 +232,13 @@ impl Stats {
     }
 }
 
+/// Last measured report rate, if recent; `None` before the statistics run.
+pub fn measured_now() -> Option<u32> {
+    let s = STATE.get()?.lock().ok()?;
+    let (hz, at) = s.rate?;
+    (at.elapsed() < RATE_HOLD).then_some(hz)
+}
+
 pub fn unix_now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
@@ -330,6 +337,11 @@ fn on_input(m: &MouseInput) {
 
     let moved = m.dx != 0 || m.dy != 0;
     let dpi = s.dpi as f64;
+
+    // The attached edition's live numbers: presses and sensor counts.
+    let presses = crate::edition::Presses { left: m.left as u64, right: m.right as u64, other: m.middle as u64 + m.side as u64 };
+    let counts = ((m.dx as f64).powi(2) + (m.dy as f64).powi(2)).sqrt();
+    crate::edition::count(presses, counts.round() as u64);
 
     let day = s.file.days.entry(local_date(0)).or_default();
     day.left += m.left as u64;

@@ -11,6 +11,7 @@ pub const APP_NAME: &str = "Whisker";
 mod app;
 mod devices;
 mod drivers;
+pub mod edition;
 mod feedback;
 mod fonts;
 mod gfx;
@@ -30,6 +31,13 @@ mod update;
 mod view;
 
 use platform::{Autostart, Claim, Instance, autostart, install, single};
+
+/// Runs the app with an edition attached to it (`edition`): the body
+/// of another executable's `main`.
+pub fn run_edition(edition: Box<dyn edition::Edition>) {
+    edition::attach(edition);
+    run();
+}
 
 /// Runs the app until it quits: the body of an executable's `main`.
 pub fn run() {

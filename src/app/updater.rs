@@ -59,7 +59,9 @@ impl Controller {
     }
 
     pub(super) fn start_check(&mut self, t: Trigger) {
-        if self.updates.checking || self.removed {
+        // Another edition has its own release channel: this one would
+        // install the open build over it.
+        if self.updates.checking || self.removed || crate::edition::attached() {
             return;
         }
         self.updates.checking = true;
