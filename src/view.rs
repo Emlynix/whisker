@@ -1724,6 +1724,34 @@ enum Corners {
     Plain,
 }
 
+/// Side padding of a stat cell.
+const STAT_PAD_X: f32 = 14.0;
+/// Lines of a note that fit under a cell's bar.
+const STAT_NOTE_LINES: usize = 2;
+/// Most cells the Overview strip holds: battery, DPI, polling rate, today.
+const OVERVIEW_CELLS: usize = 4;
+
+/// Lines `text` takes when wrapped by words into width `w` (rough, as
+/// `text_w`).
+fn wrapped_lines(text: &str, w: f32, size: Size) -> usize {
+    let space = text_w(" ", size);
+    let (mut lines, mut used) = (0, 0.0);
+    for word in text.split_whitespace() {
+        let word_w = text_w(word, size);
+        if word_w > w {
+            // No spaces to break at (Japanese, Chinese): broken anywhere.
+            lines += (word_w / w).ceil() as usize;
+            used = word_w % w;
+        } else if lines == 0 || used + space + word_w > w {
+            lines += 1;
+            used = word_w;
+        } else {
+            used += space + word_w;
+        }
+    }
+    lines
+}
+
 /// One cell of a stat strip: caption, big number with its unit, then a
 /// progress bar and a note.
 struct Stat<'a> {
@@ -1748,7 +1776,7 @@ struct Stat<'a> {
 ///  +                                              +
 /// ```
 fn stat_strip(f: &mut Frame, r: Rect, cells: &[Stat], corners: Corners) {
-    const PAD_X: f32 = 14.0;
+    const PAD_X: f32 = STAT_PAD_X;
     const PAD_Y: f32 = 12.0;
     const VALUE_Y: f32 = 30.0;
     const VALUE_H: f32 = 34.0;
@@ -2530,6 +2558,20 @@ fn appearance(f: &mut Frame, v: &View) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn battery_notes_fit_under_the_bar() {
+        // The narrowest battery cell: the Overview strip with all its cells.
+        let w = CW / OVERVIEW_CELLS as f32 - 2.0 * STAT_PAD_X;
+        for lang in crate::i18n::Lang::ALL {
+            let notes = crate::i18n::with_lang(lang, || {
+                vec![tr(T::Charging).to_string(), tr(T::FullyCharged).to_string(), tr(T::EtaPending).to_string(), fill(tr(T::EtaDays), &["30"]), fill(tr(T::EtaHours), &["23"])]
+            });
+            for note in notes {
+                assert!(wrapped_lines(&note, w, Size::Caption) <= STAT_NOTE_LINES, "{lang:?}: {note}");
+            }
+        }
+    }
 
     #[test]
     fn long_mouse_name_wraps_in_two_lines() {
