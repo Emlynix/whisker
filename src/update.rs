@@ -36,12 +36,15 @@ pub(crate) mod json;
 pub(crate) mod sha256;
 mod sig;
 
+use crate::edition::Channel;
 use crate::platform::{self, Fetch, NetError};
 use json::Json;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const MANIFEST_URL: &str = "https://whisker.emlynix.com/latest.json";
+/// The open app in the signed statement.
+const PRODUCT: &str = "whisker";
 const GITHUB_URL: &str = "https://api.github.com/repos/Emlynix/whisker/releases/latest";
 const AGENT: &str = concat!("Whisker/", env!("CARGO_PKG_VERSION"));
 
@@ -63,7 +66,7 @@ const HTTP_NOT_FOUND: u16 = 404;
 const HTTP_REDIRECTS: [u16; 5] = [301, 302, 303, 307, 308];
 
 /// Hosts the manifests may come from (redirects included).
-const MANIFEST_HOSTS: [&str; 2] = ["whisker.emlynix.com", "api.github.com"];
+const MANIFEST_HOSTS: [&str; 3] = ["whisker.emlynix.com", "dl.emlynix.com", "api.github.com"];
 /// Hosts a binary may be downloaded from (redirects included):
 /// dl.emlynix.com mirrors the GitHub release files.
 const DOWNLOAD_HOSTS: [&str; 4] =
@@ -88,6 +91,31 @@ const TARGET: Option<Target> = Some(Target { key: "windows-x86_64", asset: "whis
 const TARGET: Option<Target> = Some(Target { key: "linux-x86_64", asset: "whisker-linux-x86_64" });
 #[cfg(not(any(all(windows, target_arch = "x86_64"), all(target_os = "linux", target_arch = "x86_64"))))]
 const TARGET: Option<Target> = None;
+
+/// A release channel and who signs its files.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Source {
+    /// First field of the signed statement.
+    product: &'static str,
+    manifest: &'static str,
+    /// Asked when the manifest is missing.
+    github: Option<&'static str>,
+    key: [u8; 64],
+    /// Last release day offered; `None` = all.
+    until: Option<String>,
+}
+
+impl Source {
+    /// The open app's own channel.
+    pub fn open() -> Source {
+        Source { product: PRODUCT, manifest: MANIFEST_URL, github: Some(GITHUB_URL), key: sig::RELEASE_KEY, until: None }
+    }
+
+    /// The channel of an attached edition.
+    pub fn of(c: Channel) -> Source {
+        Source { product: c.product, manifest: c.manifest, github: None, key: c.key, until: c.until }
+    }
+}
 
 /// `major.minor.patch`; ordered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -223,6 +251,9 @@ pub struct Release {
     /// Plain text, control characters removed.
     pub notes: String,
     asset: Asset,
+    /// Whose statement signs the file.
+    product: &'static str,
+    key: [u8; 64],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -246,34 +277,52 @@ pub enum Fail {
     Replace,
 }
 
-/// Asks the channels for the newest release (blocking; call off the UI thread).
-pub fn check() -> Result<Check, Fail> {
+/// Asks the channels of `src` for the newest release (blocking; call off
+/// the UI thread).
+pub fn check(src: &Source) -> Result<Check, Fail> {
     let Some(target) = TARGET else {
         return Ok(Check::NoInfo);
     };
     let current = Version::current();
     // `Ok(())`: the primary channel has no manifest (404).
-    let primary = match read_manifest(MANIFEST_URL, |t| parse_manifest(t, target.key)) {
-        Ok(Some(m)) => return Ok(judge(m, current)),
+    let primary = match read_manifest(src.manifest, |t| parse_channel(t, target.key)) {
+        Ok(Some(list)) => return Ok(pick(list, current, src)),
         Ok(None) => Ok(()),
         Err(e) => Err(e),
     };
-    match (primary, read_manifest(GITHUB_URL, |t| parse_github(t, target.asset))) {
-        (_, Ok(Some(m))) => Ok(judge(m, current)),
+    let Some(github) = src.github else {
+        return primary.map(|()| Check::NoInfo);
+    };
+    match (primary, read_manifest(github, |t| parse_github(t, target.asset).map(|m| vec![m]))) {
+        (_, Ok(Some(list))) => Ok(pick(list, current, src)),
         (Err(e), _) | (Ok(()), Err(e)) => Err(e),
         (Ok(()), Ok(None)) => Ok(Check::NoInfo),
     }
 }
 
-/// Offered only when strictly newer and downloadable for this platform.
-fn judge(m: Manifest, current: Version) -> Check {
-    let Some(asset) = m.asset.filter(|_| m.version > current) else {
+/// The newest release that is strictly newer than `current`, has a file
+/// for this platform and is dated within the source's last day.
+///
+/// ```text
+///   until 2027-11-13:   1.2.0 (2028-01-05)  skipped
+///                       1.1.0 (2027-10-01)  offered
+///                       1.0.0 (2026-11-20)  older
+/// ```
+fn pick(list: Vec<Manifest>, current: Version, src: &Source) -> Check {
+    // An undated release can't be shown to be within the day.
+    let within = |m: &Manifest| src.until.as_deref().is_none_or(|day| !m.date.is_empty() && m.date.as_str() <= day);
+    let newest = list.into_iter().filter(|m| m.version > current && m.asset.is_some() && within(m)).max_by_key(|m| m.version);
+
+    let Some(m) = newest else {
         return Check::Current;
     };
-    Check::Newer(Release { version: m.version, date: m.date, notes: m.notes, asset })
+    let Some(asset) = m.asset else {
+        return Check::Current;
+    };
+    Check::Newer(Release { version: m.version, date: m.date, notes: m.notes, asset, product: src.product, key: src.key })
 }
 
-fn read_manifest(url: &str, parse: impl Fn(&str) -> Option<Manifest>) -> Result<Option<Manifest>, Fail> {
+fn read_manifest(url: &str, parse: impl Fn(&str) -> Option<Vec<Manifest>>) -> Result<Option<Vec<Manifest>>, Fail> {
     let url = Url::parse(url).ok_or(Fail::Refused)?;
     let Some(body) = fetch(&url, Purpose::Manifest)? else {
         return Ok(None);
@@ -332,9 +381,26 @@ fn asset_of(url: Option<&str>, hex: Option<&str>, sig: Signature) -> Option<Asse
     Some(Asset { url, sha256: sha256::parse_hex(hex?)?, sig })
 }
 
-/// latest.json; `key` picks this platform's asset.
-fn parse_manifest(text: &str, key: &str) -> Option<Manifest> {
+/// latest.json with the releases before it, newest first:
+/// `"older": [{ "version": …, "date": …, "notes": …, "assets": … }]`.
+/// A malformed older entry is skipped.
+fn parse_channel(text: &str, key: &str) -> Option<Vec<Manifest>> {
     let j = json::parse(text)?;
+    let mut list = vec![release_of(&j, key)?];
+    if let Some(older) = j.get("older") {
+        list.extend(older.items().iter().filter_map(|o| release_of(o, key)));
+    }
+    Some(list)
+}
+
+/// latest.json; `key` picks this platform's asset.
+#[cfg(test)]
+fn parse_manifest(text: &str, key: &str) -> Option<Manifest> {
+    release_of(&json::parse(text)?, key)
+}
+
+/// One release of a manifest.
+fn release_of(j: &Json, key: &str) -> Option<Manifest> {
     let version = Version::parse(j.get("version")?.str()?)?;
     let a = j.get("assets").and_then(|a| a.get(key));
     let sig = |a: &Json| a.get("sig").and_then(Json::str).and_then(sig::base64).map_or(Signature::Missing, Signature::Inline);
@@ -381,7 +447,7 @@ pub fn download(r: &Release) -> Result<Vec<u8>, Fail> {
         Signature::Missing => return Err(Fail::Unsigned),
     };
     let target = TARGET.ok_or(Fail::Unsigned)?.key;
-    if !sig::verify(&sig::statement(target, &r.version.to_string(), &digest), &der) {
+    if !sig::verify(&r.key, &sig::statement(r.product, target, &r.version.to_string(), &digest), &der) {
         return Err(Fail::Unsigned);
     }
     Ok(body)
@@ -494,11 +560,60 @@ mod tests {
     fn only_newer_versions_are_offered() {
         let asset = Some(Asset { url: Url::parse("https://github.com/a").unwrap(), sha256: [0; 32], sig: Signature::Missing });
         let m = |ver: &str, asset: Option<Asset>| Manifest { version: v(ver), date: String::new(), notes: String::new(), asset };
+        let judge = |m: Manifest, current| pick(vec![m], current, &Source::open());
         assert!(matches!(judge(m("0.9.1", asset.clone()), v("0.9.0")), Check::Newer(_)));
         assert_eq!(judge(m("0.9.0", asset.clone()), v("0.9.0")), Check::Current);
         assert_eq!(judge(m("0.8.9", asset), v("0.9.0")), Check::Current);
         // Newer, but nothing to download for this platform.
         assert_eq!(judge(m("1.0.0", None), v("0.9.0")), Check::Current);
+    }
+
+    const DL: &str = "https://dl.emlynix.com/whisker-pro/stable";
+
+    fn channel(until: Option<&str>) -> Source {
+        let manifest = "https://dl.emlynix.com/whisker-pro/stable/latest.json";
+        Source::of(Channel { product: "whisker-pro", manifest, key: [7; 64], page: "", until: until.map(str::to_string) })
+    }
+
+    fn history() -> Vec<Manifest> {
+        let entry = |ver: &str, date: &str| format!(r#"{{"version":"{ver}","date":"{date}","assets":{{"k":{{"url":"{DL}/{ver}/w","sha256":"{HEX}"}}}}}}"#);
+        let newest = entry("1.2.0", "2028-01-05");
+        let open = &newest[..newest.len() - 1];
+        let older = [entry("1.1.0", "2027-10-01"), entry("1.0.5", ""), r#"{"version":"bad"}"#.to_string(), entry("1.0.0", "2026-11-20")];
+        parse_channel(&format!(r#"{open},"older":[{}]}}"#, older.join(",")), "k").unwrap()
+    }
+
+    fn offered(c: Check) -> Option<String> {
+        match c {
+            Check::Newer(r) => Some(r.version.to_string()),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn an_edition_gets_the_newest_release_within_its_day() {
+        assert_eq!(history().len(), 4);
+        assert_eq!(offered(pick(history(), v("1.0.0"), &channel(None))).as_deref(), Some("1.2.0"));
+        // Updates ended before 1.2.0 came out: 1.1.0 is the last one.
+        assert_eq!(offered(pick(history(), v("1.0.0"), &channel(Some("2027-11-13")))).as_deref(), Some("1.1.0"));
+        assert_eq!(offered(pick(history(), v("1.0.0"), &channel(Some("2027-10-01")))).as_deref(), Some("1.1.0"));
+        assert_eq!(offered(pick(history(), v("1.1.0"), &channel(Some("2027-11-13")))), None);
+        // The undated 1.0.5 is never within a day.
+        assert_eq!(offered(pick(history(), v("1.0.0"), &channel(Some("2027-09-30")))), None);
+    }
+
+    #[test]
+    fn an_edition_file_carries_its_own_signer() {
+        let Check::Newer(r) = pick(history(), v("1.0.0"), &channel(None)) else {
+            panic!("no release");
+        };
+        assert_eq!((r.product, r.key), ("whisker-pro", [7; 64]));
+        let Check::Newer(open) = pick(history(), v("1.0.0"), &Source::open()) else {
+            panic!("no release");
+        };
+        assert_eq!((open.product, open.key), (PRODUCT, sig::RELEASE_KEY));
+        // Its manifest is not looked for on GitHub.
+        assert_eq!(channel(None).github, None);
     }
 
     #[test]
@@ -546,7 +661,8 @@ mod tests {
         // Manifest on the web, files on dl.emlynix.com (mirror of GitHub).
         let dl = Url::parse("https://dl.emlynix.com/whisker/0.9.1/whisker-windows-x86_64.exe").unwrap();
         assert!(Purpose::Binary.allows(&dl) && Purpose::Signature.allows(&dl));
-        assert!(!Purpose::Manifest.allows(&dl));
+        // An edition's manifest lives there too.
+        assert!(Purpose::Manifest.allows(&dl));
         assert!(!Purpose::Binary.allows(&Url::parse("https://whisker.emlynix.com/w.exe").unwrap()));
     }
 
@@ -611,7 +727,7 @@ mod tests {
     #[test]
     #[ignore]
     fn live_check_and_redirected_download() {
-        println!("check: {:?}", check());
+        println!("check: {:?}", check(&Source::open()));
         const SMALL_ASSET: &str = "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip.sha256";
         let body = fetch(&Url::parse(SMALL_ASSET).unwrap(), Purpose::Binary).unwrap().unwrap();
         println!("asset: {}", String::from_utf8_lossy(&body));

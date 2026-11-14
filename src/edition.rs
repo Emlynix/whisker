@@ -80,6 +80,27 @@ pub trait Edition {
     /// Names of the text files this edition keeps in the app's data
     /// folder; uninstalling removes them with the app's own.
     fn data_files(&self) -> Vec<&'static str>;
+
+    /// Where this edition's releases come from, as of now; `None` and
+    /// the app never updates itself while the edition is attached.
+    fn channel(&self) -> Option<Channel>;
+}
+
+/// The release channel of an edition. Its files are signed like the
+/// app's own, over `<product>|<platform>|<version>|<sha256>`, so a file
+/// of one edition is never taken for another's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Channel {
+    /// The edition's name in the signed statement.
+    pub product: &'static str,
+    /// `https://…/latest.json`, on a host the updater allows.
+    pub manifest: &'static str,
+    /// Public half of the edition's release key: x || y, P-256.
+    pub key: [u8; 64],
+    /// Page opened where the app cannot replace its own file.
+    pub page: &'static str,
+    /// Last release day (`YYYY-MM-DD`) that is offered; `None` = all.
+    pub until: Option<String>,
 }
 
 thread_local! {
@@ -89,14 +110,27 @@ thread_local! {
 
 /// An edition is attached (readable from any thread).
 static ATTACHED: AtomicBool = AtomicBool::new(false);
+/// The attached edition has a release channel.
+static HAS_CHANNEL: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn attach(edition: Box<dyn Edition>) {
+    HAS_CHANNEL.store(edition.channel().is_some(), Ordering::Relaxed);
     SLOT.with(|s| *s.borrow_mut() = Some(edition));
     ATTACHED.store(true, Ordering::Relaxed);
 }
 
 pub(crate) fn attached() -> bool {
     ATTACHED.load(Ordering::Relaxed)
+}
+
+/// An edition without a channel is attached: the app must not update.
+pub(crate) fn updates_off() -> bool {
+    attached() && !HAS_CHANNEL.load(Ordering::Relaxed)
+}
+
+/// The edition's channel right now; `None` also while it is busy.
+pub(crate) fn channel() -> Option<Channel> {
+    with(|e| e.channel()).flatten()
 }
 
 /// Runs `f` on the edition; `None` without one, or while it is busy.

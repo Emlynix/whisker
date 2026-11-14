@@ -12,7 +12,8 @@ use crate::i18n::{T, fill, tr};
 use crate::platform::{self, UpdateKind, window};
 use crate::stats;
 use crate::store::{self, AppConfig};
-use crate::update::{self, Check, Fail, Release};
+use crate::edition;
+use crate::update::{self, Check, Fail, Release, Source};
 use crate::view::{Dialog, Install, Offer, Probe, UpdateStep, note_lines, notes_cut};
 
 /// How often the timer asks whether a daily check is due.
@@ -59,17 +60,22 @@ impl Controller {
     }
 
     pub(super) fn start_check(&mut self, t: Trigger) {
-        // Another edition has its own release channel: this one would
-        // install the open build over it.
-        if self.updates.checking || self.removed || crate::edition::attached() {
+        if self.updates.checking || self.removed {
             return;
         }
+        // An edition updates from its own channel or not at all: the
+        // open one would install the open build over it.
+        let source = match (edition::attached(), edition::channel()) {
+            (true, Some(channel)) => Source::of(channel),
+            (true, None) => return,
+            (false, _) => Source::open(),
+        };
         self.updates.checking = true;
         if t == Trigger::Manual {
             self.view.update.probe = Probe::Checking;
         }
         std::thread::spawn(move || {
-            let r = update::check();
+            let r = update::check(&source);
             post(move |c| c.on_checked(t, r));
         });
     }
@@ -133,7 +139,7 @@ impl Controller {
     /// Downloads and installs off the UI thread; Linux opens the page.
     pub(super) fn install_update(&mut self) {
         if install_kind() == Install::Page {
-            platform::open_url(SITE_URL);
+            platform::open_url(edition::channel().map_or(SITE_URL, |c| c.page));
             return;
         }
         let Some(rel) = self.updates.release.clone().filter(|_| !self.updates.downloading && !self.removed) else {

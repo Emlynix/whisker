@@ -15,7 +15,7 @@ use crate::platform;
 
 /// Public half of the release key (x || y, P-256). The private key is kept
 /// outside the repository.
-const RELEASE_KEY: [u8; 64] = [
+pub(super) const RELEASE_KEY: [u8; 64] = [
     0x88, 0xee, 0x18, 0x58, 0xb1, 0x67, 0x48, 0xcd, 0x58, 0xe0, 0xd8, 0x38, 0x06, 0xc2, 0xe5, 0x75,
     0x52, 0x2a, 0xbc, 0x0b, 0x27, 0x76, 0x68, 0x0e, 0x71, 0x7b, 0x40, 0x3d, 0x17, 0xa4, 0x68, 0x27,
     0x77, 0xb2, 0x91, 0xf7, 0x3e, 0x7a, 0x43, 0x5b, 0x6a, 0xeb, 0xa2, 0x9c, 0xc2, 0xf3, 0x39, 0x79,
@@ -29,14 +29,14 @@ const DER_SEQUENCE: u8 = 0x30;
 const DER_INTEGER: u8 = 0x02;
 
 /// What a release signature covers.
-pub(super) fn statement(target: &str, version: &str, sha: &[u8; 32]) -> String {
+pub(super) fn statement(product: &str, target: &str, version: &str, sha: &[u8; 32]) -> String {
     let hex: String = sha.iter().map(|b| format!("{b:02x}")).collect();
-    format!("whisker|{target}|{version}|{hex}")
+    format!("{product}|{target}|{version}|{hex}")
 }
 
-/// True when `der` is the release key's signature of `statement`.
-pub(super) fn verify(statement: &str, der: &[u8]) -> bool {
-    verify_with(&RELEASE_KEY, &super::sha256::digest(statement.as_bytes()), der)
+/// True when `der` is the signature of `statement` by `key`.
+pub(super) fn verify(key: &[u8; 64], statement: &str, der: &[u8]) -> bool {
+    verify_with(key, &super::sha256::digest(statement.as_bytes()), der)
 }
 
 fn verify_with(key: &[u8; 64], digest: &[u8; 32], der: &[u8]) -> bool {
@@ -125,6 +125,7 @@ mod tests {
     ];
     const TEST_SIG: &str = "MEUCIGdZlc+Vw9U8CYV4/3hjjgjs5ZyDTpMtFGMWtYZ+XY5cAiEAsYeX9TzIO4PDYWbH7sDUlycvZpAXstm83VeFtMy+HjU=";
     const PAYLOAD: &[u8] = b"whisker test payload";
+    const PRODUCT: &str = "whisker";
     /// The test key's signature of the payload's release statement (0.9.1).
     const TEST_STATEMENT_SIG: &str = "MEUCIQCQbb9aS1bSy6DJIpt6D+LS+jnnPswWQiyLItt0ie3RcgIgKEj6s/eqgUZnp6v4uqcXTH1F+vfpqamaL4c5VNO9Ohc=";
 
@@ -157,7 +158,7 @@ mod tests {
         let other = super::super::sha256::digest(b"whisker test payloaD");
         assert!(!verify_with(&TEST_KEY, &other, &der));
         // Signed by the test key, not the release key.
-        assert!(!verify(&statement("windows-x86_64", "0.9.1", &digest), &der));
+        assert!(!verify(&RELEASE_KEY, &statement(PRODUCT, "windows-x86_64", "0.9.1", &digest), &der));
         let mut bad = der.clone();
         bad[10] ^= 1;
         assert!(!verify_with(&TEST_KEY, &digest, &bad));
@@ -168,10 +169,12 @@ mod tests {
     fn signature_binds_version_and_platform() {
         let der = base64(TEST_STATEMENT_SIG).unwrap();
         let sha = super::super::sha256::digest(PAYLOAD);
-        let check = |target, version| verify_with(&TEST_KEY, &super::super::sha256::digest(statement(target, version, &sha).as_bytes()), &der);
-        assert!(check("windows-x86_64", "0.9.1"));
-        // The same file claimed as another version or platform: refused.
-        assert!(!check("windows-x86_64", "99.0.0"));
-        assert!(!check("linux-x86_64", "0.9.1"));
+        let check = |product, target, version| verify(&TEST_KEY, &statement(product, target, version, &sha), &der);
+        assert!(check(PRODUCT, "windows-x86_64", "0.9.1"));
+        // The same file claimed as another version, platform or edition:
+        // refused.
+        assert!(!check(PRODUCT, "windows-x86_64", "99.0.0"));
+        assert!(!check(PRODUCT, "linux-x86_64", "0.9.1"));
+        assert!(!check("whisker-pro", "windows-x86_64", "0.9.1"));
     }
 }

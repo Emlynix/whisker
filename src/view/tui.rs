@@ -1041,7 +1041,7 @@ fn settings(g: &mut Grid, v: &View) {
     g.frame(r, 7, HALF_W, 8, tr(T::TabGeneral), Lead::Plain, None);
     g.check(r + 2, 9, &fit(tr(T::Autostart), HALF_W - 8), v.autostart, v.installed.then_some(Act::Autostart));
     // An attached edition has its own release channel: no checks to switch.
-    let free = !crate::edition::attached();
+    let free = !crate::edition::updates_off();
     g.check(r + 2, 10, &fit(tr(T::UpdateAuto), HALF_W - 8), free && v.update.auto, free.then_some(Act::UpdateAuto));
     let (state, act, label) = if v.installed { (T::Installed, Act::Uninstall, T::Uninstall) } else { (T::NotInstalled, Act::Install, T::Install) };
     g.put_in(r + 2, 12, HALF_W - 4, tr(state), Style::Dim);

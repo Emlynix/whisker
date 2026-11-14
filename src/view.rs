@@ -2340,7 +2340,7 @@ fn settings(f: &mut Frame, v: &View) {
 
     let c = f.row(x, y, w, &update, RowPlace::Next);
     // An attached edition has its own release channel: no checks to switch.
-    let free = !crate::edition::attached();
+    let free = !crate::edition::updates_off();
     f.toggle(free.then_some(Act::UpdateAuto), c.x, c.y, free && v.update.auto);
     y += update.height(w);
 

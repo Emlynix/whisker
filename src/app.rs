@@ -1755,7 +1755,7 @@ impl Controller {
             Act::UpdateLater => self.view.dialog = None,
             Act::UpdateSkip => self.skip_update(),
             Act::UpdatePage => {
-                platform::open_url(SITE_URL);
+                platform::open_url(edition::channel().map_or(SITE_URL, |c| c.page));
             }
         }
     }
