@@ -87,8 +87,9 @@ pub trait Edition {
 }
 
 /// The release channel of an edition. Its files are signed like the
-/// app's own, over `<product>|<platform>|<version>|<sha256>`, so a file
-/// of one edition is never taken for another's.
+/// app's own, over `<product>|<platform>|<version>|<day>|<sha256>`: a
+/// file of one edition is never taken for another's, and the day a
+/// release is offered by cannot be changed in the manifest.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Channel {
     /// The edition's name in the signed statement.

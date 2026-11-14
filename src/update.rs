@@ -103,17 +103,28 @@ pub struct Source {
     key: [u8; 64],
     /// Last release day offered; `None` = all.
     until: Option<String>,
+    /// The signed statement names the release day.
+    dated: Dated,
+}
+
+/// Whether a channel's signatures cover the day of the release. Where
+/// the day decides what is offered they must: a manifest with a changed
+/// day would otherwise pass a later release off as an earlier one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Dated {
+    Yes,
+    No,
 }
 
 impl Source {
     /// The open app's own channel.
     pub fn open() -> Source {
-        Source { product: PRODUCT, manifest: MANIFEST_URL, github: Some(GITHUB_URL), key: sig::RELEASE_KEY, until: None }
+        Source { product: PRODUCT, manifest: MANIFEST_URL, github: Some(GITHUB_URL), key: sig::RELEASE_KEY, until: None, dated: Dated::No }
     }
 
     /// The channel of an attached edition.
     pub fn of(c: Channel) -> Source {
-        Source { product: c.product, manifest: c.manifest, github: None, key: c.key, until: c.until }
+        Source { product: c.product, manifest: c.manifest, github: None, key: c.key, until: c.until, dated: Dated::Yes }
     }
 }
 
@@ -254,6 +265,7 @@ pub struct Release {
     /// Whose statement signs the file.
     product: &'static str,
     key: [u8; 64],
+    dated: Dated,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -319,7 +331,7 @@ fn pick(list: Vec<Manifest>, current: Version, src: &Source) -> Check {
     let Some(asset) = m.asset else {
         return Check::Current;
     };
-    Check::Newer(Release { version: m.version, date: m.date, notes: m.notes, asset, product: src.product, key: src.key })
+    Check::Newer(Release { version: m.version, date: m.date, notes: m.notes, asset, product: src.product, key: src.key, dated: src.dated })
 }
 
 fn read_manifest(url: &str, parse: impl Fn(&str) -> Option<Vec<Manifest>>) -> Result<Option<Vec<Manifest>>, Fail> {
@@ -447,7 +459,11 @@ pub fn download(r: &Release) -> Result<Vec<u8>, Fail> {
         Signature::Missing => return Err(Fail::Unsigned),
     };
     let target = TARGET.ok_or(Fail::Unsigned)?.key;
-    if !sig::verify(&r.key, &sig::statement(r.product, target, &r.version.to_string(), &digest), &der) {
+    let day = match r.dated {
+        Dated::Yes => Some(r.date.as_str()),
+        Dated::No => None,
+    };
+    if !sig::verify(&r.key, &sig::statement(r.product, target, &r.version.to_string(), day, &digest), &der) {
         return Err(Fail::Unsigned);
     }
     Ok(body)
@@ -607,11 +623,11 @@ mod tests {
         let Check::Newer(r) = pick(history(), v("1.0.0"), &channel(None)) else {
             panic!("no release");
         };
-        assert_eq!((r.product, r.key), ("whisker-pro", [7; 64]));
+        assert_eq!((r.product, r.key, r.dated), ("whisker-pro", [7; 64], Dated::Yes));
         let Check::Newer(open) = pick(history(), v("1.0.0"), &Source::open()) else {
             panic!("no release");
         };
-        assert_eq!((open.product, open.key), (PRODUCT, sig::RELEASE_KEY));
+        assert_eq!((open.product, open.key, open.dated), (PRODUCT, sig::RELEASE_KEY, Dated::No));
         // Its manifest is not looked for on GitHub.
         assert_eq!(channel(None).github, None);
     }

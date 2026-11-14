@@ -28,10 +28,19 @@ const INT_LEN: usize = 32;
 const DER_SEQUENCE: u8 = 0x30;
 const DER_INTEGER: u8 = 0x02;
 
-/// What a release signature covers.
-pub(super) fn statement(product: &str, target: &str, version: &str, sha: &[u8; 32]) -> String {
+/// What a release signature covers. An edition's also covers the day
+/// of the release, which decides whether the file is offered:
+///
+/// ```text
+///   whisker|windows-x86_64|0.9.1|<sha256 hex>
+///   whisker-pro|windows-x86_64|0.9.1|2026-11-20|<sha256 hex>
+/// ```
+pub(super) fn statement(product: &str, target: &str, version: &str, day: Option<&str>, sha: &[u8; 32]) -> String {
     let hex: String = sha.iter().map(|b| format!("{b:02x}")).collect();
-    format!("{product}|{target}|{version}|{hex}")
+    match day {
+        Some(day) => format!("{product}|{target}|{version}|{day}|{hex}"),
+        None => format!("{product}|{target}|{version}|{hex}"),
+    }
 }
 
 /// True when `der` is the signature of `statement` by `key`.
@@ -158,7 +167,7 @@ mod tests {
         let other = super::super::sha256::digest(b"whisker test payloaD");
         assert!(!verify_with(&TEST_KEY, &other, &der));
         // Signed by the test key, not the release key.
-        assert!(!verify(&RELEASE_KEY, &statement(PRODUCT, "windows-x86_64", "0.9.1", &digest), &der));
+        assert!(!verify(&RELEASE_KEY, &statement(PRODUCT, "windows-x86_64", "0.9.1", None, &digest), &der));
         let mut bad = der.clone();
         bad[10] ^= 1;
         assert!(!verify_with(&TEST_KEY, &digest, &bad));
@@ -169,12 +178,17 @@ mod tests {
     fn signature_binds_version_and_platform() {
         let der = base64(TEST_STATEMENT_SIG).unwrap();
         let sha = super::super::sha256::digest(PAYLOAD);
-        let check = |product, target, version| verify(&TEST_KEY, &statement(product, target, version, &sha), &der);
+        let check = |product, target, version| verify(&TEST_KEY, &statement(product, target, version, None, &sha), &der);
         assert!(check(PRODUCT, "windows-x86_64", "0.9.1"));
         // The same file claimed as another version, platform or edition:
         // refused.
         assert!(!check(PRODUCT, "windows-x86_64", "99.0.0"));
         assert!(!check(PRODUCT, "linux-x86_64", "0.9.1"));
         assert!(!check("whisker-pro", "windows-x86_64", "0.9.1"));
+        // Nor with a day added: another day is another statement.
+        let dated = |day| statement(PRODUCT, "windows-x86_64", "0.9.1", Some(day), &sha);
+        assert!(!verify(&TEST_KEY, &dated("2026-11-20"), &der));
+        assert_ne!(dated("2026-11-20"), dated("2026-11-21"));
+        assert_eq!(statement("p", "t", "1.0.0", Some("2026-11-20"), &[0xab; 32]), format!("p|t|1.0.0|2026-11-20|{}", "ab".repeat(32)));
     }
 }
